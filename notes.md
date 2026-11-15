@@ -28,9 +28,13 @@ git merge-base HEAD v4.19.325     # harus a67e7cdde7cc...
 
 ## Goal
 
-- Move the Samsung Exynos 990 kernel (S20 Ultra; x1s/y2s/z3s) from 4.19.325 to
-  upstream v5.0 via an **in-place merge** (no rebase, no restart from a clean
-  upstream tree).
+- Move the Samsung Exynos 990 (universal9830) kernel for **all supported
+  devices** — S20 series (`x1s`/`y2s`/`z3s`), Note 20 series, S20 FE and the
+  other device fragments — from 4.19.325 to upstream v5.0 via an **in-place
+  merge** (no rebase, no restart from a clean upstream tree).
+- Target ROM: **Android 17 / LineageOS 24.0**, all universal9830 variants.
+  Android-critical paths (f2fs, fscrypt/fs-verity, SELinux/defex, binder,
+  Samsung platform code) keep the Lineage 4.19 APIs.
 - End target: **boot test on v5.0** only (not a production kernel).
 - The user runs the boot test manually; the agent stops after the v5.0 merge
   builds.

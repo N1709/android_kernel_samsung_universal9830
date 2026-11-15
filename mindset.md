@@ -11,16 +11,41 @@ conflict, `notes.md` reflects reality, this file reflects intent.
 
 ## 1. The job
 
-Upgrade the Samsung Exynos 990 (universal9830, Galaxy S20 Ultra `z3s`)
-kernel from 4.19.325 to upstream 5.0, by merging one stable release at a
-time inside the existing repository (never a fresh clone, never
-`--allow-unrelated-histories`, never `--depth`).
+Upgrade the Samsung Exynos 990 (universal9830) kernel from 4.19.325 to
+upstream 5.0, by merging one stable release at a time inside the existing
+repository (never a fresh clone, never `--allow-unrelated-histories`,
+never `--depth`).
+
+**Target ROM: Android 17 / LineageOS 24.0 for the whole Exynos 990
+family, not one device.** This tree builds every supported universal9830
+variant (`x1s`, `y2s`, `z3s`, the `lte` variants, and the other device
+fragments under `arch/arm64/configs/`). A change that only works for
+`z3s` is not finished: it must keep the common Samsung platform code and
+the per-device DTBs building together.
+
+The kernel is not a standalone upstream test: it must keep the Android
+userspace contract working. That contract is why some subsystems stay on
+the Lineage 4.19 side even while the rest of the tree is normalised to
+v4.20:
+
+| Area | Why it stays Lineage |
+|---|---|
+| `fs/f2fs/**` | Samsung f2fs fork (compression, HPB, SEC fsck extras) used by the ROM |
+| `fs/crypto/**`, `fs/verity/**`, `include/linux/fscrypt.h`, `include/linux/fsverity.h` | FBE v2 / fs-verity API expected by Android 17 |
+| `security/selinux/**`, `security/defex/**` | Android SELinux policy ABI and Samsung defex |
+| `drivers/android/**` | binder features used by Android 17 |
+| `arch/arm64/**` | board support, errata, SMC, DTBs |
+| `kernel/sched/**` (EMS) | Samsung scheduler |
+| Samsung drivers under `drivers/{gpu/arm,soc,clk,pinctrl,drm,media}/...`, `sec_*` | board support |
+
+Everything else that exists in upstream v4.20 is expected to be
+byte-for-byte v4.20. "Normalise to 4.20" never overrides the table above.
 
 Current checkpoint: the v4.20 merge is committed. The tree must compile
 and boot with v4.20 before any v5.0 work starts.
 
-Branch: `lineage-24.0`. Do not create new branches. Do not rewrite
-published history except the documented `--amend` case in `notes.md`.
+Branch: `K4.20`. Do not create new branches. Do not rewrite published
+history except the documented `--amend` case in `notes.md`.
 
 ---
 
@@ -305,13 +330,22 @@ In that real case 13 callers used the 4-argument form and 3 used the
 
 ## 8. Non-negotiable rules
 
-- Branch stays `lineage-24.0`.
+- Branch stays `K4.20`.
 - Never `--allow-unrelated-histories`, never `--depth`, never drop a remote.
 - Never bulk `--theirs` / `--ours` on: `drivers/gpu/arm`,
   `drivers/soc/samsung`, `drivers/clk/samsung`, `drivers/pinctrl/samsung`,
   `drivers/gpu/drm/samsung`, `kernel/sched` (EMS), `sec_*`, defex,
   `arch/arm64`, `arch/arm64/boot/dts/exynos`, `include/linux/mfd/samsung`.
   Resolve those per hunk, by hand.
+- Never normalise these Android 17 paths to v4.20: `fs/f2fs/**`,
+  `fs/crypto/**`, `fs/verity/**`, `include/linux/fscrypt.h`,
+  `include/linux/fsverity.h`, `include/linux/f2fs_fs.h`,
+  `include/uapi/linux/fscrypt.h`, `security/selinux/**`,
+  `drivers/android/**`. They are newer than v4.20 on purpose; reverting
+  them breaks FBE, f2fs, SELinux policy or binder.
+- `include/linux/fs.h` is v4.20, but must keep the Lineage `S_CASEFOLD`,
+  `S_VERITY`, `IS_CASEFOLDED()` and `IS_VERITY()` definitions that
+  `fs/crypto`, `fs/verity` and `fs/f2fs` consume.
 - Do not silently revert a post-merge fix commit. Check
   `git log --oneline -8` and `git diff 3027a7714 HEAD -- <file>` before
   `git checkout`.
@@ -360,18 +394,22 @@ Every fix batch answers three questions in the commit message:
 Commit style used in this branch:
 
 ```
-UPSTREAM: <short summary>
+<subsystem>: <short summary>
 
 - <file>: <what and why>
 - <file>: <what and why>
 ```
+
+Do not use the `UPSTREAM:` prefix. It was only for the v4.20 integration
+commit; later fixes use plain subsystem prefixes (`kbuild:`, `kconfig:`,
+`arm64:`, `docs:`).
 
 Leave `notes.md` in English, no emoji, no commentary about where the
 build was run. Update it when a milestone changes, not for every commit.
 
 When a rewrite or amend is unavoidable, say so explicitly, note it in
 `notes.md`, and tell the human that other clones need
-`git fetch && git reset --hard origin/lineage-24.0`.
+`git fetch && git reset --hard origin/K4.20`.
 
 ---
 
@@ -393,6 +431,11 @@ not an answer when the error is a symptom of a wrong seam.
 ---
 
 ## 12. Where the work stands
+
+Target userspace: **Android 17 / LineageOS 24.0**, for every supported
+universal9830 device (not `z3s` only). Build compatibility is necessary
+but not sufficient; the Android-critical paths in section 1 must keep
+their Lineage APIs.
 
 Measured provenance map (`3027a7714^1` = 4.19, `3027a7714^2` = 4.20):
 
