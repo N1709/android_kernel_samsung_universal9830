@@ -16,19 +16,12 @@
 #include <linux/userfaultfd_k.h>
 #include <linux/random.h>
 
-#include <asm/sections.h>
 #include <linux/uaccess.h>
 
 #include "internal.h"
 #ifndef __GENKSYMS__
 #include <trace/hooks/syscall_check.h>
 #endif
-
-static inline int is_kernel_rodata(unsigned long addr)
-{
-	return addr >= (unsigned long)__start_rodata &&
-		addr < (unsigned long)__end_rodata;
-}
 
 /**
  * kfree_const - conditionally free memory
@@ -479,7 +472,7 @@ EXPORT_SYMBOL(kvmalloc_node);
  * It is slightly more efficient to use kfree() or vfree() if you are certain
  * that you know which one to use.
  *
- * Context: Any context except NMI.
+ * Context: Either preemptible task context or not-NMI interrupt.
  */
 void kvfree(const void *addr)
 {

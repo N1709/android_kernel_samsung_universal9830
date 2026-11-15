@@ -158,9 +158,9 @@ static int uverbs_destroy_uobject(struct ib_uobject *uobj,
 	uobj->context = NULL;
 
 	/*
-	 * For DESTROY the usecnt is not changed, the caller is expected to
-	 * manage it via uobj_put_destroy(). Only DESTROY can remove the IDR
-	 * handle.
+	 * For DESTROY the usecnt is held write locked, the caller is expected
+	 * to put it unlock and put the object when done with it. Only DESTROY
+	 * can remove the IDR handle.
 	 */
 	if (reason != RDMA_REMOVE_DESTROY)
 		atomic_set(&uobj->usecnt, 0);
@@ -192,7 +192,7 @@ static int uverbs_destroy_uobject(struct ib_uobject *uobj,
 /*
  * This calls uverbs_destroy_uobject() using the RDMA_REMOVE_DESTROY
  * sequence. It should only be used from command callbacks. On success the
- * caller must pair this with uobj_put_destroy(). This
+ * caller must pair this with rdma_lookup_put_uobject(LOOKUP_WRITE). This
  * version requires the caller to have already obtained an
  * LOOKUP_DESTROY uobject kref.
  */
@@ -203,13 +203,6 @@ int uobj_destroy(struct ib_uobject *uobj)
 
 	down_read(&ufile->hw_destroy_rwsem);
 
-	/*
-	 * Once the uobject is destroyed by RDMA_REMOVE_DESTROY then it is left
-	 * write locked as the callers put it back with UVERBS_LOOKUP_DESTROY.
-	 * This is because any other concurrent thread can still see the object
-	 * in the xarray due to RCU. Leaving it locked ensures nothing else will
-	 * touch it.
-	 */
 	ret = uverbs_try_lock_object(uobj, UVERBS_LOOKUP_WRITE);
 	if (ret)
 		goto out_unlock;
@@ -228,7 +221,7 @@ out_unlock:
 /*
  * uobj_get_destroy destroys the HW object and returns a handle to the uobj
  * with a NULL object pointer. The caller must pair this with
- * uobj_put_destroy().
+ * uverbs_put_destroy.
  */
 struct ib_uobject *__uobj_get_destroy(const struct uverbs_api_object *obj,
 				      u32 id, struct ib_uverbs_file *ufile)
@@ -263,7 +256,7 @@ int __uobj_perform_destroy(const struct uverbs_api_object *obj, u32 id,
 	if (IS_ERR(uobj))
 		return PTR_ERR(uobj);
 
-	uobj_put_destroy(uobj);
+	rdma_lookup_put_uobject(uobj, UVERBS_LOOKUP_WRITE);
 	return success_res;
 }
 
@@ -388,7 +381,7 @@ lookup_get_fd_uobject(const struct uverbs_api_object *obj,
 	 * and the caller is expected to ensure that uverbs_close_fd is never
 	 * done while a call top lookup is possible.
 	 */
-	if (f->f_op != fd_type->fops || uobject->ufile != ufile) {
+	if (f->f_op != fd_type->fops) {
 		fput(f);
 		return ERR_PTR(-EBADF);
 	}
@@ -704,6 +697,7 @@ void rdma_lookup_put_uobject(struct ib_uobject *uobj,
 			     enum rdma_lookup_mode mode)
 {
 	assert_uverbs_usecnt(uobj, mode);
+	uobj->uapi_object->type_class->lookup_put(uobj, mode);
 	/*
 	 * In order to unlock an object, either decrease its usecnt for
 	 * read access or zero it in case of exclusive access. See
@@ -720,7 +714,6 @@ void rdma_lookup_put_uobject(struct ib_uobject *uobj,
 		break;
 	}
 
-	uobj->uapi_object->type_class->lookup_put(uobj, mode);
 	/* Pairs with the kref obtained by type->lookup_get */
 	uverbs_uobject_put(uobj);
 }
@@ -801,44 +794,6 @@ void uverbs_close_fd(struct file *f)
 	uverbs_uobject_put(uobj);
 }
 
-static void ufile_disassociate_ucontext(struct ib_ucontext *ibcontext)
-{
-	struct ib_device *ib_dev = ibcontext->device;
-	struct task_struct *owning_process  = NULL;
-	struct mm_struct   *owning_mm       = NULL;
-
-	owning_process = get_pid_task(ibcontext->tgid, PIDTYPE_PID);
-	if (!owning_process)
-		return;
-
-	owning_mm = get_task_mm(owning_process);
-	if (!owning_mm) {
-		pr_info("no mm, disassociate ucontext is pending task termination\n");
-		while (1) {
-			put_task_struct(owning_process);
-			usleep_range(1000, 2000);
-			owning_process = get_pid_task(ibcontext->tgid,
-						      PIDTYPE_PID);
-			if (!owning_process ||
-			    owning_process->state == TASK_DEAD) {
-				pr_info("disassociate ucontext done, task was terminated\n");
-				/* in case task was dead need to release the
-				 * task struct.
-				 */
-				if (owning_process)
-					put_task_struct(owning_process);
-				return;
-			}
-		}
-	}
-
-	mmap_write_lock(owning_mm);
-	ib_dev->disassociate_ucontext(ibcontext);
-	mmap_write_unlock(owning_mm);
-	mmput(owning_mm);
-	put_task_struct(owning_process);
-}
-
 /*
  * Drop the ucontext off the ufile and completely disconnect it from the
  * ib_device
@@ -847,20 +802,28 @@ static void ufile_destroy_ucontext(struct ib_uverbs_file *ufile,
 				   enum rdma_remove_reason reason)
 {
 	struct ib_ucontext *ucontext = ufile->ucontext;
+	struct ib_device *ib_dev = ucontext->device;
 	int ret;
 
-	if (reason == RDMA_REMOVE_DRIVER_REMOVE)
-		ufile_disassociate_ucontext(ucontext);
+	/*
+	 * If we are closing the FD then the user mmap VMAs must have
+	 * already been destroyed as they hold on to the filep, otherwise
+	 * they need to be zap'd.
+	 */
+	if (reason == RDMA_REMOVE_DRIVER_REMOVE) {
+		uverbs_user_mmap_disassociate(ufile);
+		if (ib_dev->disassociate_ucontext)
+			ib_dev->disassociate_ucontext(ucontext);
+	}
 
-	put_pid(ucontext->tgid);
-	ib_rdmacg_uncharge(&ucontext->cg_obj, ucontext->device,
+	ib_rdmacg_uncharge(&ucontext->cg_obj, ib_dev,
 			   RDMACG_RESOURCE_HCA_HANDLE);
 
 	/*
 	 * FIXME: Drivers are not permitted to fail dealloc_ucontext, remove
 	 * the error return.
 	 */
-	ret = ucontext->device->dealloc_ucontext(ucontext);
+	ret = ib_dev->dealloc_ucontext(ucontext);
 	WARN_ON(ret);
 
 	ufile->ucontext = NULL;

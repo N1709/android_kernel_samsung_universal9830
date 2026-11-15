@@ -238,6 +238,16 @@ static int rxe_qp_init_req(struct rxe_dev *rxe, struct rxe_qp *qp,
 		return err;
 	qp->sk->sk->sk_user_data = qp;
 
+	/* pick a source UDP port number for this QP based on
+	 * the source QPN. this spreads traffic for different QPs
+	 * across different NIC RX queues (while using a single
+	 * flow for a given QP to maintain packet order).
+	 * the port number must be in the Dynamic Ports range
+	 * (0xc000 - 0xffff).
+	 */
+	qp->src_port = RXE_ROCE_V2_SPORT +
+		(hash_32_generic(qp_num(qp), 14) & 0x3fff);
+
 	qp->sq.max_wr		= init->cap.max_send_wr;
 	qp->sq.max_sge		= init->cap.max_send_sge;
 	qp->sq.max_inline	= init->cap.max_inline_data;
@@ -415,8 +425,7 @@ int rxe_qp_chk_attr(struct rxe_dev *rxe, struct rxe_qp *qp,
 	enum ib_qp_state new_state = (mask & IB_QP_STATE) ?
 					attr->qp_state : cur_state;
 
-	if (!ib_modify_qp_is_ok(cur_state, new_state, qp_type(qp), mask,
-				IB_LINK_LAYER_ETHERNET)) {
+	if (!ib_modify_qp_is_ok(cur_state, new_state, qp_type(qp), mask)) {
 		pr_warn("invalid mask or state for qp\n");
 		goto err1;
 	}

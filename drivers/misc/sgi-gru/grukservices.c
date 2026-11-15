@@ -632,7 +632,7 @@ static int send_noop_message(void *cb, struct gru_message_queue_desc *mqd,
 			break;
 		case CBSS_PAGE_OVERFLOW:
 			STAT(mesq_noop_page_overflow);
-			/* fallthru */
+			/* fall through */
 		default:
 			BUG();
 		}
@@ -790,7 +790,7 @@ static int send_message_failure(void *cb, struct gru_message_queue_desc *mqd,
 		break;
 	case CBSS_PAGE_OVERFLOW:
 		STAT(mesq_page_overflow);
-		/* fallthru */
+		/* fall through */
 	default:
 		BUG();
 	}

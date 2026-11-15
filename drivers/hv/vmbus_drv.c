@@ -43,7 +43,6 @@
 #include <linux/kdebug.h>
 #include <linux/efi.h>
 #include <linux/random.h>
-#include <linux/kernel.h>
 #include "hyperv_vmbus.h"
 
 struct vmbus_dynid {
@@ -59,35 +58,14 @@ static int hyperv_cpuhp_online;
 
 static void *hv_panic_page;
 
-/*
- * Boolean to control whether to report panic messages over Hyper-V.
- *
- * It can be set via /proc/sys/kernel/hyperv/record_panic_msg
- */
-static int sysctl_record_panic_msg = 1;
-
-static int hyperv_report_reg(void)
-{
-	return !sysctl_record_panic_msg || !hv_panic_page;
-}
-
 static int hyperv_panic_event(struct notifier_block *nb, unsigned long val,
 			      void *args)
 {
 	struct pt_regs *regs;
 
-	vmbus_initiate_unload(true);
+	regs = current_pt_regs();
 
-	/*
-	 * Hyper-V should be notified only once about a panic.  If we will be
-	 * doing hyperv_report_panic_msg() later with kmsg data, don't do
-	 * the notification here.
-	 */
-	if (ms_hyperv.misc_features & HV_FEATURE_GUEST_CRASH_MSR_AVAILABLE
-	    && hyperv_report_reg()) {
-		regs = current_pt_regs();
-		hyperv_report_panic(regs, val, false);
-	}
+	hyperv_report_panic(regs, val);
 	return NOTIFY_DONE;
 }
 
@@ -97,13 +75,7 @@ static int hyperv_die_event(struct notifier_block *nb, unsigned long val,
 	struct die_args *die = (struct die_args *)args;
 	struct pt_regs *regs = die->regs;
 
-	/*
-	 * Hyper-V should be notified only once about a panic.  If we will be
-	 * doing hyperv_report_panic_msg() later with kmsg data, don't do
-	 * the notification here.
-	 */
-	if (hyperv_report_reg())
-		hyperv_report_panic(regs, val, true);
+	hyperv_report_panic(regs, val);
 	return NOTIFY_DONE;
 }
 
@@ -117,7 +89,7 @@ static struct notifier_block hyperv_panic_block = {
 static const char *fb_mmio_name = "fb_range";
 static struct resource *fb_mmio;
 static struct resource *hyperv_mmio;
-static DEFINE_MUTEX(hyperv_mmio_lock);
+static DEFINE_SEMAPHORE(hyperv_mmio_lock);
 
 static int vmbus_exists(void)
 {
@@ -341,16 +313,12 @@ static ssize_t out_intr_mask_show(struct device *dev,
 {
 	struct hv_device *hv_dev = device_to_hv_device(dev);
 	struct hv_ring_buffer_debug_info outbound;
-	int ret;
 
 	if (!hv_dev->channel)
 		return -ENODEV;
-
-	ret = hv_ringbuffer_get_debuginfo(&hv_dev->channel->outbound,
-					  &outbound);
-	if (ret < 0)
-		return ret;
-
+	if (hv_dev->channel->state != CHANNEL_OPENED_STATE)
+		return -EINVAL;
+	hv_ringbuffer_get_debuginfo(&hv_dev->channel->outbound, &outbound);
 	return sprintf(buf, "%d\n", outbound.current_interrupt_mask);
 }
 static DEVICE_ATTR_RO(out_intr_mask);
@@ -360,15 +328,12 @@ static ssize_t out_read_index_show(struct device *dev,
 {
 	struct hv_device *hv_dev = device_to_hv_device(dev);
 	struct hv_ring_buffer_debug_info outbound;
-	int ret;
 
 	if (!hv_dev->channel)
 		return -ENODEV;
-
-	ret = hv_ringbuffer_get_debuginfo(&hv_dev->channel->outbound,
-					  &outbound);
-	if (ret < 0)
-		return ret;
+	if (hv_dev->channel->state != CHANNEL_OPENED_STATE)
+		return -EINVAL;
+	hv_ringbuffer_get_debuginfo(&hv_dev->channel->outbound, &outbound);
 	return sprintf(buf, "%d\n", outbound.current_read_index);
 }
 static DEVICE_ATTR_RO(out_read_index);
@@ -379,15 +344,12 @@ static ssize_t out_write_index_show(struct device *dev,
 {
 	struct hv_device *hv_dev = device_to_hv_device(dev);
 	struct hv_ring_buffer_debug_info outbound;
-	int ret;
 
 	if (!hv_dev->channel)
 		return -ENODEV;
-
-	ret = hv_ringbuffer_get_debuginfo(&hv_dev->channel->outbound,
-					  &outbound);
-	if (ret < 0)
-		return ret;
+	if (hv_dev->channel->state != CHANNEL_OPENED_STATE)
+		return -EINVAL;
+	hv_ringbuffer_get_debuginfo(&hv_dev->channel->outbound, &outbound);
 	return sprintf(buf, "%d\n", outbound.current_write_index);
 }
 static DEVICE_ATTR_RO(out_write_index);
@@ -398,15 +360,12 @@ static ssize_t out_read_bytes_avail_show(struct device *dev,
 {
 	struct hv_device *hv_dev = device_to_hv_device(dev);
 	struct hv_ring_buffer_debug_info outbound;
-	int ret;
 
 	if (!hv_dev->channel)
 		return -ENODEV;
-
-	ret = hv_ringbuffer_get_debuginfo(&hv_dev->channel->outbound,
-					  &outbound);
-	if (ret < 0)
-		return ret;
+	if (hv_dev->channel->state != CHANNEL_OPENED_STATE)
+		return -EINVAL;
+	hv_ringbuffer_get_debuginfo(&hv_dev->channel->outbound, &outbound);
 	return sprintf(buf, "%d\n", outbound.bytes_avail_toread);
 }
 static DEVICE_ATTR_RO(out_read_bytes_avail);
@@ -417,15 +376,12 @@ static ssize_t out_write_bytes_avail_show(struct device *dev,
 {
 	struct hv_device *hv_dev = device_to_hv_device(dev);
 	struct hv_ring_buffer_debug_info outbound;
-	int ret;
 
 	if (!hv_dev->channel)
 		return -ENODEV;
-
-	ret = hv_ringbuffer_get_debuginfo(&hv_dev->channel->outbound,
-					  &outbound);
-	if (ret < 0)
-		return ret;
+	if (hv_dev->channel->state != CHANNEL_OPENED_STATE)
+		return -EINVAL;
+	hv_ringbuffer_get_debuginfo(&hv_dev->channel->outbound, &outbound);
 	return sprintf(buf, "%d\n", outbound.bytes_avail_towrite);
 }
 static DEVICE_ATTR_RO(out_write_bytes_avail);
@@ -435,15 +391,12 @@ static ssize_t in_intr_mask_show(struct device *dev,
 {
 	struct hv_device *hv_dev = device_to_hv_device(dev);
 	struct hv_ring_buffer_debug_info inbound;
-	int ret;
 
 	if (!hv_dev->channel)
 		return -ENODEV;
-
-	ret = hv_ringbuffer_get_debuginfo(&hv_dev->channel->inbound, &inbound);
-	if (ret < 0)
-		return ret;
-
+	if (hv_dev->channel->state != CHANNEL_OPENED_STATE)
+		return -EINVAL;
+	hv_ringbuffer_get_debuginfo(&hv_dev->channel->inbound, &inbound);
 	return sprintf(buf, "%d\n", inbound.current_interrupt_mask);
 }
 static DEVICE_ATTR_RO(in_intr_mask);
@@ -453,15 +406,12 @@ static ssize_t in_read_index_show(struct device *dev,
 {
 	struct hv_device *hv_dev = device_to_hv_device(dev);
 	struct hv_ring_buffer_debug_info inbound;
-	int ret;
 
 	if (!hv_dev->channel)
 		return -ENODEV;
-
-	ret = hv_ringbuffer_get_debuginfo(&hv_dev->channel->inbound, &inbound);
-	if (ret < 0)
-		return ret;
-
+	if (hv_dev->channel->state != CHANNEL_OPENED_STATE)
+		return -EINVAL;
+	hv_ringbuffer_get_debuginfo(&hv_dev->channel->inbound, &inbound);
 	return sprintf(buf, "%d\n", inbound.current_read_index);
 }
 static DEVICE_ATTR_RO(in_read_index);
@@ -471,15 +421,12 @@ static ssize_t in_write_index_show(struct device *dev,
 {
 	struct hv_device *hv_dev = device_to_hv_device(dev);
 	struct hv_ring_buffer_debug_info inbound;
-	int ret;
 
 	if (!hv_dev->channel)
 		return -ENODEV;
-
-	ret = hv_ringbuffer_get_debuginfo(&hv_dev->channel->inbound, &inbound);
-	if (ret < 0)
-		return ret;
-
+	if (hv_dev->channel->state != CHANNEL_OPENED_STATE)
+		return -EINVAL;
+	hv_ringbuffer_get_debuginfo(&hv_dev->channel->inbound, &inbound);
 	return sprintf(buf, "%d\n", inbound.current_write_index);
 }
 static DEVICE_ATTR_RO(in_write_index);
@@ -490,15 +437,12 @@ static ssize_t in_read_bytes_avail_show(struct device *dev,
 {
 	struct hv_device *hv_dev = device_to_hv_device(dev);
 	struct hv_ring_buffer_debug_info inbound;
-	int ret;
 
 	if (!hv_dev->channel)
 		return -ENODEV;
-
-	ret = hv_ringbuffer_get_debuginfo(&hv_dev->channel->inbound, &inbound);
-	if (ret < 0)
-		return ret;
-
+	if (hv_dev->channel->state != CHANNEL_OPENED_STATE)
+		return -EINVAL;
+	hv_ringbuffer_get_debuginfo(&hv_dev->channel->inbound, &inbound);
 	return sprintf(buf, "%d\n", inbound.bytes_avail_toread);
 }
 static DEVICE_ATTR_RO(in_read_bytes_avail);
@@ -509,15 +453,12 @@ static ssize_t in_write_bytes_avail_show(struct device *dev,
 {
 	struct hv_device *hv_dev = device_to_hv_device(dev);
 	struct hv_ring_buffer_debug_info inbound;
-	int ret;
 
 	if (!hv_dev->channel)
 		return -ENODEV;
-
-	ret = hv_ringbuffer_get_debuginfo(&hv_dev->channel->inbound, &inbound);
-	if (ret < 0)
-		return ret;
-
+	if (hv_dev->channel->state != CHANNEL_OPENED_STATE)
+		return -EINVAL;
+	hv_ringbuffer_get_debuginfo(&hv_dev->channel->inbound, &inbound);
 	return sprintf(buf, "%d\n", inbound.bytes_avail_towrite);
 }
 static DEVICE_ATTR_RO(in_write_bytes_avail);
@@ -577,6 +518,54 @@ static ssize_t device_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(device);
 
+static ssize_t driver_override_store(struct device *dev,
+				     struct device_attribute *attr,
+				     const char *buf, size_t count)
+{
+	struct hv_device *hv_dev = device_to_hv_device(dev);
+	char *driver_override, *old, *cp;
+
+	/* We need to keep extra room for a newline */
+	if (count >= (PAGE_SIZE - 1))
+		return -EINVAL;
+
+	driver_override = kstrndup(buf, count, GFP_KERNEL);
+	if (!driver_override)
+		return -ENOMEM;
+
+	cp = strchr(driver_override, '\n');
+	if (cp)
+		*cp = '\0';
+
+	device_lock(dev);
+	old = hv_dev->driver_override;
+	if (strlen(driver_override)) {
+		hv_dev->driver_override = driver_override;
+	} else {
+		kfree(driver_override);
+		hv_dev->driver_override = NULL;
+	}
+	device_unlock(dev);
+
+	kfree(old);
+
+	return count;
+}
+
+static ssize_t driver_override_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	struct hv_device *hv_dev = device_to_hv_device(dev);
+	ssize_t len;
+
+	device_lock(dev);
+	len = snprintf(buf, PAGE_SIZE, "%s\n", hv_dev->driver_override);
+	device_unlock(dev);
+
+	return len;
+}
+static DEVICE_ATTR_RW(driver_override);
+
 /* Set up per device attributes in /sys/bus/vmbus/devices/<bus device> */
 static struct attribute *vmbus_dev_attrs[] = {
 	&dev_attr_id.attr,
@@ -607,38 +596,10 @@ static struct attribute *vmbus_dev_attrs[] = {
 	&dev_attr_channel_vp_mapping.attr,
 	&dev_attr_vendor.attr,
 	&dev_attr_device.attr,
+	&dev_attr_driver_override.attr,
 	NULL,
 };
-
-/*
- * Device-level attribute_group callback function. Returns the permission for
- * each attribute, and returns 0 if an attribute is not visible.
- */
-static umode_t vmbus_dev_attr_is_visible(struct kobject *kobj,
-					 struct attribute *attr, int idx)
-{
-	struct device *dev = kobj_to_dev(kobj);
-	const struct hv_device *hv_dev = device_to_hv_device(dev);
-
-	/* Hide the monitor attributes if the monitor mechanism is not used. */
-	if (!hv_dev->channel->offermsg.monitor_allocated &&
-	    (attr == &dev_attr_monitor_id.attr ||
-	     attr == &dev_attr_server_monitor_pending.attr ||
-	     attr == &dev_attr_client_monitor_pending.attr ||
-	     attr == &dev_attr_server_monitor_latency.attr ||
-	     attr == &dev_attr_client_monitor_latency.attr ||
-	     attr == &dev_attr_server_monitor_conn_id.attr ||
-	     attr == &dev_attr_client_monitor_conn_id.attr))
-		return 0;
-
-	return attr->mode;
-}
-
-static const struct attribute_group vmbus_dev_group = {
-	.attrs = vmbus_dev_attrs,
-	.is_visible = vmbus_dev_attr_is_visible
-};
-__ATTRIBUTE_GROUPS(vmbus_dev);
+ATTRIBUTE_GROUPS(vmbus_dev);
 
 /*
  * vmbus_uevent - add uevent for our device
@@ -671,17 +632,26 @@ static inline bool is_null_guid(const uuid_le *guid)
 	return true;
 }
 
-/*
- * Return a matching hv_vmbus_device_id pointer.
- * If there is no match, return NULL.
- */
-static const struct hv_vmbus_device_id *hv_vmbus_get_id(struct hv_driver *drv,
-					const uuid_le *guid)
+static const struct hv_vmbus_device_id *
+hv_vmbus_dev_match(const struct hv_vmbus_device_id *id, const uuid_le *guid)
+
+{
+	if (id == NULL)
+		return NULL; /* empty device table */
+
+	for (; !is_null_guid(&id->guid); id++)
+		if (!uuid_le_cmp(id->guid, *guid))
+			return id;
+
+	return NULL;
+}
+
+static const struct hv_vmbus_device_id *
+hv_vmbus_dynid_match(struct hv_driver *drv, const uuid_le *guid)
 {
 	const struct hv_vmbus_device_id *id = NULL;
 	struct vmbus_dynid *dynid;
 
-	/* Look at the dynamic ids first, before the static ones */
 	spin_lock(&drv->dynids.lock);
 	list_for_each_entry(dynid, &drv->dynids.list, node) {
 		if (!uuid_le_cmp(dynid->id.guid, *guid)) {
@@ -691,18 +661,37 @@ static const struct hv_vmbus_device_id *hv_vmbus_get_id(struct hv_driver *drv,
 	}
 	spin_unlock(&drv->dynids.lock);
 
-	if (id)
-		return id;
+	return id;
+}
 
-	id = drv->id_table;
-	if (id == NULL)
-		return NULL; /* empty device table */
+static const struct hv_vmbus_device_id vmbus_device_null = {
+	.guid = NULL_UUID_LE,
+};
 
-	for (; !is_null_guid(&id->guid); id++)
-		if (!uuid_le_cmp(id->guid, *guid))
-			return id;
+/*
+ * Return a matching hv_vmbus_device_id pointer.
+ * If there is no match, return NULL.
+ */
+static const struct hv_vmbus_device_id *hv_vmbus_get_id(struct hv_driver *drv,
+							struct hv_device *dev)
+{
+	const uuid_le *guid = &dev->dev_type;
+	const struct hv_vmbus_device_id *id;
 
-	return NULL;
+	/* When driver_override is set, only bind to the matching driver */
+	if (dev->driver_override && strcmp(dev->driver_override, drv->name))
+		return NULL;
+
+	/* Look at the dynamic ids first, before the static ones */
+	id = hv_vmbus_dynid_match(drv, guid);
+	if (!id)
+		id = hv_vmbus_dev_match(drv->id_table, guid);
+
+	/* driver_override will always match, send a dummy id */
+	if (!id && dev->driver_override)
+		id = &vmbus_device_null;
+
+	return id;
 }
 
 /* vmbus_add_dynid - add a new device ID to this driver and re-probe devices */
@@ -751,7 +740,7 @@ static ssize_t new_id_store(struct device_driver *driver, const char *buf,
 	if (retval)
 		return retval;
 
-	if (hv_vmbus_get_id(drv, &guid))
+	if (hv_vmbus_dynid_match(drv, &guid))
 		return -EEXIST;
 
 	retval = vmbus_add_dynid(drv, &guid);
@@ -816,7 +805,7 @@ static int vmbus_match(struct device *device, struct device_driver *driver)
 	if (is_hvsock_channel(hv_dev->channel))
 		return drv->hvsock;
 
-	if (hv_vmbus_get_id(drv, &hv_dev->dev_type))
+	if (hv_vmbus_get_id(drv, hv_dev))
 		return 1;
 
 	return 0;
@@ -833,7 +822,7 @@ static int vmbus_probe(struct device *child_device)
 	struct hv_device *dev = device_to_hv_device(child_device);
 	const struct hv_vmbus_device_id *dev_id;
 
-	dev_id = hv_vmbus_get_id(drv, &dev->dev_type);
+	dev_id = hv_vmbus_get_id(drv, dev);
 	if (drv->probe) {
 		ret = drv->probe(dev, dev_id);
 		if (ret != 0)
@@ -895,10 +884,9 @@ static void vmbus_device_release(struct device *device)
 	struct vmbus_channel *channel = hv_dev->channel;
 
 	mutex_lock(&vmbus_connection.channel_mutex);
-	hv_process_channel_removal(channel->offermsg.child_relid);
+	hv_process_channel_removal(channel);
 	mutex_unlock(&vmbus_connection.channel_mutex);
 	kfree(hv_dev);
-
 }
 
 /* The one and only one */
@@ -968,10 +956,6 @@ void vmbus_on_msg_dpc(unsigned long data)
 	}
 
 	entry = &channel_message_table[hdr->msgtype];
-
-	if (!entry->message_handler)
-		goto msg_handled;
-
 	if (entry->handler_type	== VMHT_BLOCKING) {
 		ctx = kmalloc(sizeof(*ctx), GFP_ATOMIC);
 		if (ctx == NULL)
@@ -1146,8 +1130,15 @@ static void vmbus_isr(void)
 			tasklet_schedule(&hv_cpu->msg_dpc);
 	}
 
-	add_interrupt_randomness(HYPERVISOR_CALLBACK_VECTOR);
+	add_interrupt_randomness(HYPERVISOR_CALLBACK_VECTOR, 0);
 }
+
+/*
+ * Boolean to control whether to report panic messages over Hyper-V.
+ *
+ * It can be set via /proc/sys/kernel/hyperv/record_panic_msg
+ */
+static int sysctl_record_panic_msg = 1;
 
 /*
  * Callback from kmsg_dump. Grab as much as possible from the end of the kmsg
@@ -1273,28 +1264,18 @@ static int vmbus_bus_init(void)
 			hv_panic_page = (void *)get_zeroed_page(GFP_KERNEL);
 			if (hv_panic_page) {
 				ret = kmsg_dump_register(&hv_kmsg_dumper);
-				if (ret) {
+				if (ret)
 					pr_err("Hyper-V: kmsg dump register "
 						"error 0x%x\n", ret);
-					free_page(
-					    (unsigned long)hv_panic_page);
-					hv_panic_page = NULL;
-				}
 			} else
 				pr_err("Hyper-V: panic message page memory "
 					"allocation failed");
 		}
 
 		register_die_notifier(&hyperv_die_block);
+		atomic_notifier_chain_register(&panic_notifier_list,
+					       &hyperv_panic_block);
 	}
-
-	/*
-	 * Always register the panic notifier because we need to unload
-	 * the VMbus channel connection to prevent any VMbus
-	 * activity after the VM panics.
-	 */
-	atomic_notifier_chain_register(&panic_notifier_list,
-			       &hyperv_panic_block);
 
 	vmbus_request_offers();
 
@@ -1307,6 +1288,7 @@ err_alloc:
 	hv_remove_vmbus_irq();
 
 	bus_unregister(&hv_bus);
+	free_page((unsigned long)hv_panic_page);
 	unregister_sysctl_table(hv_ctl_table_hdr);
 	hv_ctl_table_hdr = NULL;
 	return ret;
@@ -1513,34 +1495,10 @@ static struct attribute *vmbus_chan_attrs[] = {
 	NULL
 };
 
-/*
- * Channel-level attribute_group callback function. Returns the permission for
- * each attribute, and returns 0 if an attribute is not visible.
- */
-static umode_t vmbus_chan_attr_is_visible(struct kobject *kobj,
-					  struct attribute *attr, int idx)
-{
-	const struct vmbus_channel *channel =
-		container_of(kobj, struct vmbus_channel, kobj);
-
-	/* Hide the monitor attributes if the monitor mechanism is not used. */
-	if (!channel->offermsg.monitor_allocated &&
-	    (attr == &chan_attr_pending.attr ||
-	     attr == &chan_attr_latency.attr ||
-	     attr == &chan_attr_monitor_id.attr))
-		return 0;
-
-	return attr->mode;
-}
-
-static struct attribute_group vmbus_chan_group = {
-	.attrs = vmbus_chan_attrs,
-	.is_visible = vmbus_chan_attr_is_visible
-};
-
 static struct kobj_type vmbus_chan_ktype = {
 	.sysfs_ops = &vmbus_chan_sysfs_ops,
 	.release = vmbus_chan_release,
+	.default_attrs = vmbus_chan_attrs,
 };
 
 /*
@@ -1548,7 +1506,6 @@ static struct kobj_type vmbus_chan_ktype = {
  */
 int vmbus_add_channel_kobj(struct hv_device *dev, struct vmbus_channel *channel)
 {
-	const struct device *device = &dev->device;
 	struct kobject *kobj = &channel->kobj;
 	u32 relid = channel->offermsg.child_relid;
 	int ret;
@@ -1556,34 +1513,12 @@ int vmbus_add_channel_kobj(struct hv_device *dev, struct vmbus_channel *channel)
 	kobj->kset = dev->channels_kset;
 	ret = kobject_init_and_add(kobj, &vmbus_chan_ktype, NULL,
 				   "%u", relid);
-	if (ret) {
-		kobject_put(kobj);
+	if (ret)
 		return ret;
-	}
-
-	ret = sysfs_create_group(kobj, &vmbus_chan_group);
-
-	if (ret) {
-		/*
-		 * The calling functions' error handling paths will cleanup the
-		 * empty channel directory.
-		 */
-		kobject_put(kobj);
-		dev_err(device, "Unable to set up channel sysfs files\n");
-		return ret;
-	}
 
 	kobject_uevent(kobj, KOBJ_ADD);
 
 	return 0;
-}
-
-/*
- * vmbus_remove_channel_attr_group - remove the channel's attribute group
- */
-void vmbus_remove_channel_attr_group(struct vmbus_channel *channel)
-{
-	sysfs_remove_group(&channel->kobj, &vmbus_chan_group);
 }
 
 /*
@@ -1634,7 +1569,6 @@ int vmbus_device_register(struct hv_device *child_device_obj)
 	ret = device_register(&child_device_obj->device);
 	if (ret) {
 		pr_err("Unable to register child device\n");
-		put_device(&child_device_obj->device);
 		return ret;
 	}
 
@@ -1847,12 +1781,12 @@ int vmbus_allocate_mmio(struct resource **new, struct hv_device *device_obj,
 			bool fb_overlap_ok)
 {
 	struct resource *iter, *shadow;
-	resource_size_t range_min, range_max, start, end;
+	resource_size_t range_min, range_max, start;
 	const char *dev_n = dev_name(&device_obj->device);
 	int retval;
 
 	retval = -ENXIO;
-	mutex_lock(&hyperv_mmio_lock);
+	down(&hyperv_mmio_lock);
 
 	/*
 	 * If overlaps with frame buffers are allowed, then first attempt to
@@ -1882,14 +1816,6 @@ int vmbus_allocate_mmio(struct resource **new, struct hv_device *device_obj,
 		range_max = iter->end;
 		start = (range_min + align - 1) & ~(align - 1);
 		for (; start + size - 1 <= range_max; start += align) {
-			end = start + size - 1;
-
-			/* Skip the whole fb_mmio region if not fb_overlap_ok */
-			if (!fb_overlap_ok && fb_mmio &&
-			    (((start >= fb_mmio->start) && (start <= fb_mmio->end)) ||
-			     ((end >= fb_mmio->start) && (end <= fb_mmio->end))))
-				continue;
-
 			shadow = __request_region(iter, start, size, NULL,
 						  IORESOURCE_BUSY);
 			if (!shadow)
@@ -1907,7 +1833,7 @@ int vmbus_allocate_mmio(struct resource **new, struct hv_device *device_obj,
 	}
 
 exit:
-	mutex_unlock(&hyperv_mmio_lock);
+	up(&hyperv_mmio_lock);
 	return retval;
 }
 EXPORT_SYMBOL_GPL(vmbus_allocate_mmio);
@@ -1924,28 +1850,15 @@ void vmbus_free_mmio(resource_size_t start, resource_size_t size)
 {
 	struct resource *iter;
 
-	mutex_lock(&hyperv_mmio_lock);
-
-	/*
-	 * If all bytes of the MMIO range to be released are within the
-	 * special case fb_mmio shadow region, skip releasing the shadow
-	 * region since no corresponding __request_region() was done
-	 * in vmbus_allocate_mmio().
-	 */
-	if (fb_mmio && start >= fb_mmio->start &&
-	    (start + size - 1 <= fb_mmio->end))
-		goto skip_shadow_release;
-
+	down(&hyperv_mmio_lock);
 	for (iter = hyperv_mmio; iter; iter = iter->sibling) {
 		if ((iter->start >= start + size) || (iter->end <= start))
 			continue;
 
 		__release_region(iter, start, size);
 	}
-
-skip_shadow_release:
 	release_mem_region(start, size);
-	mutex_unlock(&hyperv_mmio_lock);
+	up(&hyperv_mmio_lock);
 
 }
 EXPORT_SYMBOL_GPL(vmbus_free_mmio);
@@ -1986,7 +1899,6 @@ acpi_walk_err:
 		vmbus_acpi_remove(device);
 	return ret_val;
 }
-EXPORT_SYMBOL_GPL(vmbus_device_unregister);
 
 static const struct acpi_device_id vmbus_acpi_device_ids[] = {
 	{"VMBUS", 0},
@@ -2008,6 +1920,7 @@ static void hv_kexec_handler(void)
 {
 	hv_synic_clockevents_cleanup();
 	vmbus_initiate_unload(false);
+	vmbus_connection.conn_state = DISCONNECTED;
 	/* Make sure conn_state is set as hv_synic_cleanup checks for it */
 	mb();
 	cpuhp_remove_state(hyperv_cpuhp_online);
@@ -2022,6 +1935,7 @@ static void hv_crash_handler(struct pt_regs *regs)
 	 * doing the cleanup for current CPU only. This should be sufficient
 	 * for kdump.
 	 */
+	vmbus_connection.conn_state = DISCONNECTED;
 	hv_synic_cleanup(smp_processor_id());
 	hyperv_cleanup();
 };
@@ -2085,14 +1999,9 @@ static void __exit vmbus_exit(void)
 	if (ms_hyperv.misc_features & HV_FEATURE_GUEST_CRASH_MSR_AVAILABLE) {
 		kmsg_dump_unregister(&hv_kmsg_dumper);
 		unregister_die_notifier(&hyperv_die_block);
+		atomic_notifier_chain_unregister(&panic_notifier_list,
+						 &hyperv_panic_block);
 	}
-
-	/*
-	 * The panic notifier is always registered, hence we should
-	 * also unconditionally unregister it here as well.
-	 */
-	atomic_notifier_chain_unregister(&panic_notifier_list,
-					 &hyperv_panic_block);
 
 	free_page((unsigned long)hv_panic_page);
 	unregister_sysctl_table(hv_ctl_table_hdr);

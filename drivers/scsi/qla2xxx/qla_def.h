@@ -519,6 +519,7 @@ struct srb_iocb {
 enum {
 	TYPE_SRB,
 	TYPE_TGT_CMD,
+	TYPE_TGT_TMCMD,		/* task management */
 };
 
 typedef struct srb {
@@ -2280,7 +2281,6 @@ struct ct_sns_desc {
 enum discovery_state {
 	DSC_DELETED,
 	DSC_GNN_ID,
-	DSC_GID_PN,
 	DSC_GNL,
 	DSC_LOGIN_PEND,
 	DSC_LOGIN_FAILED,
@@ -2305,7 +2305,6 @@ enum login_state {	/* FW control Target side */
 enum fcport_mgt_event {
 	FCME_RELOGIN = 1,
 	FCME_RSCN,
-	FCME_GIDPN_DONE,
 	FCME_PLOGI_DONE,	/* Initiator side sent LLIOCB */
 	FCME_PRLI_DONE,
 	FCME_GNL_DONE,
@@ -3215,10 +3214,8 @@ enum qla_work_type {
 	QLA_EVT_ASYNC_LOGOUT,
 	QLA_EVT_ASYNC_LOGOUT_DONE,
 	QLA_EVT_ASYNC_ADISC,
-	QLA_EVT_ASYNC_ADISC_DONE,
 	QLA_EVT_UEVENT,
 	QLA_EVT_AENFX,
-	QLA_EVT_GIDPN,
 	QLA_EVT_GPNID,
 	QLA_EVT_UNMAP,
 	QLA_EVT_NEW_SESS,
@@ -3485,6 +3482,9 @@ struct qla_qpair {
 	struct list_head qp_list_elem; /* vha->qp_list */
 	struct list_head hints_list;
 	uint16_t cpuid;
+	uint16_t retry_term_cnt;
+	uint32_t retry_term_exchg_addr;
+	uint64_t retry_term_jiff;
 	struct qla_tgt_counters tgt_counters;
 };
 
@@ -4186,6 +4186,10 @@ struct qla_hw_data {
 
 	atomic_t        nvme_active_aen_cnt;
 	uint16_t        nvme_last_rptd_aen;             /* Last recorded aen count */
+
+	atomic_t zio_threshold;
+	uint16_t last_zio_threshold;
+#define DEFAULT_ZIO_THRESHOLD 64
 };
 
 #define FW_ABILITY_MAX_SPEED_MASK	0xFUL
@@ -4265,10 +4269,11 @@ typedef struct scsi_qla_host {
 #define FX00_CRITEMP_RECOVERY	25
 #define FX00_HOST_INFO_RESEND	26
 #define QPAIR_ONLINE_CHECK_NEEDED	27
-#define SET_ZIO_THRESHOLD_NEEDED	28
+#define SET_NVME_ZIO_THRESHOLD_NEEDED	28
 #define DETECT_SFP_CHANGE	29
 #define N2N_LOGIN_NEEDED	30
 #define IOCB_WORK_ACTIVE	31
+#define SET_ZIO_THRESHOLD_NEEDED 32
 
 	unsigned long	pci_flags;
 #define PFLG_DISCONNECTED	0	/* PCI device removed */
@@ -4371,6 +4376,13 @@ typedef struct scsi_qla_host {
 	atomic_t	vref_count;
 	struct qla8044_reset_template reset_tmplt;
 	uint16_t	bbcr;
+
+	uint16_t u_ql2xexchoffld;
+	uint16_t u_ql2xiniexchg;
+	uint16_t qlini_mode;
+	uint16_t ql2xexchoffld;
+	uint16_t ql2xiniexchg;
+
 	struct name_list_extended gnl;
 	/* Count of active session/fcport */
 	int fcport_count;

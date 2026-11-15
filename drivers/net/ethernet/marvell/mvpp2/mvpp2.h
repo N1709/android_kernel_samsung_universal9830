@@ -331,6 +331,7 @@
 #define     MVPP2_TXP_SCHED_ENQ_MASK		0xff
 #define     MVPP2_TXP_SCHED_DISQ_OFFSET		8
 #define MVPP2_TXP_SCHED_CMD_1_REG		0x8010
+#define MVPP2_TXP_SCHED_FIXED_PRIO_REG		0x8014
 #define MVPP2_TXP_SCHED_PERIOD_REG		0x8018
 #define MVPP2_TXP_SCHED_MTU_REG			0x801c
 #define     MVPP2_TXP_MTU_MAX			0x7FFFF
@@ -614,6 +615,7 @@
 
 /* Port flags */
 #define MVPP2_F_LOOPBACK		BIT(0)
+#define MVPP2_F_DT_COMPAT		BIT(1)
 
 /* Marvell tag types */
 enum mvpp2_tag_type {
@@ -663,7 +665,7 @@ enum mvpp2_prs_l3_cast {
 #define MVPP21_ADDR_SPACE_SZ		0
 #define MVPP22_ADDR_SPACE_SZ		SZ_64K
 
-#define MVPP2_MAX_THREADS		8
+#define MVPP2_MAX_THREADS		9
 #define MVPP2_MAX_QVECS			MVPP2_MAX_THREADS
 
 /* GMAC MIB Counters register definitions */
@@ -735,6 +737,11 @@ struct mvpp2 {
 	int port_count;
 	struct mvpp2_port *port_list[MVPP2_MAX_PORTS];
 
+	/* Number of Tx threads used */
+	unsigned int nthreads;
+	/* Map of threads needing locking */
+	unsigned long lock_map;
+
 	/* Aggregated TXQs */
 	struct mvpp2_tx_queue *aggr_txqs;
 
@@ -789,6 +796,7 @@ struct mvpp2_queue_vector {
 	int nrxqs;
 	u32 pending_cause_rx;
 	struct mvpp2_port *port;
+	struct cpumask *mask;
 };
 
 struct mvpp2_port {
@@ -823,6 +831,12 @@ struct mvpp2_port {
 
 	/* Per-CPU port control */
 	struct mvpp2_port_pcpu __percpu *pcpu;
+
+	/* Protect the BM refills and the Tx paths when a thread is used on more
+	 * than a single CPU.
+	 */
+	spinlock_t bm_lock[MVPP2_MAX_THREADS];
+	spinlock_t tx_lock[MVPP2_MAX_THREADS];
 
 	/* Flags */
 	unsigned long flags;
@@ -970,7 +984,7 @@ struct mvpp2_txq_pcpu_buf {
 
 /* Per-CPU Tx queue control */
 struct mvpp2_txq_pcpu {
-	int cpu;
+	unsigned int thread;
 
 	/* Number of Tx DMA descriptors in the descriptor ring */
 	int size;
@@ -1095,14 +1109,6 @@ struct mvpp2_bm_pool {
 
 void mvpp2_write(struct mvpp2 *priv, u32 offset, u32 data);
 u32 mvpp2_read(struct mvpp2 *priv, u32 offset);
-
-u32 mvpp2_read_relaxed(struct mvpp2 *priv, u32 offset);
-
-void mvpp2_percpu_write(struct mvpp2 *priv, int cpu, u32 offset, u32 data);
-u32 mvpp2_percpu_read(struct mvpp2 *priv, int cpu, u32 offset);
-
-void mvpp2_percpu_write_relaxed(struct mvpp2 *priv, int cpu, u32 offset,
-				u32 data);
 
 void mvpp2_dbgfs_init(struct mvpp2 *priv, const char *name);
 

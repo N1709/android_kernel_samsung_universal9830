@@ -26,14 +26,12 @@
  * @dev:	the device entity associated with this component
  * @atclk:	optional clock for the core parts of the replicator.
  * @csdev:	component vitals needed by the framework
- * @spinlock:	serialize enable/disable operations.
  */
 struct replicator_state {
 	void __iomem		*base;
 	struct device		*dev;
 	struct clk		*atclk;
 	struct coresight_device	*csdev;
-	spinlock_t		spinlock;
 };
 
 /*
@@ -52,11 +50,12 @@ static void replicator_reset(struct replicator_state *drvdata)
 	CS_LOCK(drvdata->base);
 }
 
-static int dynamic_replicator_enable(struct replicator_state *drvdata,
-				     int inport, int outport)
+static int replicator_enable(struct coresight_device *csdev, int inport,
+			      int outport)
 {
 	int rc = 0;
 	u32 reg;
+	struct replicator_state *drvdata = dev_get_drvdata(csdev->dev.parent);
 
 	switch (outport) {
 	case 0:
@@ -77,40 +76,21 @@ static int dynamic_replicator_enable(struct replicator_state *drvdata,
 		rc = coresight_claim_device_unlocked(drvdata->base);
 
 	/* Ensure that the outport is enabled. */
-	if (!rc)
+	if (!rc) {
 		writel_relaxed(0x00, drvdata->base + reg);
+		dev_dbg(drvdata->dev, "REPLICATOR enabled\n");
+	}
+
 	CS_LOCK(drvdata->base);
 
 	return rc;
 }
 
-static int replicator_enable(struct coresight_device *csdev, int inport,
-			     int outport)
-{
-	int rc = 0;
-	struct replicator_state *drvdata = dev_get_drvdata(csdev->dev.parent);
-	unsigned long flags;
-	bool first_enable = false;
-
-	spin_lock_irqsave(&drvdata->spinlock, flags);
-	if (atomic_read(&csdev->refcnt[outport]) == 0) {
-		rc = dynamic_replicator_enable(drvdata, inport, outport);
-		if (!rc)
-			first_enable = true;
-	}
-	if (!rc)
-		atomic_inc(&csdev->refcnt[outport]);
-	spin_unlock_irqrestore(&drvdata->spinlock, flags);
-
-	if (first_enable)
-		dev_dbg(&csdev->dev, "REPLICATOR enabled\n");
-	return rc;
-}
-
-static void dynamic_replicator_disable(struct replicator_state *drvdata,
-				       int inport, int outport)
+static void replicator_disable(struct coresight_device *csdev, int inport,
+				int outport)
 {
 	u32 reg;
+	struct replicator_state *drvdata = dev_get_drvdata(csdev->dev.parent);
 
 	switch (outport) {
 	case 0:
@@ -133,24 +113,8 @@ static void dynamic_replicator_disable(struct replicator_state *drvdata,
 	    (readl_relaxed(drvdata->base + REPLICATOR_IDFILTER1) == 0xff))
 		coresight_disclaim_device_unlocked(drvdata->base);
 	CS_LOCK(drvdata->base);
-}
 
-static void replicator_disable(struct coresight_device *csdev, int inport,
-				int outport)
-{
-	struct replicator_state *drvdata = dev_get_drvdata(csdev->dev.parent);
-	unsigned long flags;
-	bool last_disable = false;
-
-	spin_lock_irqsave(&drvdata->spinlock, flags);
-	if (atomic_dec_return(&csdev->refcnt[outport]) == 0) {
-		dynamic_replicator_disable(drvdata, inport, outport);
-		last_disable = true;
-	}
-	spin_unlock_irqrestore(&drvdata->spinlock, flags);
-
-	if (last_disable)
-		dev_dbg(drvdata->dev, "REPLICATOR disabled\n");
+	dev_dbg(drvdata->dev, "REPLICATOR disabled\n");
 }
 
 static const struct coresight_ops_link replicator_link_ops = {
@@ -223,7 +187,6 @@ static int replicator_probe(struct amba_device *adev, const struct amba_id *id)
 	dev_set_drvdata(dev, drvdata);
 	pm_runtime_put(&adev->dev);
 
-	spin_lock_init(&drvdata->spinlock);
 	desc.type = CORESIGHT_DEV_TYPE_LINK;
 	desc.subtype.link_subtype = CORESIGHT_DEV_SUBTYPE_LINK_SPLIT;
 	desc.ops = &replicator_cs_ops;

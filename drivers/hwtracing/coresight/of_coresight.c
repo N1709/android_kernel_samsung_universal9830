@@ -45,8 +45,13 @@ of_coresight_get_endpoint_device(struct device_node *endpoint)
 			       endpoint, of_dev_node_match);
 }
 
-static void of_coresight_get_ports(const struct device_node *node,
-				   int *nr_inport, int *nr_outport)
+static inline bool of_coresight_legacy_ep_is_input(struct device_node *ep)
+{
+	return of_property_read_bool(ep, "slave-mode");
+}
+
+static void of_coresight_get_ports_legacy(const struct device_node *node,
+					  int *nr_inport, int *nr_outport)
 {
 	struct device_node *ep = NULL;
 	int in = 0, out = 0;
@@ -56,7 +61,7 @@ static void of_coresight_get_ports(const struct device_node *node,
 		if (!ep)
 			break;
 
-		if (of_property_read_bool(ep, "slave-mode"))
+		if (of_coresight_legacy_ep_is_input(ep))
 			in++;
 		else
 			out++;
@@ -67,32 +72,77 @@ static void of_coresight_get_ports(const struct device_node *node,
 	*nr_outport = out;
 }
 
+static struct device_node *of_coresight_get_port_parent(struct device_node *ep)
+{
+	struct device_node *parent = of_graph_get_port_parent(ep);
+
+	/*
+	 * Skip one-level up to the real device node, if we
+	 * are using the new bindings.
+	 */
+	if (!of_node_cmp(parent->name, "in-ports") ||
+	    !of_node_cmp(parent->name, "out-ports"))
+		parent = of_get_next_parent(parent);
+
+	return parent;
+}
+
+static inline struct device_node *
+of_coresight_get_input_ports_node(const struct device_node *node)
+{
+	return of_get_child_by_name(node, "in-ports");
+}
+
+static inline struct device_node *
+of_coresight_get_output_ports_node(const struct device_node *node)
+{
+	return of_get_child_by_name(node, "out-ports");
+}
+
+static inline int
+of_coresight_count_ports(struct device_node *port_parent)
+{
+	int i = 0;
+	struct device_node *ep = NULL;
+
+	while ((ep = of_graph_get_next_endpoint(port_parent, ep)))
+		i++;
+	return i;
+}
+
+static void of_coresight_get_ports(const struct device_node *node,
+				   int *nr_inport, int *nr_outport)
+{
+	struct device_node *input_ports = NULL, *output_ports = NULL;
+
+	input_ports = of_coresight_get_input_ports_node(node);
+	output_ports = of_coresight_get_output_ports_node(node);
+
+	if (input_ports || output_ports) {
+		if (input_ports) {
+			*nr_inport = of_coresight_count_ports(input_ports);
+			of_node_put(input_ports);
+		}
+		if (output_ports) {
+			*nr_outport = of_coresight_count_ports(output_ports);
+			of_node_put(output_ports);
+		}
+	} else {
+		/* Fall back to legacy DT bindings parsing */
+		of_coresight_get_ports_legacy(node, nr_inport, nr_outport);
+	}
+}
+
 static int of_coresight_alloc_memory(struct device *dev,
 			struct coresight_platform_data *pdata)
 {
-	/* List of output port on this component */
-	pdata->outports = devm_kcalloc(dev,
-				       pdata->nr_outport,
-				       sizeof(*pdata->outports),
-				       GFP_KERNEL);
-	if (!pdata->outports)
-		return -ENOMEM;
-
-	/* Children connected to this component via @outports */
-	pdata->child_names = devm_kcalloc(dev,
-					  pdata->nr_outport,
-					  sizeof(*pdata->child_names),
-					  GFP_KERNEL);
-	if (!pdata->child_names)
-		return -ENOMEM;
-
-	/* Port number on the child this component is connected to */
-	pdata->child_ports = devm_kcalloc(dev,
-					  pdata->nr_outport,
-					  sizeof(*pdata->child_ports),
-					  GFP_KERNEL);
-	if (!pdata->child_ports)
-		return -ENOMEM;
+	if (pdata->nr_outport) {
+		pdata->conns = devm_kzalloc(dev, pdata->nr_outport *
+					    sizeof(*pdata->conns),
+					    GFP_KERNEL);
+		if (!pdata->conns)
+			return -ENOMEM;
+	}
 
 	return 0;
 }
@@ -116,7 +166,7 @@ EXPORT_SYMBOL_GPL(of_coresight_get_cpu);
 
 /*
  * of_coresight_parse_endpoint : Parse the given output endpoint @ep
- * and fill the connection information in @pdata[@i].
+ * and fill the connection information in @conn
  *
  * Parses the local port, remote device name and the remote port.
  *
@@ -128,8 +178,7 @@ EXPORT_SYMBOL_GPL(of_coresight_get_cpu);
  */
 static int of_coresight_parse_endpoint(struct device *dev,
 				       struct device_node *ep,
-				       struct coresight_platform_data *pdata,
-				       int i)
+				       struct coresight_connection *conn)
 {
 	int ret = 0;
 	struct of_endpoint endpoint, rendpoint;
@@ -148,7 +197,7 @@ static int of_coresight_parse_endpoint(struct device *dev,
 		rep = of_graph_get_remote_endpoint(ep);
 		if (!rep)
 			break;
-		rparent = of_graph_get_port_parent(rep);
+		rparent = of_coresight_get_port_parent(rep);
 		if (!rparent)
 			break;
 		if (of_graph_parse_endpoint(rep, &rendpoint))
@@ -161,21 +210,18 @@ static int of_coresight_parse_endpoint(struct device *dev,
 			break;
 		}
 
-		pdata->outports[i] = endpoint.port;
-		pdata->child_names[i] = devm_kstrdup(dev,
-						     dev_name(rdev),
-						     GFP_KERNEL);
-		pdata->child_ports[i] = rendpoint.port;
+		conn->outport = endpoint.port;
+		conn->child_name = devm_kstrdup(dev,
+						dev_name(rdev),
+						GFP_KERNEL);
+		conn->child_port = rendpoint.port;
 		/* Connection record updated */
 		ret = 1;
 	} while (0);
 
-	if (rparent)
-		of_node_put(rparent);
-	if (rep)
-		of_node_put(rep);
-	if (rdev)
-		put_device(rdev);
+	of_node_put(rparent);
+	of_node_put(rep);
+	put_device(rdev);
 
 	return ret;
 }
@@ -184,9 +230,12 @@ struct coresight_platform_data *
 of_get_coresight_platform_data(struct device *dev,
 			       const struct device_node *node)
 {
-	int i = 0, ret = 0;
+	int ret = 0;
 	struct coresight_platform_data *pdata;
+	struct coresight_connection *conn;
 	struct device_node *ep = NULL;
+	const struct device_node *parent = NULL;
+	bool legacy_binding = false;
 
 	pdata = devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
 	if (!pdata)
@@ -207,19 +256,35 @@ of_get_coresight_platform_data(struct device *dev,
 	if (ret)
 		return ERR_PTR(ret);
 
-	/* Iterate through each port to discover topology */
-	while ((ep = of_graph_get_next_endpoint(node, ep))) {
+	parent = of_coresight_get_output_ports_node(node);
+	/*
+	 * If the DT uses obsoleted bindings, the ports are listed
+	 * under the device and we need to filter out the input
+	 * ports.
+	 */
+	if (!parent) {
+		legacy_binding = true;
+		parent = node;
+		dev_warn_once(dev, "Uses obsolete Coresight DT bindings\n");
+	}
+
+	conn = pdata->conns;
+
+	/* Iterate through each output port to discover topology */
+	while ((ep = of_graph_get_next_endpoint(parent, ep))) {
 		/*
-		 * No need to deal with input ports, as processing the
-		 * output ports connected to them will process the details.
+		 * Legacy binding mixes input/output ports under the
+		 * same parent. So, skip the input ports if we are dealing
+		 * with legacy binding, as they processed with their
+		 * connected output ports.
 		 */
-		if (of_find_property(ep, "slave-mode", NULL))
+		if (legacy_binding && of_coresight_legacy_ep_is_input(ep))
 			continue;
 
-		ret = of_coresight_parse_endpoint(dev, ep, pdata, i);
+		ret = of_coresight_parse_endpoint(dev, ep, conn);
 		switch (ret) {
 		case 1:
-			i++;		/* Fall through */
+			conn++;		/* Fall through */
 		case 0:
 			break;
 		default:

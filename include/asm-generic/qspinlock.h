@@ -21,10 +21,6 @@
 
 #include <asm-generic/qspinlock_types.h>
 
-#ifdef CONFIG_SEC_DEBUG_QSPIN_OWNER
-#include <linux/smp.h>
-#endif
-
 /**
  * queued_spin_is_locked - is the spinlock locked?
  * @lock: Pointer to queued spinlock structure
@@ -51,7 +47,7 @@ static __always_inline int queued_spin_is_locked(struct qspinlock *lock)
  */
 static __always_inline int queued_spin_value_unlocked(struct qspinlock lock)
 {
-	return !lock.val.counter;
+	return !atomic_read(&lock.val);
 }
 
 /**
@@ -63,15 +59,6 @@ static __always_inline int queued_spin_is_contended(struct qspinlock *lock)
 {
 	return atomic_read(&lock->val) & ~_Q_LOCKED_MASK;
 }
-
-#ifdef CONFIG_SEC_DEBUG_QSPIN_OWNER
-static __always_inline u8 __queued_spin_get_locked_val(void)
-{
-	int cpu = raw_smp_processor_id();
-	return (cpu << _Q_OWNER_OFFSET) | _Q_DBGEN_VAL | _Q_LOCKED_VAL;
-}
-#endif
-
 /**
  * queued_spin_trylock - try to acquire the queued spinlock
  * @lock : Pointer to queued spinlock structure
@@ -79,18 +66,12 @@ static __always_inline u8 __queued_spin_get_locked_val(void)
  */
 static __always_inline int queued_spin_trylock(struct qspinlock *lock)
 {
-#ifdef CONFIG_SEC_DEBUG_QSPIN_OWNER
-	u8 locked_val = __queued_spin_get_locked_val();
+	u32 val = atomic_read(&lock->val);
 
-	if (!atomic_read(&lock->val) &&
-	   (atomic_cmpxchg_acquire(&lock->val, 0, locked_val) == 0))
-		return 1;
-#else
-	if (!atomic_read(&lock->val) &&
-	   (atomic_cmpxchg_acquire(&lock->val, 0, _Q_LOCKED_VAL) == 0))
-		return 1;
-#endif
-	return 0;
+	if (unlikely(val))
+		return 0;
+
+	return likely(atomic_try_cmpxchg_acquire(&lock->val, &val, _Q_LOCKED_VAL));
 }
 
 extern void queued_spin_lock_slowpath(struct qspinlock *lock, u32 val);
@@ -101,16 +82,11 @@ extern void queued_spin_lock_slowpath(struct qspinlock *lock, u32 val);
  */
 static __always_inline void queued_spin_lock(struct qspinlock *lock)
 {
-	u32 val;
-#ifdef CONFIG_SEC_DEBUG_QSPIN_OWNER
-	u8 locked_val = __queued_spin_get_locked_val();
+	u32 val = 0;
 
-	val = atomic_cmpxchg_acquire(&lock->val, 0, locked_val);
-#else
-	val = atomic_cmpxchg_acquire(&lock->val, 0, _Q_LOCKED_VAL);
-#endif
-	if (likely(val == 0))
+	if (likely(atomic_try_cmpxchg_acquire(&lock->val, &val, _Q_LOCKED_VAL)))
 		return;
+
 	queued_spin_lock_slowpath(lock, val);
 }
 

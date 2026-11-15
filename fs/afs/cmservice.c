@@ -122,6 +122,8 @@ bool afs_cm_incoming_call(struct afs_call *call)
 {
 	_enter("{%u, CB.OP %u}", call->service_id, call->operation_ID);
 
+	call->epoch = rxrpc_kernel_get_epoch(call->net->socket, call->rxcall);
+
 	switch (call->operation_ID) {
 	case CBCallBack:
 		call->type = &afs_SRXCBCallBack;
@@ -149,6 +151,91 @@ bool afs_cm_incoming_call(struct afs_call *call)
 	default:
 		return false;
 	}
+}
+
+/*
+ * Record a probe to the cache manager from a server.
+ */
+static int afs_record_cm_probe(struct afs_call *call, struct afs_server *server)
+{
+	_enter("");
+
+	if (test_bit(AFS_SERVER_FL_HAVE_EPOCH, &server->flags) &&
+	    !test_bit(AFS_SERVER_FL_PROBING, &server->flags)) {
+		if (server->cm_epoch == call->epoch)
+			return 0;
+
+		if (!server->probe.said_rebooted) {
+			pr_notice("kAFS: FS rebooted %pU\n", &server->uuid);
+			server->probe.said_rebooted = true;
+		}
+	}
+
+	spin_lock(&server->probe_lock);
+
+	if (!test_bit(AFS_SERVER_FL_HAVE_EPOCH, &server->flags)) {
+		server->cm_epoch = call->epoch;
+		server->probe.cm_epoch = call->epoch;
+		goto out;
+	}
+
+	if (server->probe.cm_probed &&
+	    call->epoch != server->probe.cm_epoch &&
+	    !server->probe.said_inconsistent) {
+		pr_notice("kAFS: FS endpoints inconsistent %pU\n",
+			  &server->uuid);
+		server->probe.said_inconsistent = true;
+	}
+
+	if (!server->probe.cm_probed || call->epoch == server->cm_epoch)
+		server->probe.cm_epoch = server->cm_epoch;
+
+out:
+	server->probe.cm_probed = true;
+	spin_unlock(&server->probe_lock);
+	return 0;
+}
+
+/*
+ * Find the server record by peer address and record a probe to the cache
+ * manager from a server.
+ */
+static int afs_find_cm_server_by_peer(struct afs_call *call)
+{
+	struct sockaddr_rxrpc srx;
+	struct afs_server *server;
+
+	rxrpc_kernel_get_peer(call->net->socket, call->rxcall, &srx);
+
+	server = afs_find_server(call->net, &srx);
+	if (!server) {
+		trace_afs_cm_no_server(call, &srx);
+		return 0;
+	}
+
+	call->cm_server = server;
+	return afs_record_cm_probe(call, server);
+}
+
+/*
+ * Find the server record by server UUID and record a probe to the cache
+ * manager from a server.
+ */
+static int afs_find_cm_server_by_uuid(struct afs_call *call,
+				      struct afs_uuid *uuid)
+{
+	struct afs_server *server;
+
+	rcu_read_lock();
+	server = afs_find_server_by_uuid(call->net, call->request);
+	rcu_read_unlock();
+	if (!server) {
+		trace_afs_cm_no_server_u(call, call->request);
+		return 0;
+	}
+
+	call->cm_server = server;
+	return afs_record_cm_probe(call, server);
 }
 
 /*
@@ -187,7 +274,6 @@ static void SRXAFSCB_CallBack(struct work_struct *work)
 static int afs_deliver_cb_callback(struct afs_call *call)
 {
 	struct afs_callback_break *cb;
-	struct sockaddr_rxrpc srx;
 	__be32 *bp;
 	int ret, loop;
 
@@ -195,13 +281,13 @@ static int afs_deliver_cb_callback(struct afs_call *call)
 
 	switch (call->unmarshall) {
 	case 0:
-		call->offset = 0;
+		afs_extract_to_tmp(call);
 		call->unmarshall++;
 
 		/* extract the FID array and its count in two steps */
 	case 1:
 		_debug("extract FID count");
-		ret = afs_extract_data(call, &call->tmp, 4, true);
+		ret = afs_extract_data(call, true);
 		if (ret < 0)
 			return ret;
 
@@ -215,13 +301,12 @@ static int afs_deliver_cb_callback(struct afs_call *call)
 				       GFP_KERNEL);
 		if (!call->buffer)
 			return -ENOMEM;
-		call->offset = 0;
+		afs_extract_to_buf(call, call->count * 3 * 4);
 		call->unmarshall++;
 
 	case 2:
 		_debug("extract FID array");
-		ret = afs_extract_data(call, call->buffer,
-				       call->count * 3 * 4, true);
+		ret = afs_extract_data(call, true);
 		if (ret < 0)
 			return ret;
 
@@ -238,16 +323,15 @@ static int afs_deliver_cb_callback(struct afs_call *call)
 			cb->fid.vid	= ntohl(*bp++);
 			cb->fid.vnode	= ntohl(*bp++);
 			cb->fid.unique	= ntohl(*bp++);
-			cb->cb.type	= AFSCM_CB_UNTYPED;
 		}
 
-		call->offset = 0;
+		afs_extract_to_tmp(call);
 		call->unmarshall++;
 
 		/* extract the callback array and its count in two steps */
 	case 3:
 		_debug("extract CB count");
-		ret = afs_extract_data(call, &call->tmp, 4, true);
+		ret = afs_extract_data(call, true);
 		if (ret < 0)
 			return ret;
 
@@ -256,26 +340,18 @@ static int afs_deliver_cb_callback(struct afs_call *call)
 		if (call->count2 != call->count && call->count2 != 0)
 			return afs_protocol_error(call, -EBADMSG,
 						  afs_eproto_cb_count);
-		call->offset = 0;
+		call->_iter = &call->iter;
+		iov_iter_discard(&call->iter, READ, call->count2 * 3 * 4);
 		call->unmarshall++;
 
 	case 4:
-		_debug("extract CB array");
-		ret = afs_extract_data(call, call->buffer,
-				       call->count2 * 3 * 4, false);
+		_debug("extract discard %zu/%u",
+		       iov_iter_count(&call->iter), call->count2 * 3 * 4);
+
+		ret = afs_extract_data(call, false);
 		if (ret < 0)
 			return ret;
 
-		_debug("unmarshall CB array");
-		cb = call->request;
-		bp = call->buffer;
-		for (loop = call->count2; loop > 0; loop--, cb++) {
-			cb->cb.version	= ntohl(*bp++);
-			cb->cb.expiry	= ntohl(*bp++);
-			cb->cb.type	= ntohl(*bp++);
-		}
-
-		call->offset = 0;
 		call->unmarshall++;
 	case 5:
 		break;
@@ -286,12 +362,7 @@ static int afs_deliver_cb_callback(struct afs_call *call)
 
 	/* we'll need the file server record as that tells us which set of
 	 * vnodes to operate upon */
-	rxrpc_kernel_get_peer(call->net->socket, call->rxcall, &srx);
-	call->cm_server = afs_find_server(call->net, &srx);
-	if (!call->cm_server)
-		trace_afs_cm_no_server(call, &srx);
-
-	return afs_queue_call_work(call);
+	return afs_find_cm_server_by_peer(call);
 }
 
 /*
@@ -315,24 +386,18 @@ static void SRXAFSCB_InitCallBackState(struct work_struct *work)
  */
 static int afs_deliver_cb_init_call_back_state(struct afs_call *call)
 {
-	struct sockaddr_rxrpc srx;
 	int ret;
 
 	_enter("");
 
-	rxrpc_kernel_get_peer(call->net->socket, call->rxcall, &srx);
-
-	ret = afs_extract_data(call, NULL, 0, false);
+	afs_extract_discard(call, 0);
+	ret = afs_extract_data(call, false);
 	if (ret < 0)
 		return ret;
 
 	/* we'll need the file server record as that tells us which set of
 	 * vnodes to operate upon */
-	call->cm_server = afs_find_server(call->net, &srx);
-	if (!call->cm_server)
-		trace_afs_cm_no_server(call, &srx);
-
-	return afs_queue_call_work(call);
+	return afs_find_cm_server_by_peer(call);
 }
 
 /*
@@ -351,16 +416,15 @@ static int afs_deliver_cb_init_call_back_state3(struct afs_call *call)
 
 	switch (call->unmarshall) {
 	case 0:
-		call->offset = 0;
 		call->buffer = kmalloc_array(11, sizeof(__be32), GFP_KERNEL);
 		if (!call->buffer)
 			return -ENOMEM;
+		afs_extract_to_buf(call, 11 * sizeof(__be32));
 		call->unmarshall++;
 
 	case 1:
 		_debug("extract UUID");
-		ret = afs_extract_data(call, call->buffer,
-				       11 * sizeof(__be32), false);
+		ret = afs_extract_data(call, false);
 		switch (ret) {
 		case 0:		break;
 		case -EAGAIN:	return 0;
@@ -383,7 +447,6 @@ static int afs_deliver_cb_init_call_back_state3(struct afs_call *call)
 		for (loop = 0; loop < 6; loop++)
 			r->node[loop] = ntohl(b[loop + 5]);
 
-		call->offset = 0;
 		call->unmarshall++;
 
 	case 2:
@@ -395,13 +458,7 @@ static int afs_deliver_cb_init_call_back_state3(struct afs_call *call)
 
 	/* we'll need the file server record as that tells us which set of
 	 * vnodes to operate upon */
-	rcu_read_lock();
-	call->cm_server = afs_find_server_by_uuid(call->net, call->request);
-	rcu_read_unlock();
-	if (!call->cm_server)
-		trace_afs_cm_no_server_u(call, call->request);
-
-	return afs_queue_call_work(call);
+	return afs_find_cm_server_by_uuid(call, call->request);
 }
 
 /*
@@ -426,14 +483,14 @@ static int afs_deliver_cb_probe(struct afs_call *call)
 
 	_enter("");
 
-	ret = afs_extract_data(call, NULL, 0, false);
+	afs_extract_discard(call, 0);
+	ret = afs_extract_data(call, false);
 	if (ret < 0)
 		return ret;
 
 	if (!afs_check_call_state(call, AFS_CALL_SV_REPLYING))
 		return afs_io_error(call, afs_io_error_cm_reply);
-
-	return afs_queue_call_work(call);
+	return afs_find_cm_server_by_peer(call);
 }
 
 /*
@@ -444,14 +501,18 @@ static void SRXAFSCB_ProbeUuid(struct work_struct *work)
 	struct afs_call *call = container_of(work, struct afs_call, work);
 	struct afs_uuid *r = call->request;
 
+	struct {
+		__be32	match;
+	} reply;
+
 	_enter("");
 
 	if (memcmp(r, &call->net->uuid, sizeof(call->net->uuid)) == 0)
-		afs_send_empty_reply(call);
+		reply.match = htonl(0);
 	else
-		rxrpc_kernel_abort_call(call->net->socket, call->rxcall,
-					1, 1, "K-1");
+		reply.match = htonl(1);
 
+	afs_send_simple_reply(call, &reply, sizeof(reply));
 	afs_put_call(call);
 	_leave("");
 }
@@ -470,16 +531,15 @@ static int afs_deliver_cb_probe_uuid(struct afs_call *call)
 
 	switch (call->unmarshall) {
 	case 0:
-		call->offset = 0;
 		call->buffer = kmalloc_array(11, sizeof(__be32), GFP_KERNEL);
 		if (!call->buffer)
 			return -ENOMEM;
+		afs_extract_to_buf(call, 11 * sizeof(__be32));
 		call->unmarshall++;
 
 	case 1:
 		_debug("extract UUID");
-		ret = afs_extract_data(call, call->buffer,
-				       11 * sizeof(__be32), false);
+		ret = afs_extract_data(call, false);
 		switch (ret) {
 		case 0:		break;
 		case -EAGAIN:	return 0;
@@ -502,7 +562,6 @@ static int afs_deliver_cb_probe_uuid(struct afs_call *call)
 		for (loop = 0; loop < 6; loop++)
 			r->node[loop] = ntohl(b[loop + 5]);
 
-		call->offset = 0;
 		call->unmarshall++;
 
 	case 2:
@@ -511,8 +570,7 @@ static int afs_deliver_cb_probe_uuid(struct afs_call *call)
 
 	if (!afs_check_call_state(call, AFS_CALL_SV_REPLYING))
 		return afs_io_error(call, afs_io_error_cm_reply);
-
-	return afs_queue_call_work(call);
+	return afs_find_cm_server_by_uuid(call, call->request);
 }
 
 /*
@@ -587,14 +645,14 @@ static int afs_deliver_cb_tell_me_about_yourself(struct afs_call *call)
 
 	_enter("");
 
-	ret = afs_extract_data(call, NULL, 0, false);
+	afs_extract_discard(call, 0);
+	ret = afs_extract_data(call, false);
 	if (ret < 0)
 		return ret;
 
 	if (!afs_check_call_state(call, AFS_CALL_SV_REPLYING))
 		return afs_io_error(call, afs_io_error_cm_reply);
-
-	return afs_queue_call_work(call);
+	return afs_find_cm_server_by_peer(call);
 }
 
 /*
@@ -603,7 +661,6 @@ static int afs_deliver_cb_tell_me_about_yourself(struct afs_call *call)
 static int afs_deliver_yfs_cb_callback(struct afs_call *call)
 {
 	struct afs_callback_break *cb;
-	struct sockaddr_rxrpc srx;
 	struct yfs_xdr_YFSFid *bp;
 	size_t size;
 	int ret, loop;
@@ -671,10 +728,5 @@ static int afs_deliver_yfs_cb_callback(struct afs_call *call)
 	/* We'll need the file server record as that tells us which set of
 	 * vnodes to operate upon.
 	 */
-	rxrpc_kernel_get_peer(call->net->socket, call->rxcall, &srx);
-	call->cm_server = afs_find_server(call->net, &srx);
-	if (!call->cm_server)
-		trace_afs_cm_no_server(call, &srx);
-
-	return afs_queue_call_work(call);
+	return afs_find_cm_server_by_peer(call);
 }

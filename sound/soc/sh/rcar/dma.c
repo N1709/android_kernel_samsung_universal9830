@@ -218,7 +218,7 @@ struct dma_chan *rsnd_dma_request_channel(struct device_node *of_node,
 	int i = 0;
 
 	for_each_child_of_node(of_node, np) {
-		if (i == rsnd_mod_id_raw(mod) && (!chan))
+		if (i == rsnd_mod_id(mod) && (!chan))
 			chan = of_dma_request_slave_channel(np, name);
 		i++;
 	}
@@ -289,13 +289,12 @@ static int rsnd_dmaen_pointer(struct rsnd_mod *mod,
 }
 
 static struct rsnd_mod_ops rsnd_dmaen_ops = {
-	.name		= "audmac",
-	.prepare	= rsnd_dmaen_prepare,
-	.cleanup	= rsnd_dmaen_cleanup,
-	.start		= rsnd_dmaen_start,
-	.stop		= rsnd_dmaen_stop,
-	.pointer	= rsnd_dmaen_pointer,
-	.get_status	= rsnd_mod_get_status,
+	.name	= "audmac",
+	.prepare = rsnd_dmaen_prepare,
+	.cleanup = rsnd_dmaen_cleanup,
+	.start	= rsnd_dmaen_start,
+	.stop	= rsnd_dmaen_stop,
+	.pointer= rsnd_dmaen_pointer,
 };
 
 /*
@@ -344,16 +343,14 @@ static u32 rsnd_dmapp_get_id(struct rsnd_dai_stream *io,
 			     struct rsnd_mod *mod)
 {
 	struct rsnd_mod *ssi = rsnd_io_to_mod_ssi(io);
-	struct rsnd_mod *ssiu = rsnd_io_to_mod_ssiu(io);
 	struct rsnd_mod *src = rsnd_io_to_mod_src(io);
 	struct rsnd_mod *dvc = rsnd_io_to_mod_dvc(io);
 	const u8 *entry = NULL;
 	int id = 255;
 	int size = 0;
 
-	if ((mod == ssi) ||
-	    (mod == ssiu)) {
-		int busif = rsnd_mod_id_sub(ssiu);
+	if (mod == ssi) {
+		int busif = rsnd_ssi_get_busif(io);
 
 		entry = gen2_id_table_ssiu;
 		size = ARRAY_SIZE(gen2_id_table_ssiu);
@@ -399,7 +396,7 @@ static void rsnd_dmapp_write(struct rsnd_dma *dma, u32 data, u32 reg)
 	struct rsnd_dma_ctrl *dmac = rsnd_priv_to_dmac(priv);
 	struct device *dev = rsnd_priv_to_dev(priv);
 
-	dev_dbg(dev, "w %p : %08x\n", rsnd_dmapp_addr(dmac, dma, reg), data);
+	dev_dbg(dev, "w 0x%px : %08x\n", rsnd_dmapp_addr(dmac, dma, reg), data);
 
 	iowrite32(data, rsnd_dmapp_addr(dmac, dma, reg));
 }
@@ -480,11 +477,10 @@ static int rsnd_dmapp_attach(struct rsnd_dai_stream *io,
 }
 
 static struct rsnd_mod_ops rsnd_dmapp_ops = {
-	.name		= "audmac-pp",
-	.start		= rsnd_dmapp_start,
-	.stop		= rsnd_dmapp_stop,
-	.quit		= rsnd_dmapp_stop,
-	.get_status	= rsnd_mod_get_status,
+	.name	= "audmac-pp",
+	.start	= rsnd_dmapp_start,
+	.stop	= rsnd_dmapp_stop,
+	.quit	= rsnd_dmapp_stop,
 };
 
 /*
@@ -533,14 +529,13 @@ rsnd_gen2_dma_addr(struct rsnd_dai_stream *io,
 	struct device *dev = rsnd_priv_to_dev(priv);
 	phys_addr_t ssi_reg = rsnd_gen_get_phy_addr(priv, RSND_GEN2_SSI);
 	phys_addr_t src_reg = rsnd_gen_get_phy_addr(priv, RSND_GEN2_SCU);
-	int is_ssi = !!(rsnd_io_to_mod_ssi(io) == mod) ||
-		     !!(rsnd_io_to_mod_ssiu(io) == mod);
+	int is_ssi = !!(rsnd_io_to_mod_ssi(io) == mod);
 	int use_src = !!rsnd_io_to_mod_src(io);
 	int use_cmd = !!rsnd_io_to_mod_dvc(io) ||
 		      !!rsnd_io_to_mod_mix(io) ||
 		      !!rsnd_io_to_mod_ctu(io);
 	int id = rsnd_mod_id(mod);
-	int busif = rsnd_mod_id_sub(rsnd_io_to_mod_ssiu(io));
+	int busif = rsnd_ssi_get_busif(io);
 	struct dma_addr {
 		dma_addr_t out_addr;
 		dma_addr_t in_addr;
@@ -624,7 +619,7 @@ static void rsnd_dma_of_path(struct rsnd_mod *this,
 			     struct rsnd_mod **mod_from,
 			     struct rsnd_mod **mod_to)
 {
-	struct rsnd_mod *ssi;
+	struct rsnd_mod *ssi = rsnd_io_to_mod_ssi(io);
 	struct rsnd_mod *src = rsnd_io_to_mod_src(io);
 	struct rsnd_mod *ctu = rsnd_io_to_mod_ctu(io);
 	struct rsnd_mod *mix = rsnd_io_to_mod_mix(io);
@@ -634,28 +629,6 @@ static void rsnd_dma_of_path(struct rsnd_mod *this,
 	struct rsnd_priv *priv = rsnd_mod_to_priv(this);
 	struct device *dev = rsnd_priv_to_dev(priv);
 	int nr, i, idx;
-
-	/*
-	 * It should use "rcar_sound,ssiu" on DT.
-	 * But, we need to keep compatibility for old version.
-	 *
-	 * If it has "rcar_sound.ssiu", it will be used.
-	 * If not, "rcar_sound.ssi" will be used.
-	 * see
-	 *	rsnd_ssiu_dma_req()
-	 *	rsnd_ssi_dma_req()
-	 */
-	if (rsnd_ssiu_of_node(priv)) {
-		struct rsnd_mod *ssiu = rsnd_io_to_mod_ssiu(io);
-
-		/* use SSIU */
-		ssi = ssiu;
-		if (this == rsnd_io_to_mod_ssi(io))
-			this = ssiu;
-	} else {
-		/* keep compatible, use SSI */
-		ssi = rsnd_io_to_mod_ssi(io);
-	}
 
 	if (!ssi)
 		return;
@@ -783,7 +756,7 @@ static int rsnd_dma_alloc(struct rsnd_dai_stream *io, struct rsnd_mod *mod,
 	*dma_mod = rsnd_mod_get(dma);
 
 	ret = rsnd_mod_init(priv, *dma_mod, ops, NULL,
-			    type, dma_id);
+			    rsnd_mod_get_status, type, dma_id);
 	if (ret < 0)
 		return ret;
 
@@ -850,5 +823,5 @@ int rsnd_dma_probe(struct rsnd_priv *priv)
 	priv->dma = dmac;
 
 	/* dummy mem mod for debug */
-	return rsnd_mod_init(NULL, &mem, &mem_ops, NULL, 0, 0);
+	return rsnd_mod_init(NULL, &mem, &mem_ops, NULL, NULL, 0, 0);
 }

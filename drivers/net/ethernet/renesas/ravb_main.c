@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /* Renesas Ethernet AVB device driver
  *
- * Copyright (C) 2014-2019 Renesas Electronics Corporation
+ * Copyright (C) 2014-2015 Renesas Electronics Corporation
  * Copyright (C) 2015 Renesas Solutions Corp.
  * Copyright (C) 2015-2016 Cogent Embedded, Inc. <source@cogentembedded.com>
  *
@@ -80,6 +80,13 @@ static int ravb_config(struct net_device *ndev)
 		netdev_err(ndev, "failed to switch device to config mode\n");
 
 	return error;
+}
+
+static void ravb_set_duplex(struct net_device *ndev)
+{
+	struct ravb_private *priv = netdev_priv(ndev);
+
+	ravb_modify(ndev, ECMR, ECMR_DM, priv->duplex ? ECMR_DM : 0);
 }
 
 static void ravb_set_rate(struct net_device *ndev)
@@ -343,7 +350,7 @@ static int ravb_ring_init(struct net_device *ndev, int q)
 	int i;
 
 	priv->rx_buf_sz = (ndev->mtu <= 1492 ? PKT_BUF_SZ : ndev->mtu) +
-		ETH_HLEN + VLAN_HLEN + sizeof(__sum16);
+		ETH_HLEN + VLAN_HLEN;
 
 	/* Allocate RX and TX skb rings */
 	priv->rx_skb[q] = kcalloc(priv->num_rx_ring[q],
@@ -399,11 +406,13 @@ error:
 /* E-MAC init function */
 static void ravb_emac_init(struct net_device *ndev)
 {
+	struct ravb_private *priv = netdev_priv(ndev);
+
 	/* Receive frame limit set register */
 	ravb_write(ndev, ndev->mtu + ETH_HLEN + VLAN_HLEN + ETH_FCS_LEN, RFLR);
 
 	/* EMAC Mode: PAUSE prohibition; Duplex; RX Checksum; TX; RX */
-	ravb_write(ndev, ECMR_ZPF | ECMR_DM |
+	ravb_write(ndev, ECMR_ZPF | (priv->duplex ? ECMR_DM : 0) |
 		   (ndev->features & NETIF_F_RXCSUM ? ECMR_RCSC : 0) |
 		   ECMR_TE | ECMR_RE, ECMR);
 
@@ -447,12 +456,18 @@ static int ravb_dmac_init(struct net_device *ndev)
 	ravb_ring_format(ndev, RAVB_BE);
 	ravb_ring_format(ndev, RAVB_NC);
 
+#if defined(__LITTLE_ENDIAN)
+	ravb_modify(ndev, CCC, CCC_BOC, 0);
+#else
+	ravb_modify(ndev, CCC, CCC_BOC, CCC_BOC);
+#endif
+
 	/* Set AVB RX */
 	ravb_write(ndev,
 		   RCR_EFFS | RCR_ENCF | RCR_ETS0 | RCR_ESF | 0x18000000, RCR);
 
 	/* Set FIFO size */
-	ravb_write(ndev, TGC_TQP_AVBMODE1 | 0x00112200, TGC);
+	ravb_write(ndev, TGC_TQP_AVBMODE1 | 0x00222200, TGC);
 
 	/* Timestamp enable */
 	ravb_write(ndev, TCCR_TFEN, TCCR);
@@ -507,10 +522,7 @@ static void ravb_get_tx_tstamp(struct net_device *ndev)
 			kfree(ts_skb);
 			if (tag == tfa_tag) {
 				skb_tstamp_tx(skb, &shhwtstamps);
-				dev_consume_skb_any(skb);
 				break;
-			} else {
-				dev_kfree_skb_any(skb);
 			}
 		}
 		ravb_modify(ndev, TCCR, TCCR_TFR, TCCR_TFR);
@@ -521,15 +533,13 @@ static void ravb_rx_csum(struct sk_buff *skb)
 {
 	u8 *hw_csum;
 
-	/* The hardware checksum is contained in sizeof(__sum16) (2) bytes
-	 * appended to packet data
-	 */
-	if (unlikely(skb->len < sizeof(__sum16)))
+	/* The hardware checksum is 2 bytes appended to packet data */
+	if (unlikely(skb->len < 2))
 		return;
-	hw_csum = skb_tail_pointer(skb) - sizeof(__sum16);
+	hw_csum = skb_tail_pointer(skb) - 2;
 	skb->csum = csum_unfold((__force __sum16)get_unaligned_le16(hw_csum));
 	skb->ip_summed = CHECKSUM_COMPLETE;
-	skb_trim(skb, skb->len - sizeof(__sum16));
+	skb_trim(skb, skb->len - 2);
 }
 
 /* Packet receive function for Ethernet AVB */
@@ -740,14 +750,14 @@ static void ravb_error_interrupt(struct net_device *ndev)
 	ravb_write(ndev, ~(EIS_QFS | EIS_RESERVED), EIS);
 	if (eis & EIS_QFS) {
 		ris2 = ravb_read(ndev, RIS2);
-		ravb_write(ndev, ~(RIS2_QFF0 | RIS2_QFF1 | RIS2_RFFF | RIS2_RESERVED),
+		ravb_write(ndev, ~(RIS2_QFF0 | RIS2_RFFF | RIS2_RESERVED),
 			   RIS2);
 
 		/* Receive Descriptor Empty int */
 		if (ris2 & RIS2_QFF0)
 			priv->stats[RAVB_BE].rx_over_errors++;
 
-		/* Receive Descriptor Empty int */
+		    /* Receive Descriptor Empty int */
 		if (ris2 & RIS2_QFF1)
 			priv->stats[RAVB_NC].rx_over_errors++;
 
@@ -985,6 +995,12 @@ static void ravb_adjust_link(struct net_device *ndev)
 		ravb_rcv_snd_disable(ndev);
 
 	if (phydev->link) {
+		if (phydev->duplex != priv->duplex) {
+			new_state = true;
+			priv->duplex = phydev->duplex;
+			ravb_set_duplex(ndev);
+		}
+
 		if (phydev->speed != priv->speed) {
 			new_state = true;
 			priv->speed = phydev->speed;
@@ -999,6 +1015,7 @@ static void ravb_adjust_link(struct net_device *ndev)
 		new_state = true;
 		priv->link = 0;
 		priv->speed = 0;
+		priv->duplex = -1;
 	}
 
 	/* Enable TX and RX right over here, if E-MAC change is ignored */
@@ -1028,6 +1045,7 @@ static int ravb_phy_init(struct net_device *ndev)
 
 	priv->link = 0;
 	priv->speed = 0;
+	priv->duplex = -1;
 
 	/* Try connecting to PHY */
 	pn = of_parse_phandle(np, "phy-handle", 0);
@@ -1064,8 +1082,11 @@ static int ravb_phy_init(struct net_device *ndev)
 		netdev_info(ndev, "limited PHY to 100Mbit/s\n");
 	}
 
-	/* 10BASE is not supported */
-	phydev->supported &= ~PHY_10BT_FEATURES;
+	/* 10BASE, Pause and Asym Pause is not supported */
+	phy_remove_link_mode(phydev, ETHTOOL_LINK_MODE_10baseT_Half_BIT);
+	phy_remove_link_mode(phydev, ETHTOOL_LINK_MODE_10baseT_Full_BIT);
+	phy_remove_link_mode(phydev, ETHTOOL_LINK_MODE_Pause_BIT);
+	phy_remove_link_mode(phydev, ETHTOOL_LINK_MODE_Asym_Pause_BIT);
 
 	phy_attached_info(phydev);
 
@@ -1394,12 +1415,12 @@ static int ravb_open(struct net_device *ndev)
 	if (priv->chip_id == RCAR_GEN2)
 		ravb_ptp_init(ndev, priv->pdev);
 
+	netif_tx_start_all_queues(ndev);
+
 	/* PHY control start */
 	error = ravb_phy_start(ndev);
 	if (error)
 		goto out_ptp_stop;
-
-	netif_tx_start_all_queues(ndev);
 
 	return 0;
 
@@ -1447,13 +1468,6 @@ static void ravb_tx_timeout_work(struct work_struct *work)
 	struct ravb_private *priv = container_of(work, struct ravb_private,
 						 work);
 	struct net_device *ndev = priv->ndev;
-	int error;
-
-	if (!rtnl_trylock()) {
-		usleep_range(1000, 2000);
-		schedule_work(&priv->work);
-		return;
-	}
 
 	netif_tx_stop_all_queues(ndev);
 
@@ -1462,44 +1476,20 @@ static void ravb_tx_timeout_work(struct work_struct *work)
 		ravb_ptp_stop(ndev);
 
 	/* Wait for DMA stopping */
-	if (ravb_stop_dma(ndev)) {
-		/* If ravb_stop_dma() fails, the hardware is still operating
-		 * for TX and/or RX. So, this should not call the following
-		 * functions because ravb_dmac_init() is possible to fail too.
-		 * Also, this should not retry ravb_stop_dma() again and again
-		 * here because it's possible to wait forever. So, this just
-		 * re-enables the TX and RX and skip the following
-		 * re-initialization procedure.
-		 */
-		ravb_rcv_snd_enable(ndev);
-		goto out;
-	}
+	ravb_stop_dma(ndev);
 
 	ravb_ring_free(ndev, RAVB_BE);
 	ravb_ring_free(ndev, RAVB_NC);
 
 	/* Device init */
-	error = ravb_dmac_init(ndev);
-	if (error) {
-		/* If ravb_dmac_init() fails, descriptors are freed. So, this
-		 * should return here to avoid re-enabling the TX and RX in
-		 * ravb_emac_init().
-		 */
-		netdev_err(ndev, "%s: ravb_dmac_init() failed, error %d\n",
-			   __func__, error);
-		goto out_unlock;
-	}
+	ravb_dmac_init(ndev);
 	ravb_emac_init(ndev);
 
-out:
 	/* Initialise PTP Clock driver */
 	if (priv->chip_id == RCAR_GEN2)
 		ravb_ptp_init(ndev, priv->pdev);
 
 	netif_tx_start_all_queues(ndev);
-
-out_unlock:
-	rtnl_unlock();
 }
 
 /* Packet transmit function for Ethernet AVB */
@@ -1511,7 +1501,7 @@ static netdev_tx_t ravb_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	struct ravb_tstamp_skb *ts_skb;
 	struct ravb_tx_desc *desc;
 	unsigned long flags;
-	dma_addr_t dma_addr;
+	u32 dma_addr;
 	void *buffer;
 	u32 entry;
 	u32 len;
@@ -1592,7 +1582,7 @@ static netdev_tx_t ravb_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 			}
 			goto unmap;
 		}
-		ts_skb->skb = skb_get(skb);
+		ts_skb->skb = skb;
 		ts_skb->tag = priv->ts_skb_tag++;
 		priv->ts_skb_tag &= 0x3ff;
 		list_add_tail(&ts_skb->list, &priv->ts_skb_list);
@@ -1613,14 +1603,6 @@ static netdev_tx_t ravb_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	} else {
 		desc->die_dt = DT_FSINGLE;
 	}
-
-	/* Before ringing the doorbell we need to make sure that the latest
-	 * writes have been committed to memory, otherwise it could delay
-	 * things until the doorbell is rang again.
-	 * This is in replacement of the read operation mentioned in the HW
-	 * manuals.
-	 */
-	dma_wmb();
 	ravb_modify(ndev, TCCR, TCCR_TSRQ0 << q, TCCR_TSRQ0 << q);
 
 	priv->cur_tx[q] += num_tx_desc;
@@ -1664,6 +1646,15 @@ static struct net_device_stats *ravb_get_stats(struct net_device *ndev)
 
 	nstats->tx_dropped += ravb_read(ndev, TROCR);
 	ravb_write(ndev, 0, TROCR);	/* (write clear) */
+	nstats->collisions += ravb_read(ndev, CDCR);
+	ravb_write(ndev, 0, CDCR);	/* (write clear) */
+	nstats->tx_carrier_errors += ravb_read(ndev, LCCR);
+	ravb_write(ndev, 0, LCCR);	/* (write clear) */
+
+	nstats->tx_carrier_errors += ravb_read(ndev, CERCR);
+	ravb_write(ndev, 0, CERCR);	/* (write clear) */
+	nstats->tx_carrier_errors += ravb_read(ndev, CEECR);
+	ravb_write(ndev, 0, CEECR);	/* (write clear) */
 
 	nstats->rx_packets = stats0->rx_packets + stats1->rx_packets;
 	nstats->tx_packets = stats0->tx_packets + stats1->tx_packets;
@@ -1723,7 +1714,6 @@ static int ravb_close(struct net_device *ndev)
 	/* Clear the timestamp list */
 	list_for_each_entry_safe(ts_skb, ts_skb2, &priv->ts_skb_list, list) {
 		list_del(&ts_skb->list);
-		kfree_skb(ts_skb->skb);
 		kfree(ts_skb);
 	}
 
@@ -1734,8 +1724,6 @@ static int ravb_close(struct net_device *ndev)
 		if (of_phy_is_fixed_link(np))
 			of_phy_deregister_fixed_link(np);
 	}
-
-	cancel_work_sync(&priv->work);
 
 	if (priv->chip_id != RCAR_GEN2) {
 		free_irq(priv->tx_irqs[RAVB_NC], ndev);
@@ -1764,16 +1752,12 @@ static int ravb_hwtstamp_get(struct net_device *ndev, struct ifreq *req)
 	config.flags = 0;
 	config.tx_type = priv->tstamp_tx_ctrl ? HWTSTAMP_TX_ON :
 						HWTSTAMP_TX_OFF;
-	switch (priv->tstamp_rx_ctrl & RAVB_RXTSTAMP_TYPE) {
-	case RAVB_RXTSTAMP_TYPE_V2_L2_EVENT:
+	if (priv->tstamp_rx_ctrl & RAVB_RXTSTAMP_TYPE_V2_L2_EVENT)
 		config.rx_filter = HWTSTAMP_FILTER_PTP_V2_L2_EVENT;
-		break;
-	case RAVB_RXTSTAMP_TYPE_ALL:
+	else if (priv->tstamp_rx_ctrl & RAVB_RXTSTAMP_TYPE_ALL)
 		config.rx_filter = HWTSTAMP_FILTER_ALL;
-		break;
-	default:
+	else
 		config.rx_filter = HWTSTAMP_FILTER_NONE;
-	}
 
 	return copy_to_user(req->ifr_data, &config, sizeof(config)) ?
 		-EFAULT : 0;
@@ -1997,13 +1981,6 @@ static void ravb_set_config_mode(struct net_device *ndev)
 	}
 }
 
-static const struct soc_device_attribute ravb_delay_mode_quirk_match[] = {
-	{ .soc_id = "r8a774c0" },
-	{ .soc_id = "r8a77990" },
-	{ .soc_id = "r8a77995" },
-	{ /* sentinel */ }
-};
-
 /* Set tx and rx clock internal delay modes */
 static void ravb_set_delay_mode(struct net_device *ndev)
 {
@@ -2015,12 +1992,8 @@ static void ravb_set_delay_mode(struct net_device *ndev)
 		set |= APSR_DM_RDM;
 
 	if (priv->phy_interface == PHY_INTERFACE_MODE_RGMII_ID ||
-	    priv->phy_interface == PHY_INTERFACE_MODE_RGMII_TXID) {
-		if (!WARN(soc_device_match(ravb_delay_mode_quirk_match),
-			  "phy-mode %s requires TX clock internal delay mode which is not supported by this hardware revision. Please update device tree",
-			  phy_modes(priv->phy_interface)))
-			set |= APSR_DM_TDM;
-	}
+	    priv->phy_interface == PHY_INTERFACE_MODE_RGMII_TXID)
+		set |= APSR_DM_TDM;
 
 	ravb_modify(ndev, APSR, APSR_DM, set);
 }
@@ -2245,11 +2218,11 @@ static int ravb_remove(struct platform_device *pdev)
 			  priv->desc_bat_dma);
 	/* Set reset mode */
 	ravb_write(ndev, CCC_OPC_RESET, CCC);
+	pm_runtime_put_sync(&pdev->dev);
 	unregister_netdev(ndev);
 	netif_napi_del(&priv->napi[RAVB_NC]);
 	netif_napi_del(&priv->napi[RAVB_BE]);
 	ravb_mdio_release(priv);
-	pm_runtime_put_sync(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
 	free_netdev(ndev);
 	platform_set_drvdata(pdev, NULL);
@@ -2356,7 +2329,6 @@ static int __maybe_unused ravb_resume(struct device *dev)
 		ret = ravb_open(ndev);
 		if (ret < 0)
 			return ret;
-		ravb_set_rx_mode(ndev);
 		netif_device_attach(ndev);
 	}
 

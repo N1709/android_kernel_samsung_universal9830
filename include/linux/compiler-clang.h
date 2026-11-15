@@ -3,8 +3,9 @@
 #error "Please don't include <linux/compiler-clang.h> directly, include <linux/compiler.h> instead."
 #endif
 
-/* Compiler specific definitions for Clang compiler */
-
+/* Some compiler specific definitions are overwritten here
+ * for Clang compiler
+ */
 #define uninitialized_var(x) x = *(&(x))
 
 /* same as gcc, this was present in clang-2.6 so we can assume it works
@@ -15,16 +16,9 @@
 /* all clang versions usable with the kernel support KASAN ABI version 5 */
 #define KASAN_ABI_VERSION 5
 
-/* __no_sanitize_address has been already defined compiler-gcc.h */
-#undef __no_sanitize_address
-
-#if __has_feature(address_sanitizer) || __has_feature(hwaddress_sanitizer)
 /* emulate gcc's __SANITIZE_ADDRESS__ flag */
+#if __has_feature(address_sanitizer)
 #define __SANITIZE_ADDRESS__
-#define __no_sanitize_address \
-		__attribute__((no_sanitize("address", "hwaddress")))
-#else
-#define __no_sanitize_address
 #endif
 
 /*
@@ -44,19 +38,4 @@
  * and may be redefined here because they should not be shared with other
  * compilers, like ICC.
  */
-#define __must_be_array(a) BUILD_BUG_ON_ZERO(__same_type((a), &(a)[0]))
-
-#ifdef CONFIG_LTO_CLANG
-#ifdef CONFIG_FTRACE_MCOUNT_RECORD
-#define __norecordmcount \
-	__attribute__((__section__(".text..ftrace")))
-#endif
-
-#define __nocfi		__attribute__((no_sanitize("cfi")))
-#endif
-
-#if __has_feature(shadow_call_stack)
-# define __noscs	__attribute__((__no_sanitize__("shadow-call-stack")))
-#else
-# define __noscs
-#endif
+#define barrier() __asm__ __volatile__("" : : : "memory")

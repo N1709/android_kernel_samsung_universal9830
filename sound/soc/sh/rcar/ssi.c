@@ -150,6 +150,11 @@ int rsnd_ssi_use_busif(struct rsnd_dai_stream *io)
 	return use_busif;
 }
 
+int rsnd_ssi_get_busif(struct rsnd_dai_stream *io)
+{
+	return 0; /* BUSIF0 only for now */
+}
+
 static void rsnd_ssi_status_clear(struct rsnd_mod *mod)
 {
 	rsnd_mod_write(mod, SSISR, 0);
@@ -301,7 +306,7 @@ static int rsnd_ssi_master_clk_start(struct rsnd_mod *mod,
 	if (rsnd_ssi_is_multi_slave(mod, io))
 		return 0;
 
-	if (ssi->usrcnt > 0) {
+	if (ssi->usrcnt > 1) {
 		if (ssi->rate != rate) {
 			dev_err(dev, "SSI parent/child should use same rate\n");
 			return -EINVAL;
@@ -387,12 +392,23 @@ static void rsnd_ssi_config_init(struct rsnd_mod *mod,
 
 	if (rdai->bit_clk_inv)
 		cr_own |= SCKP;
-	if (rdai->frm_clk_inv ^ is_tdm)
+	if (rdai->frm_clk_inv && !is_tdm)
 		cr_own |= SWSP;
 	if (rdai->data_alignment)
 		cr_own |= SDTA;
 	if (rdai->sys_delay)
 		cr_own |= DEL;
+
+	/*
+	 * TDM Mode
+	 * see
+	 *	rsnd_ssiu_init_gen2()
+	 */
+	wsr = ssi->wsr;
+	if (is_tdm) {
+		wsr	|= WS_MODE;
+		cr_own	|= CHNL_8;
+	}
 
 	/*
 	 * We shouldn't exchange SWSP after running.
@@ -424,16 +440,6 @@ static void rsnd_ssi_config_init(struct rsnd_mod *mod,
 		cr_mode = DIEN;		/* PIO : enable Data interrupt */
 	}
 
-	/*
-	 * TDM Extend Mode
-	 * see
-	 *	rsnd_ssiu_init_gen2()
-	 */
-	wsr = ssi->wsr;
-	if (is_tdm) {
-		wsr	|= WS_MODE;
-		cr_own	|= CHNL_8;
-	}
 init_end:
 	ssi->cr_own	= cr_own;
 	ssi->cr_mode	= cr_mode;
@@ -582,15 +588,9 @@ static int rsnd_ssi_stop(struct rsnd_mod *mod,
 	 * Capture:  It might not receave data. Do nothing
 	 */
 	if (rsnd_io_is_play(io)) {
-		rsnd_mod_write(mod, SSICR, cr | ssi->cr_en);
+		rsnd_mod_write(mod, SSICR, cr | EN);
 		rsnd_ssi_status_check(mod, DIRQ);
 	}
-
-	/* In multi-SSI mode, stop is performed by setting ssi0129 in
-	 * SSI_CONTROL to 0 (in rsnd_ssio_stop_gen2). Do nothing here.
-	 */
-	if (rsnd_ssi_multi_slaves_runtime(io))
-		return 0;
 
 	/*
 	 * disable SSI,
@@ -681,41 +681,6 @@ static irqreturn_t rsnd_ssi_interrupt(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static u32 *rsnd_ssi_get_status(struct rsnd_mod *mod,
-				struct rsnd_dai_stream *io,
-				enum rsnd_mod_type type)
-{
-	/*
-	 * SSIP (= SSI parent) needs to be special, otherwise,
-	 * 2nd SSI might doesn't start. see also rsnd_mod_call()
-	 *
-	 * We can't include parent SSI status on SSI, because we don't know
-	 * how many SSI requests parent SSI. Thus, it is localed on "io" now.
-	 * ex) trouble case
-	 *	Playback: SSI0
-	 *	Capture : SSI1 (needs SSI0)
-	 *
-	 * 1) start Capture  ->	SSI0/SSI1 are started.
-	 * 2) start Playback ->	SSI0 doesn't work, because it is already
-	 *			marked as "started" on 1)
-	 *
-	 * OTOH, using each mod's status is good for MUX case.
-	 * It doesn't need to start in 2nd start
-	 * ex)
-	 *	IO-0: SRC0 -> CTU1 -+-> MUX -> DVC -> SSIU -> SSI0
-	 *			    |
-	 *	IO-1: SRC1 -> CTU2 -+
-	 *
-	 * 1) start IO-0 ->	start SSI0
-	 * 2) start IO-1 ->	SSI0 doesn't need to start, because it is
-	 *			already started on 1)
-	 */
-	if (type == RSND_MOD_SSIP)
-		return &io->parent_ssi_status;
-
-	return rsnd_mod_get_status(mod, io, type);
-}
-
 /*
  *		SSI PIO
  */
@@ -729,9 +694,6 @@ static void rsnd_ssi_parent_attach(struct rsnd_mod *mod,
 		return;
 
 	if (!rsnd_rdai_is_clk_master(rdai))
-		return;
-
-	if (rsnd_ssi_is_multi_slave(mod, io))
 		return;
 
 	switch (rsnd_mod_id(mod)) {
@@ -768,7 +730,7 @@ static int rsnd_ssi_common_probe(struct rsnd_mod *mod,
 {
 	struct device *dev = rsnd_priv_to_dev(priv);
 	struct rsnd_ssi *ssi = rsnd_mod_to_ssi(mod);
-	int ret = 0;
+	int ret;
 
 	/*
 	 * SSIP/SSIU/IRQ are not needed on
@@ -781,6 +743,10 @@ static int rsnd_ssi_common_probe(struct rsnd_mod *mod,
 	 * It can't judge ssi parent at this point
 	 * see rsnd_ssi_pcm_new()
 	 */
+
+	ret = rsnd_ssiu_attach(io, mod);
+	if (ret < 0)
+		return ret;
 
 	/*
 	 * SSI might be called again as PIO fallback
@@ -910,19 +876,18 @@ static int rsnd_ssi_prepare(struct rsnd_mod *mod,
 }
 
 static struct rsnd_mod_ops rsnd_ssi_pio_ops = {
-	.name		= SSI_NAME,
-	.probe		= rsnd_ssi_common_probe,
-	.remove		= rsnd_ssi_common_remove,
-	.init		= rsnd_ssi_pio_init,
-	.quit		= rsnd_ssi_quit,
-	.start		= rsnd_ssi_start,
-	.stop		= rsnd_ssi_stop,
-	.irq		= rsnd_ssi_irq,
-	.pointer	= rsnd_ssi_pio_pointer,
-	.pcm_new	= rsnd_ssi_pcm_new,
-	.hw_params	= rsnd_ssi_hw_params,
-	.prepare	= rsnd_ssi_prepare,
-	.get_status	= rsnd_ssi_get_status,
+	.name	= SSI_NAME,
+	.probe	= rsnd_ssi_common_probe,
+	.remove	= rsnd_ssi_common_remove,
+	.init	= rsnd_ssi_pio_init,
+	.quit	= rsnd_ssi_quit,
+	.start	= rsnd_ssi_start,
+	.stop	= rsnd_ssi_stop,
+	.irq	= rsnd_ssi_irq,
+	.pointer = rsnd_ssi_pio_pointer,
+	.pcm_new = rsnd_ssi_pcm_new,
+	.hw_params = rsnd_ssi_hw_params,
+	.prepare = rsnd_ssi_prepare,
 };
 
 static int rsnd_ssi_dma_probe(struct rsnd_mod *mod,
@@ -976,17 +941,6 @@ static struct dma_chan *rsnd_ssi_dma_req(struct rsnd_dai_stream *io,
 	int is_play = rsnd_io_is_play(io);
 	char *name;
 
-	/*
-	 * It should use "rcar_sound,ssiu" on DT.
-	 * But, we need to keep compatibility for old version.
-	 *
-	 * If it has "rcar_sound.ssiu", it will be used.
-	 * If not, "rcar_sound.ssi" will be used.
-	 * see
-	 *	rsnd_ssiu_dma_req()
-	 *	rsnd_dma_of_path()
-	 */
-
 	if (rsnd_ssi_use_busif(io))
 		name = is_play ? "rxu" : "txu";
 	else
@@ -997,20 +951,19 @@ static struct dma_chan *rsnd_ssi_dma_req(struct rsnd_dai_stream *io,
 }
 
 static struct rsnd_mod_ops rsnd_ssi_dma_ops = {
-	.name		= SSI_NAME,
-	.dma_req	= rsnd_ssi_dma_req,
-	.probe		= rsnd_ssi_dma_probe,
-	.remove		= rsnd_ssi_common_remove,
-	.init		= rsnd_ssi_init,
-	.quit		= rsnd_ssi_quit,
-	.start		= rsnd_ssi_start,
-	.stop		= rsnd_ssi_stop,
-	.irq		= rsnd_ssi_irq,
-	.pcm_new	= rsnd_ssi_pcm_new,
-	.fallback	= rsnd_ssi_fallback,
-	.hw_params	= rsnd_ssi_hw_params,
-	.prepare	= rsnd_ssi_prepare,
-	.get_status	= rsnd_ssi_get_status,
+	.name	= SSI_NAME,
+	.dma_req = rsnd_ssi_dma_req,
+	.probe	= rsnd_ssi_dma_probe,
+	.remove	= rsnd_ssi_common_remove,
+	.init	= rsnd_ssi_init,
+	.quit	= rsnd_ssi_quit,
+	.start	= rsnd_ssi_start,
+	.stop	= rsnd_ssi_stop,
+	.irq	= rsnd_ssi_irq,
+	.pcm_new = rsnd_ssi_pcm_new,
+	.fallback = rsnd_ssi_fallback,
+	.hw_params = rsnd_ssi_hw_params,
+	.prepare = rsnd_ssi_prepare,
 };
 
 int rsnd_ssi_is_dma_mode(struct rsnd_mod *mod)
@@ -1138,6 +1091,41 @@ int __rsnd_ssi_is_pin_sharing(struct rsnd_mod *mod)
 	return !!(rsnd_flags_has(rsnd_mod_to_ssi(mod), RSND_SSI_CLK_PIN_SHARE));
 }
 
+static u32 *rsnd_ssi_get_status(struct rsnd_dai_stream *io,
+				struct rsnd_mod *mod,
+				enum rsnd_mod_type type)
+{
+	/*
+	 * SSIP (= SSI parent) needs to be special, otherwise,
+	 * 2nd SSI might doesn't start. see also rsnd_mod_call()
+	 *
+	 * We can't include parent SSI status on SSI, because we don't know
+	 * how many SSI requests parent SSI. Thus, it is localed on "io" now.
+	 * ex) trouble case
+	 *	Playback: SSI0
+	 *	Capture : SSI1 (needs SSI0)
+	 *
+	 * 1) start Capture  ->	SSI0/SSI1 are started.
+	 * 2) start Playback ->	SSI0 doesn't work, because it is already
+	 *			marked as "started" on 1)
+	 *
+	 * OTOH, using each mod's status is good for MUX case.
+	 * It doesn't need to start in 2nd start
+	 * ex)
+	 *	IO-0: SRC0 -> CTU1 -+-> MUX -> DVC -> SSIU -> SSI0
+	 *			    |
+	 *	IO-1: SRC1 -> CTU2 -+
+	 *
+	 * 1) start IO-0 ->	start SSI0
+	 * 2) start IO-1 ->	SSI0 doesn't need to start, because it is
+	 *			already started on 1)
+	 */
+	if (type == RSND_MOD_SSIP)
+		return &io->parent_ssi_status;
+
+	return rsnd_mod_get_status(io, mod, type);
+}
+
 int rsnd_ssi_probe(struct rsnd_priv *priv)
 {
 	struct device_node *node;
@@ -1204,7 +1192,7 @@ int rsnd_ssi_probe(struct rsnd_priv *priv)
 			ops = &rsnd_ssi_dma_ops;
 
 		ret = rsnd_mod_init(priv, rsnd_mod_get(ssi), ops, clk,
-				    RSND_MOD_SSI, i);
+				    rsnd_ssi_get_status, RSND_MOD_SSI, i);
 		if (ret) {
 			of_node_put(np);
 			goto rsnd_ssi_probe_done;

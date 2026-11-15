@@ -47,15 +47,15 @@ struct pci_test {
 	unsigned long	size;
 };
 
-static int run_test(struct pci_test *test)
+static void run_test(struct pci_test *test)
 {
-	int ret = -EINVAL;
+	long ret;
 	int fd;
 
 	fd = open(test->device, O_RDWR);
 	if (fd < 0) {
 		perror("can't open PCI Endpoint Test device");
-		return -ENODEV;
+		return;
 	}
 
 	if (test->barnum >= 0 && test->barnum <= 5) {
@@ -140,8 +140,6 @@ static int run_test(struct pci_test *test)
 	}
 
 	fflush(stdout);
-	close(fd);
-	return (ret < 0) ? ret : 1 - ret; /* return 0 if test succeeded */
 }
 
 int main(int argc, char **argv)
@@ -230,5 +228,6 @@ usage:
 		return -EINVAL;
 	}
 
-	return run_test(test);
+	run_test(test);
+	return 0;
 }

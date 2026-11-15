@@ -919,7 +919,7 @@ xfs_vm_writepage(
 	struct writeback_control *wbc)
 {
 	struct xfs_writepage_ctx wpc = {
-		.io_type = XFS_IO_INVALID,
+		.io_type = XFS_IO_HOLE,
 	};
 	int			ret;
 
@@ -935,7 +935,7 @@ xfs_vm_writepages(
 	struct writeback_control *wbc)
 {
 	struct xfs_writepage_ctx wpc = {
-		.io_type = XFS_IO_INVALID,
+		.io_type = XFS_IO_HOLE,
 	};
 	int			ret;
 

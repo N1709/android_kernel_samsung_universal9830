@@ -21,7 +21,7 @@
 #include <linux/notifier.h>
 #include <linux/sched.h>
 #include <linux/gfp.h>
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/nmi.h>
 
 #include <asm/fixmap.h>

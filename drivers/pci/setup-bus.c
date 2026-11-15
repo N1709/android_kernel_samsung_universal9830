@@ -826,9 +826,11 @@ static resource_size_t calculate_iosize(resource_size_t size,
 	size = (size & 0xff) + ((size & ~0xffUL) << 2);
 #endif
 	size = size + size1;
+	if (size < old_size)
+		size = old_size;
 
-	size = max(size, add_size) + children_add_size;
-	return ALIGN(max(size, old_size), align);
+	size = ALIGN(max(size, add_size) + children_add_size, align);
+	return size;
 }
 
 static resource_size_t calculate_memsize(resource_size_t size,
@@ -842,9 +844,11 @@ static resource_size_t calculate_memsize(resource_size_t size,
 		size = min_size;
 	if (old_size == 1)
 		old_size = 0;
+	if (size < old_size)
+		size = old_size;
 
-	size = max(size, add_size) + children_add_size;
-	return ALIGN(max(size, old_size), align);
+	size = ALIGN(max(size, add_size) + children_add_size, align);
+	return size;
 }
 
 resource_size_t __weak pcibios_window_alignment(struct pci_bus *bus,
@@ -1818,18 +1822,12 @@ again:
 	/* restore size and flags */
 	list_for_each_entry(fail_res, &fail_head, list) {
 		struct resource *res = fail_res->res;
-		int idx;
 
 		res->start = fail_res->start;
 		res->end = fail_res->end;
 		res->flags = fail_res->flags;
-
-		if (pci_is_bridge(fail_res->dev)) {
-			idx = res - &fail_res->dev->resource[0];
-			if (idx >= PCI_BRIDGE_RESOURCES &&
-			    idx <= PCI_BRIDGE_RESOURCE_END)
-				res->flags = 0;
-		}
+		if (fail_res->dev->subordinate)
+			res->flags = 0;
 	}
 	free_list(&fail_head);
 
@@ -2070,18 +2068,12 @@ again:
 	/* restore size and flags */
 	list_for_each_entry(fail_res, &fail_head, list) {
 		struct resource *res = fail_res->res;
-		int idx;
 
 		res->start = fail_res->start;
 		res->end = fail_res->end;
 		res->flags = fail_res->flags;
-
-		if (pci_is_bridge(fail_res->dev)) {
-			idx = res - &fail_res->dev->resource[0];
-			if (idx >= PCI_BRIDGE_RESOURCES &&
-			    idx <= PCI_BRIDGE_RESOURCE_END)
-				res->flags = 0;
-		}
+		if (fail_res->dev->subordinate)
+			res->flags = 0;
 	}
 	free_list(&fail_head);
 

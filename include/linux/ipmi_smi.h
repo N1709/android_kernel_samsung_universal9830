@@ -28,7 +28,7 @@ struct device;
  */
 
 /* Structure for the low-level drivers. */
-typedef struct ipmi_smi *ipmi_smi_t;
+struct ipmi_smi;
 
 /*
  * Flags for set_check_watch() below.  Tells if the SMI should be

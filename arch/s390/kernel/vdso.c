@@ -18,10 +18,10 @@
 #include <linux/user.h>
 #include <linux/elf.h>
 #include <linux/security.h>
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/compat.h>
 #include <asm/asm-offsets.h>
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 #include <asm/processor.h>
 #include <asm/mmu.h>
 #include <asm/mmu_context.h>
@@ -224,9 +224,10 @@ int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp)
 
 	vdso_pages = vdso64_pages;
 #ifdef CONFIG_COMPAT
-	mm->context.compat_mm = is_compat_task();
-	if (mm->context.compat_mm)
+	if (is_compat_task()) {
 		vdso_pages = vdso32_pages;
+		mm->context.compat_mm = 1;
+	}
 #endif
 	/*
 	 * vDSO has a problem and was disabled, just don't "enable" it for
@@ -240,7 +241,7 @@ int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp)
 	 * it at vdso_base which is the "natural" base for it, but we might
 	 * fail and end up putting it elsewhere.
 	 */
-	if (mmap_write_lock_killable(mm))
+	if (down_write_killable(&mm->mmap_sem))
 		return -EINTR;
 	vdso_base = get_unmapped_area(NULL, 0, vdso_pages << PAGE_SHIFT, 0, 0);
 	if (IS_ERR_VALUE(vdso_base)) {
@@ -271,7 +272,7 @@ int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp)
 	rc = 0;
 
 out_up:
-	mmap_write_unlock(mm);
+	up_write(&mm->mmap_sem);
 	return rc;
 }
 

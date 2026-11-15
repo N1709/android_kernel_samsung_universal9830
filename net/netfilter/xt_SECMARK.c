@@ -34,8 +34,6 @@ secmark_tg(struct sk_buff *skb, const struct xt_secmark_target_info_v1 *info)
 {
 	u32 secmark = 0;
 
-	BUG_ON(info->mode != mode);
-
 	switch (mode) {
 	case SECMARK_MODE_SEL:
 		secmark = info->secid;

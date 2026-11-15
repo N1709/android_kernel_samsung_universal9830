@@ -137,38 +137,20 @@ struct dma_chan *rsnd_mod_dma_req(struct rsnd_dai_stream *io,
 	return mod->ops->dma_req(io, mod);
 }
 
-u32 *rsnd_mod_get_status(struct rsnd_mod *mod,
-			 struct rsnd_dai_stream *io,
+u32 *rsnd_mod_get_status(struct rsnd_dai_stream *io,
+			 struct rsnd_mod *mod,
 			 enum rsnd_mod_type type)
 {
 	return &mod->status;
-}
-
-int rsnd_mod_id_raw(struct rsnd_mod *mod)
-{
-	return mod->id;
-}
-
-int rsnd_mod_id(struct rsnd_mod *mod)
-{
-	if ((mod)->ops->id)
-		return (mod)->ops->id(mod);
-
-	return rsnd_mod_id_raw(mod);
-}
-
-int rsnd_mod_id_sub(struct rsnd_mod *mod)
-{
-	if ((mod)->ops->id_sub)
-		return (mod)->ops->id_sub(mod);
-
-	return 0;
 }
 
 int rsnd_mod_init(struct rsnd_priv *priv,
 		  struct rsnd_mod *mod,
 		  struct rsnd_mod_ops *ops,
 		  struct clk *clk,
+		  u32* (*get_status)(struct rsnd_dai_stream *io,
+				     struct rsnd_mod *mod,
+				     enum rsnd_mod_type type),
 		  enum rsnd_mod_type type,
 		  int id)
 {
@@ -182,6 +164,7 @@ int rsnd_mod_init(struct rsnd_priv *priv,
 	mod->type	= type;
 	mod->clk	= clk;
 	mod->priv	= priv;
+	mod->get_status	= get_status;
 
 	return ret;
 }
@@ -489,7 +472,7 @@ static int rsnd_status_update(u32 *status,
 	enum rsnd_mod_type *types = rsnd_mod_sequence[is_play];		\
 	for_each_rsnd_mod_arrays(i, mod, io, types, RSND_MOD_MAX) {	\
 		int tmp = 0;						\
-		u32 *status = mod->ops->get_status(mod, io, types[i]);	\
+		u32 *status = mod->get_status(io, mod, types[i]);	\
 		int func_call = rsnd_status_update(status,		\
 						__rsnd_mod_shift_##fn,	\
 						__rsnd_mod_add_##fn,	\
@@ -703,7 +686,6 @@ static int rsnd_soc_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	}
 
 	/* set format */
-	rdai->bit_clk_inv = 0;
 	switch (fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
 	case SND_SOC_DAIFMT_I2S:
 		rdai->sys_delay = 0;
@@ -711,6 +693,7 @@ static int rsnd_soc_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 		rdai->frm_clk_inv = 0;
 		break;
 	case SND_SOC_DAIFMT_LEFT_J:
+	case SND_SOC_DAIFMT_DSP_B:
 		rdai->sys_delay = 1;
 		rdai->data_alignment = 0;
 		rdai->frm_clk_inv = 1;
@@ -718,6 +701,11 @@ static int rsnd_soc_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	case SND_SOC_DAIFMT_RIGHT_J:
 		rdai->sys_delay = 1;
 		rdai->data_alignment = 1;
+		rdai->frm_clk_inv = 1;
+		break;
+	case SND_SOC_DAIFMT_DSP_A:
+		rdai->sys_delay = 0;
+		rdai->data_alignment = 0;
 		rdai->frm_clk_inv = 1;
 		break;
 	}
@@ -756,8 +744,8 @@ static int rsnd_soc_set_dai_tdm_slot(struct snd_soc_dai *dai,
 	case 32:
 		break;
 	default:
-		dev_err(dev, "unsupported slot width value: %d\n", slot_width);
-		return -EINVAL;
+		/* use default */
+		slot_width = 32;
 	}
 
 	switch (slots) {
@@ -1093,7 +1081,6 @@ static void __rsnd_dai_probe(struct rsnd_priv *priv,
 			break;
 
 		rsnd_parse_connect_ssi(rdai, playback, capture);
-		rsnd_parse_connect_ssiu(rdai, playback, capture);
 		rsnd_parse_connect_src(rdai, playback, capture);
 		rsnd_parse_connect_ctu(rdai, playback, capture);
 		rsnd_parse_connect_mix(rdai, playback, capture);
@@ -1351,18 +1338,6 @@ int rsnd_kctrl_new(struct rsnd_mod *mod,
 		.put		= rsnd_kctrl_put,
 	};
 	int ret;
-
-	/*
-	 * 1) Avoid duplicate register for DVC with MIX case
-	 * 2) Allow duplicate register for MIX
-	 * 3) re-register if card was rebinded
-	 */
-	list_for_each_entry(kctrl, &card->controls, list) {
-		struct rsnd_kctrl_cfg *c = kctrl->private_data;
-
-		if (c == cfg)
-			return 0;
-	}
 
 	if (size > RSND_MAX_CHANNELS)
 		return -EINVAL;

@@ -278,9 +278,6 @@ static int __rds_rdma_map(struct rds_sock *rs, struct rds_get_mr_args *args,
 			put_page(sg_page(&sg[i]));
 		kfree(sg);
 		ret = PTR_ERR(trans_private);
-		/* Trigger connection so that its ready for the next retry */
-		if (ret == -ENODEV && cp)
-			rds_conn_connect_if_down(cp->cp_conn);
 		goto out;
 	}
 
@@ -534,9 +531,6 @@ int rds_rdma_extra_size(struct rds_rdma_args *args,
 	if (args->nr_local == 0)
 		return -EINVAL;
 
-	if (args->nr_local > UIO_MAXIOV)
-		return -EMSGSIZE;
-
 	iov->iov = kcalloc(args->nr_local,
 			   sizeof(struct rds_iovec),
 			   GFP_KERNEL);
@@ -629,11 +623,9 @@ int rds_cmsg_rdma_args(struct rds_sock *rs, struct rds_message *rm,
 	op->op_active = 1;
 	op->op_recverr = rs->rs_recverr;
 	WARN_ON(!nr_pages);
-	op->op_sg = rds_message_alloc_sgs(rm, nr_pages);
-	if (!op->op_sg) {
-		ret = -ENOMEM;
+	op->op_sg = rds_message_alloc_sgs(rm, nr_pages, &ret);
+	if (!op->op_sg)
 		goto out_pages;
-	}
 
 	if (op->op_notify || op->op_recverr) {
 		/* We allocate an uninitialized notifier here, because
@@ -845,11 +837,9 @@ int rds_cmsg_atomic(struct rds_sock *rs, struct rds_message *rm,
 	rm->atomic.op_silent = !!(args->flags & RDS_RDMA_SILENT);
 	rm->atomic.op_active = 1;
 	rm->atomic.op_recverr = rs->rs_recverr;
-	rm->atomic.op_sg = rds_message_alloc_sgs(rm, 1);
-	if (!rm->atomic.op_sg) {
-		ret = -ENOMEM;
+	rm->atomic.op_sg = rds_message_alloc_sgs(rm, 1, &ret);
+	if (!rm->atomic.op_sg)
 		goto err;
-	}
 
 	/* verify 8 byte-aligned */
 	if (args->local_addr & 0x7) {

@@ -21,12 +21,6 @@
 
 static const struct afs_fid afs_zero_fid;
 
-/*
- * We need somewhere to discard into in case the server helpfully returns more
- * than we asked for in FS.FetchData{,64}.
- */
-static u8 afs_discard_buffer[64];
-
 static inline void afs_use_fs_server(struct afs_call *call, struct afs_cb_interest *cbi)
 {
 	call->cbi = afs_get_cb_interest(cbi);
@@ -76,8 +70,7 @@ void afs_update_inode_from_status(struct afs_vnode *vnode,
 	struct timespec64 t;
 	umode_t mode;
 
-	t.tv_sec = status->mtime_client;
-	t.tv_nsec = 0;
+	t = status->mtime_client;
 	vnode->vfs_inode.i_ctime = t;
 	vnode->vfs_inode.i_mtime = t;
 	vnode->vfs_inode.i_atime = t;
@@ -201,8 +194,10 @@ static int xdr_decode_AFSFetchStatus(struct afs_call *call,
 	EXTRACT_M(mode);
 	EXTRACT_M(group);
 
-	status->mtime_client = ntohl(xdr->mtime_client);
-	status->mtime_server = ntohl(xdr->mtime_server);
+	status->mtime_client.tv_sec = ntohl(xdr->mtime_client);
+	status->mtime_client.tv_nsec = 0;
+	status->mtime_server.tv_sec = ntohl(xdr->mtime_server);
+	status->mtime_server.tv_nsec = 0;
 	status->lock_count   = ntohl(xdr->lock_count);
 
 	size  = (u64)ntohl(xdr->size_lo);
@@ -274,7 +269,7 @@ static void xdr_decode_AFSCallBack(struct afs_call *call,
 
 	write_seqlock(&vnode->cb_lock);
 
-	if (call->cb_break == afs_cb_break_sum(vnode, cbi)) {
+	if (!afs_cb_is_broken(call->cb_break, vnode, cbi)) {
 		vnode->cb_version	= ntohl(*bp++);
 		cb_expiry		= ntohl(*bp++);
 		vnode->cb_type		= ntohl(*bp++);
@@ -294,13 +289,19 @@ static void xdr_decode_AFSCallBack(struct afs_call *call,
 	*_bp = bp;
 }
 
-static void xdr_decode_AFSCallBack_raw(const __be32 **_bp,
+static ktime_t xdr_decode_expiry(struct afs_call *call, u32 expiry)
+{
+	return ktime_add_ns(call->reply_time, expiry * NSEC_PER_SEC);
+}
+
+static void xdr_decode_AFSCallBack_raw(struct afs_call *call,
+				       const __be32 **_bp,
 				       struct afs_callback *cb)
 {
 	const __be32 *bp = *_bp;
 
 	cb->version	= ntohl(*bp++);
-	cb->expiry	= ntohl(*bp++);
+	cb->expires_at	= xdr_decode_expiry(call, ntohl(*bp++));
 	cb->type	= ntohl(*bp++);
 	*_bp = bp;
 }
@@ -455,6 +456,7 @@ int afs_fs_fetch_file_status(struct afs_fs_cursor *fc, struct afs_volsync *volsy
 	call->reply[0] = vnode;
 	call->reply[1] = volsync;
 	call->expected_version = new_inode ? 1 : vnode->status.data_version;
+	call->want_reply_time = true;
 
 	/* marshall the parameters */
 	bp = call->request;
@@ -478,114 +480,93 @@ static int afs_deliver_fs_fetch_data(struct afs_call *call)
 	struct afs_read *req = call->reply[2];
 	const __be32 *bp;
 	unsigned int size;
-	void *buffer;
 	int ret;
 
-	_enter("{%u,%zu/%u;%llu/%llu}",
-	       call->unmarshall, call->offset, call->count,
-	       req->remain, req->actual_len);
+	_enter("{%u,%zu/%llu}",
+	       call->unmarshall, iov_iter_count(&call->iter), req->actual_len);
 
 	switch (call->unmarshall) {
 	case 0:
 		req->actual_len = 0;
-		call->offset = 0;
+		req->index = 0;
+		req->offset = req->pos & (PAGE_SIZE - 1);
 		call->unmarshall++;
-		if (call->operation_ID != FSFETCHDATA64) {
-			call->unmarshall++;
-			goto no_msw;
+		if (call->operation_ID == FSFETCHDATA64) {
+			afs_extract_to_tmp64(call);
+		} else {
+			call->tmp_u = htonl(0);
+			afs_extract_to_tmp(call);
 		}
 
-		/* extract the upper part of the returned data length of an
-		 * FSFETCHDATA64 op (which should always be 0 using this
-		 * client) */
-	case 1:
-		_debug("extract data length (MSW)");
-		ret = afs_extract_data(call, &call->tmp, 4, true);
-		if (ret < 0)
-			return ret;
-
-		req->actual_len = ntohl(call->tmp);
-		req->actual_len <<= 32;
-		call->offset = 0;
-		call->unmarshall++;
-
-	no_msw:
 		/* extract the returned data length */
-	case 2:
+	case 1:
 		_debug("extract data length");
-		ret = afs_extract_data(call, &call->tmp, 4, true);
+		ret = afs_extract_data(call, true);
 		if (ret < 0)
 			return ret;
 
-		req->actual_len |= ntohl(call->tmp);
+		req->actual_len = be64_to_cpu(call->tmp64);
 		_debug("DATA length: %llu", req->actual_len);
-
-		req->remain = req->actual_len;
-		call->offset = req->pos & (PAGE_SIZE - 1);
-		req->index = 0;
-		if (req->actual_len == 0)
+		req->remain = min(req->len, req->actual_len);
+		if (req->remain == 0)
 			goto no_more_data;
+
 		call->unmarshall++;
 
 	begin_page:
 		ASSERTCMP(req->index, <, req->nr_pages);
-		if (req->remain > PAGE_SIZE - call->offset)
-			size = PAGE_SIZE - call->offset;
+		if (req->remain > PAGE_SIZE - req->offset)
+			size = PAGE_SIZE - req->offset;
 		else
 			size = req->remain;
-		call->count = call->offset + size;
-		ASSERTCMP(call->count, <=, PAGE_SIZE);
-		req->remain -= size;
+		call->bvec[0].bv_len = size;
+		call->bvec[0].bv_offset = req->offset;
+		call->bvec[0].bv_page = req->pages[req->index];
+		iov_iter_bvec(&call->iter, READ, call->bvec, 1, size);
+		ASSERTCMP(size, <=, PAGE_SIZE);
 
 		/* extract the returned data */
-	case 3:
-		_debug("extract data %llu/%llu %zu/%u",
-		       req->remain, req->actual_len, call->offset, call->count);
+	case 2:
+		_debug("extract data %zu/%llu",
+		       iov_iter_count(&call->iter), req->remain);
 
-		buffer = kmap(req->pages[req->index]);
-		ret = afs_extract_data(call, buffer, call->count, true);
-		kunmap(req->pages[req->index]);
+		ret = afs_extract_data(call, true);
 		if (ret < 0)
 			return ret;
-		if (call->offset == PAGE_SIZE) {
+		req->remain -= call->bvec[0].bv_len;
+		req->offset += call->bvec[0].bv_len;
+		ASSERTCMP(req->offset, <=, PAGE_SIZE);
+		if (req->offset == PAGE_SIZE) {
+			req->offset = 0;
 			if (req->page_done)
 				req->page_done(call, req);
 			req->index++;
-			if (req->remain > 0) {
-				call->offset = 0;
-				if (req->index >= req->nr_pages) {
-					call->unmarshall = 4;
-					goto begin_discard;
-				}
+			if (req->remain > 0)
 				goto begin_page;
-			}
 		}
-		goto no_more_data;
+
+		ASSERTCMP(req->remain, ==, 0);
+		if (req->actual_len <= req->len)
+			goto no_more_data;
 
 		/* Discard any excess data the server gave us */
-	begin_discard:
-	case 4:
-		size = min_t(loff_t, sizeof(afs_discard_buffer), req->remain);
-		call->count = size;
-		_debug("extract discard %llu/%llu %zu/%u",
-		       req->remain, req->actual_len, call->offset, call->count);
+		iov_iter_discard(&call->iter, READ, req->actual_len - req->len);
+		call->unmarshall = 3;
+	case 3:
+		_debug("extract discard %zu/%llu",
+		       iov_iter_count(&call->iter), req->actual_len - req->len);
 
-		call->offset = 0;
-		ret = afs_extract_data(call, afs_discard_buffer, call->count, true);
-		req->remain -= call->offset;
+		ret = afs_extract_data(call, true);
 		if (ret < 0)
 			return ret;
-		if (req->remain > 0)
-			goto begin_discard;
 
 	no_more_data:
-		call->offset = 0;
-		call->unmarshall = 5;
+		call->unmarshall = 4;
+		afs_extract_to_buf(call, (21 + 3 + 6) * 4);
 
 		/* extract the metadata */
-	case 5:
-		ret = afs_extract_data(call, call->buffer,
-				       (21 + 3 + 6) * 4, false);
+	case 4:
+		ret = afs_extract_data(call, false);
 		if (ret < 0)
 			return ret;
 
@@ -597,20 +578,19 @@ static int afs_deliver_fs_fetch_data(struct afs_call *call)
 		xdr_decode_AFSCallBack(call, vnode, &bp);
 		xdr_decode_AFSVolSync(&bp, call->reply[1]);
 
-		call->offset = 0;
 		call->unmarshall++;
 
-	case 6:
+	case 5:
 		break;
 	}
 
 	for (; req->index < req->nr_pages; req->index++) {
-		if (call->count < PAGE_SIZE)
+		if (req->offset < PAGE_SIZE)
 			zero_user_segment(req->pages[req->index],
-					  call->count, PAGE_SIZE);
+					  req->offset, PAGE_SIZE);
 		if (req->page_done)
 			req->page_done(call, req);
-		call->count = 0;
+		req->offset = 0;
 	}
 
 	_leave(" = 0 [done]");
@@ -663,6 +643,7 @@ static int afs_fs_fetch_data64(struct afs_fs_cursor *fc, struct afs_read *req)
 	call->reply[1] = NULL; /* volsync */
 	call->reply[2] = req;
 	call->expected_version = vnode->status.data_version;
+	call->want_reply_time = true;
 
 	/* marshall the parameters */
 	bp = call->request;
@@ -711,6 +692,7 @@ int afs_fs_fetch_data(struct afs_fs_cursor *fc, struct afs_read *req)
 	call->reply[1] = NULL; /* volsync */
 	call->reply[2] = req;
 	call->expected_version = vnode->status.data_version;
+	call->want_reply_time = true;
 
 	/* marshall the parameters */
 	bp = call->request;
@@ -753,7 +735,7 @@ static int afs_deliver_fs_create_vnode(struct afs_call *call)
 				&call->expected_version, NULL);
 	if (ret < 0)
 		return ret;
-	xdr_decode_AFSCallBack_raw(&bp, call->reply[3]);
+	xdr_decode_AFSCallBack_raw(call, &bp, call->reply[3]);
 	/* xdr_decode_AFSVolSync(&bp, call->reply[X]); */
 
 	_leave(" = 0 [done]");
@@ -821,6 +803,7 @@ int afs_fs_create(struct afs_fs_cursor *fc,
 	call->reply[2] = newstatus;
 	call->reply[3] = newcb;
 	call->expected_version = current_data_version + 1;
+	call->want_reply_time = true;
 
 	/* marshall the parameters */
 	bp = call->request;
@@ -1641,31 +1624,31 @@ static int afs_deliver_fs_get_volume_status(struct afs_call *call)
 {
 	const __be32 *bp;
 	char *p;
+	u32 size;
 	int ret;
 
 	_enter("{%u}", call->unmarshall);
 
 	switch (call->unmarshall) {
 	case 0:
-		call->offset = 0;
 		call->unmarshall++;
+		afs_extract_to_buf(call, 12 * 4);
 
 		/* extract the returned status record */
 	case 1:
 		_debug("extract status");
-		ret = afs_extract_data(call, call->buffer,
-				       12 * 4, true);
+		ret = afs_extract_data(call, true);
 		if (ret < 0)
 			return ret;
 
 		bp = call->buffer;
 		xdr_decode_AFSFetchVolumeStatus(&bp, call->reply[1]);
-		call->offset = 0;
 		call->unmarshall++;
+		afs_extract_to_tmp(call);
 
 		/* extract the volume name length */
 	case 2:
-		ret = afs_extract_data(call, &call->tmp, 4, true);
+		ret = afs_extract_data(call, true);
 		if (ret < 0)
 			return ret;
 
@@ -1674,46 +1657,26 @@ static int afs_deliver_fs_get_volume_status(struct afs_call *call)
 		if (call->count >= AFSNAMEMAX)
 			return afs_protocol_error(call, -EBADMSG,
 						  afs_eproto_volname_len);
-		call->offset = 0;
+		size = (call->count + 3) & ~3; /* It's padded */
+		afs_extract_begin(call, call->reply[2], size);
 		call->unmarshall++;
 
 		/* extract the volume name */
 	case 3:
 		_debug("extract volname");
-		if (call->count > 0) {
-			ret = afs_extract_data(call, call->reply[2],
-					       call->count, true);
-			if (ret < 0)
-				return ret;
-		}
+		ret = afs_extract_data(call, true);
+		if (ret < 0)
+			return ret;
 
 		p = call->reply[2];
 		p[call->count] = 0;
 		_debug("volname '%s'", p);
-
-		call->offset = 0;
+		afs_extract_to_tmp(call);
 		call->unmarshall++;
-
-		/* extract the volume name padding */
-		if ((call->count & 3) == 0) {
-			call->unmarshall++;
-			goto no_volname_padding;
-		}
-		call->count = 4 - (call->count & 3);
-
-	case 4:
-		ret = afs_extract_data(call, call->buffer,
-				       call->count, true);
-		if (ret < 0)
-			return ret;
-
-		call->offset = 0;
-		call->unmarshall++;
-	no_volname_padding:
 
 		/* extract the offline message length */
-	case 5:
-		ret = afs_extract_data(call, &call->tmp, 4, true);
+	case 4:
+		ret = afs_extract_data(call, true);
 		if (ret < 0)
 			return ret;
 
@@ -1722,46 +1685,27 @@ static int afs_deliver_fs_get_volume_status(struct afs_call *call)
 		if (call->count >= AFSNAMEMAX)
 			return afs_protocol_error(call, -EBADMSG,
 						  afs_eproto_offline_msg_len);
-		call->offset = 0;
+		size = (call->count + 3) & ~3; /* It's padded */
+		afs_extract_begin(call, call->reply[2], size);
 		call->unmarshall++;
 
 		/* extract the offline message */
-	case 6:
+	case 5:
 		_debug("extract offline");
-		if (call->count > 0) {
-			ret = afs_extract_data(call, call->reply[2],
-					       call->count, true);
-			if (ret < 0)
-				return ret;
-		}
+		ret = afs_extract_data(call, true);
+		if (ret < 0)
+			return ret;
 
 		p = call->reply[2];
 		p[call->count] = 0;
 		_debug("offline '%s'", p);
 
-		call->offset = 0;
+		afs_extract_to_tmp(call);
 		call->unmarshall++;
-
-		/* extract the offline message padding */
-		if ((call->count & 3) == 0) {
-			call->unmarshall++;
-			goto no_offline_padding;
-		}
-		call->count = 4 - (call->count & 3);
-
-	case 7:
-		ret = afs_extract_data(call, call->buffer,
-				       call->count, true);
-		if (ret < 0)
-			return ret;
-
-		call->offset = 0;
-		call->unmarshall++;
-	no_offline_padding:
 
 		/* extract the message of the day length */
-	case 8:
-		ret = afs_extract_data(call, &call->tmp, 4, true);
+	case 6:
+		ret = afs_extract_data(call, true);
 		if (ret < 0)
 			return ret;
 
@@ -1770,38 +1714,24 @@ static int afs_deliver_fs_get_volume_status(struct afs_call *call)
 		if (call->count >= AFSNAMEMAX)
 			return afs_protocol_error(call, -EBADMSG,
 						  afs_eproto_motd_len);
-		call->offset = 0;
+		size = (call->count + 3) & ~3; /* It's padded */
+		afs_extract_begin(call, call->reply[2], size);
 		call->unmarshall++;
 
 		/* extract the message of the day */
-	case 9:
+	case 7:
 		_debug("extract motd");
-		if (call->count > 0) {
-			ret = afs_extract_data(call, call->reply[2],
-					       call->count, true);
-			if (ret < 0)
-				return ret;
-		}
+		ret = afs_extract_data(call, false);
+		if (ret < 0)
+			return ret;
 
 		p = call->reply[2];
 		p[call->count] = 0;
 		_debug("motd '%s'", p);
 
-		call->offset = 0;
 		call->unmarshall++;
 
-		/* extract the message of the day padding */
-		call->count = (4 - (call->count & 3)) & 3;
-
-	case 10:
-		ret = afs_extract_data(call, call->buffer,
-				       call->count, false);
-		if (ret < 0)
-			return ret;
-
-		call->offset = 0;
-		call->unmarshall++;
-	case 11:
+	case 8:
 		break;
 	}
 
@@ -1900,7 +1830,6 @@ static const struct afs_call_type afs_RXFSSetLock = {
 	.name		= "FS.SetLock",
 	.op		= afs_FS_SetLock,
 	.deliver	= afs_deliver_fs_xxxx_lock,
-	.done		= afs_lock_op_done,
 	.destructor	= afs_flat_call_destructor,
 };
 
@@ -1911,7 +1840,6 @@ static const struct afs_call_type afs_RXFSExtendLock = {
 	.name		= "FS.ExtendLock",
 	.op		= afs_FS_ExtendLock,
 	.deliver	= afs_deliver_fs_xxxx_lock,
-	.done		= afs_lock_op_done,
 	.destructor	= afs_flat_call_destructor,
 };
 
@@ -1946,7 +1874,6 @@ int afs_fs_set_lock(struct afs_fs_cursor *fc, afs_lock_type_t type)
 
 	call->key = fc->key;
 	call->reply[0] = vnode;
-	call->want_reply_time = true;
 
 	/* marshall the parameters */
 	bp = call->request;
@@ -1957,7 +1884,7 @@ int afs_fs_set_lock(struct afs_fs_cursor *fc, afs_lock_type_t type)
 	*bp++ = htonl(type);
 
 	afs_use_fs_server(call, fc->cbi);
-	trace_afs_make_fs_calli(call, &vnode->fid, type);
+	trace_afs_make_fs_call(call, &vnode->fid);
 	return afs_make_call(&fc->ac, call, GFP_NOFS, false);
 }
 
@@ -1982,7 +1909,6 @@ int afs_fs_extend_lock(struct afs_fs_cursor *fc)
 
 	call->key = fc->key;
 	call->reply[0] = vnode;
-	call->want_reply_time = true;
 
 	/* marshall the parameters */
 	bp = call->request;
@@ -2080,23 +2006,19 @@ int afs_fs_give_up_all_callbacks(struct afs_net *net,
  */
 static int afs_deliver_fs_get_capabilities(struct afs_call *call)
 {
-	struct afs_server *server = call->reply[0];
 	u32 count;
 	int ret;
 
-	_enter("{%u,%zu/%u}", call->unmarshall, call->offset, call->count);
+	_enter("{%u,%zu}", call->unmarshall, iov_iter_count(&call->iter));
 
-again:
 	switch (call->unmarshall) {
 	case 0:
-		call->offset = 0;
+		afs_extract_to_tmp(call);
 		call->unmarshall++;
 
 		/* Extract the capabilities word count */
 	case 1:
-		ret = afs_extract_data(call, &call->tmp,
-				       1 * sizeof(__be32),
-				       true);
+		ret = afs_extract_data(call, true);
 		if (ret < 0)
 			return ret;
 
@@ -2104,35 +2026,31 @@ again:
 
 		call->count = count;
 		call->count2 = count;
-		call->offset = 0;
+		iov_iter_discard(&call->iter, READ, count * sizeof(__be32));
 		call->unmarshall++;
 
 		/* Extract capabilities words */
 	case 2:
-		count = min(call->count, 16U);
-		ret = afs_extract_data(call, call->buffer,
-				       count * sizeof(__be32),
-				       call->count > 16);
+		ret = afs_extract_data(call, false);
 		if (ret < 0)
 			return ret;
 
 		/* TODO: Examine capabilities */
 
-		call->count -= count;
-		if (call->count > 0)
-			goto again;
-		call->offset = 0;
 		call->unmarshall++;
 		break;
 	}
 
-	if (call->service_id == YFS_FS_SERVICE)
-		set_bit(AFS_SERVER_FL_IS_YFS, &server->flags);
-	else
-		clear_bit(AFS_SERVER_FL_IS_YFS, &server->flags);
-
 	_leave(" = 0 [done]");
 	return 0;
+}
+
+static void afs_destroy_fs_get_capabilities(struct afs_call *call)
+{
+	struct afs_server *server = call->reply[0];
+
+	afs_put_server(call->net, server);
+	afs_flat_call_destructor(call);
 }
 
 /*
@@ -2142,7 +2060,8 @@ static const struct afs_call_type afs_RXFSGetCapabilities = {
 	.name		= "FS.GetCapabilities",
 	.op		= afs_FS_GetCapabilities,
 	.deliver	= afs_deliver_fs_get_capabilities,
-	.destructor	= afs_flat_call_destructor,
+	.done		= afs_fileserver_probe_result,
+	.destructor	= afs_destroy_fs_get_capabilities,
 };
 
 /*
@@ -2152,7 +2071,9 @@ static const struct afs_call_type afs_RXFSGetCapabilities = {
 int afs_fs_get_capabilities(struct afs_net *net,
 			    struct afs_server *server,
 			    struct afs_addr_cursor *ac,
-			    struct key *key)
+			    struct key *key,
+			    unsigned int server_index,
+			    bool async)
 {
 	struct afs_call *call;
 	__be32 *bp;
@@ -2164,8 +2085,10 @@ int afs_fs_get_capabilities(struct afs_net *net,
 		return -ENOMEM;
 
 	call->key = key;
-	call->reply[0] = server;
+	call->reply[0] = afs_get_server(server);
+	call->reply[1] = (void *)(long)server_index;
 	call->upgrade = true;
+	call->want_reply_time = true;
 
 	/* marshall the parameters */
 	bp = call->request;
@@ -2173,7 +2096,7 @@ int afs_fs_get_capabilities(struct afs_net *net,
 
 	/* Can't take a ref on server */
 	trace_afs_make_fs_call(call, NULL);
-	return afs_make_call(ac, call, GFP_NOFS, false);
+	return afs_make_call(ac, call, GFP_NOFS, async);
 }
 
 /*
@@ -2200,7 +2123,7 @@ static int afs_deliver_fs_fetch_status(struct afs_call *call)
 				&call->expected_version, NULL);
 	if (ret < 0)
 		return ret;
-	xdr_decode_AFSCallBack_raw(&bp, callback);
+	xdr_decode_AFSCallBack_raw(call, &bp, callback);
 	xdr_decode_AFSVolSync(&bp, volsync);
 
 	_leave(" = 0 [done]");
@@ -2248,6 +2171,7 @@ int afs_fs_fetch_status(struct afs_fs_cursor *fc,
 	call->reply[2] = callback;
 	call->reply[3] = volsync;
 	call->expected_version = 1; /* vnode->status.data_version */
+	call->want_reply_time = true;
 
 	/* marshall the parameters */
 	bp = call->request;
@@ -2278,13 +2202,13 @@ static int afs_deliver_fs_inline_bulk_status(struct afs_call *call)
 
 	switch (call->unmarshall) {
 	case 0:
-		call->offset = 0;
+		afs_extract_to_tmp(call);
 		call->unmarshall++;
 
 		/* Extract the file status count and array in two steps */
 	case 1:
 		_debug("extract status count");
-		ret = afs_extract_data(call, &call->tmp, 4, true);
+		ret = afs_extract_data(call, true);
 		if (ret < 0)
 			return ret;
 
@@ -2297,11 +2221,11 @@ static int afs_deliver_fs_inline_bulk_status(struct afs_call *call)
 		call->count = 0;
 		call->unmarshall++;
 	more_counts:
-		call->offset = 0;
+		afs_extract_to_buf(call, 21 * sizeof(__be32));
 
 	case 2:
 		_debug("extract status array %u", call->count);
-		ret = afs_extract_data(call, call->buffer, 21 * 4, true);
+		ret = afs_extract_data(call, true);
 		if (ret < 0)
 			return ret;
 
@@ -2319,12 +2243,12 @@ static int afs_deliver_fs_inline_bulk_status(struct afs_call *call)
 
 		call->count = 0;
 		call->unmarshall++;
-		call->offset = 0;
+		afs_extract_to_tmp(call);
 
 		/* Extract the callback count and array in two steps */
 	case 3:
 		_debug("extract CB count");
-		ret = afs_extract_data(call, &call->tmp, 4, true);
+		ret = afs_extract_data(call, true);
 		if (ret < 0)
 			return ret;
 
@@ -2336,11 +2260,11 @@ static int afs_deliver_fs_inline_bulk_status(struct afs_call *call)
 		call->count = 0;
 		call->unmarshall++;
 	more_cbs:
-		call->offset = 0;
+		afs_extract_to_buf(call, 3 * sizeof(__be32));
 
 	case 4:
 		_debug("extract CB array");
-		ret = afs_extract_data(call, call->buffer, 3 * 4, true);
+		ret = afs_extract_data(call, true);
 		if (ret < 0)
 			return ret;
 
@@ -2348,7 +2272,7 @@ static int afs_deliver_fs_inline_bulk_status(struct afs_call *call)
 		bp = call->buffer;
 		callbacks = call->reply[2];
 		callbacks[call->count].version	= ntohl(bp[0]);
-		callbacks[call->count].expiry	= ntohl(bp[1]);
+		callbacks[call->count].expires_at = xdr_decode_expiry(call, ntohl(bp[1]));
 		callbacks[call->count].type	= ntohl(bp[2]);
 		statuses = call->reply[1];
 		if (call->count == 0 && vnode && statuses[0].abort_code == 0)
@@ -2357,18 +2281,17 @@ static int afs_deliver_fs_inline_bulk_status(struct afs_call *call)
 		if (call->count < call->count2)
 			goto more_cbs;
 
-		call->offset = 0;
+		afs_extract_to_buf(call, 6 * sizeof(__be32));
 		call->unmarshall++;
 
 	case 5:
-		ret = afs_extract_data(call, call->buffer, 6 * 4, false);
+		ret = afs_extract_data(call, false);
 		if (ret < 0)
 			return ret;
 
 		bp = call->buffer;
 		xdr_decode_AFSVolSync(&bp, call->reply[3]);
 
-		call->offset = 0;
 		call->unmarshall++;
 
 	case 6:
@@ -2425,6 +2348,7 @@ int afs_fs_inline_bulk_status(struct afs_fs_cursor *fc,
 	call->reply[2] = callbacks;
 	call->reply[3] = volsync;
 	call->count2 = nr_fids;
+	call->want_reply_time = true;
 
 	/* marshall the parameters */
 	bp = call->request;

@@ -391,20 +391,12 @@ static bool check_should_bypass(struct cached_dev *dc, struct bio *bio)
 		goto skip;
 
 	/*
-	 * If the bio is for read-ahead or background IO, bypass it or
-	 * not depends on the following situations,
-	 * - If the IO is for meta data, always cache it and no bypass
-	 * - If the IO is not meta data, check dc->cache_reada_policy,
-	 *      BCH_CACHE_READA_ALL: cache it and not bypass
-	 *      BCH_CACHE_READA_META_ONLY: not cache it and bypass
-	 * That is, read-ahead request for metadata always get cached
-	 * (eg, for gfs2 or xfs).
+	 * Flag for bypass if the IO is for read-ahead or background,
+	 * unless the read-ahead request is for metadata (eg, for gfs2).
 	 */
-	if ((bio->bi_opf & (REQ_RAHEAD|REQ_BACKGROUND))) {
-		if (!(bio->bi_opf & (REQ_META|REQ_PRIO)) &&
-		    (dc->cache_readahead_policy != BCH_CACHE_READA_ALL))
-			goto skip;
-	}
+	if (bio->bi_opf & (REQ_RAHEAD|REQ_BACKGROUND) &&
+	    !(bio->bi_opf & REQ_PRIO))
+		goto skip;
 
 	if (bio->bi_iter.bi_sector & (c->sb.block_size - 1) ||
 	    bio_sectors(bio) & (c->sb.block_size - 1)) {
@@ -885,7 +877,7 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 	}
 
 	if (!(bio->bi_opf & REQ_RAHEAD) &&
-	    !(bio->bi_opf & (REQ_META|REQ_PRIO)) &&
+	    !(bio->bi_opf & REQ_PRIO) &&
 	    s->iop.c->gc_stats.in_use < CUTOFF_CACHE_READA)
 		reada = min_t(sector_t, dc->readahead >> 9,
 			      get_capacity(bio->bi_disk) - bio_end_sector(bio));
@@ -1102,12 +1094,6 @@ static void detached_dev_do_request(struct bcache_device *d, struct bio *bio)
 	 * which would call closure_get(&dc->disk.cl)
 	 */
 	ddip = kzalloc(sizeof(struct detached_dev_io_private), GFP_NOIO);
-	if (!ddip) {
-		bio->bi_status = BLK_STS_RESOURCE;
-		bio->bi_end_io(bio);
-		return;
-	}
-
 	ddip->d = d;
 	ddip->start_time = jiffies;
 	ddip->bi_end_io = bio->bi_end_io;

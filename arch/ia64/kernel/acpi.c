@@ -537,8 +537,7 @@ void __init acpi_numa_fixup(void)
 	if (srat_num_cpus == 0) {
 		node_set_online(0);
 		node_cpuid[0].phys_id = hard_smp_processor_id();
-		node_distance(0, 0) = LOCAL_DISTANCE;
-		goto out;
+		return;
 	}
 
 	/*
@@ -579,9 +578,9 @@ void __init acpi_numa_fixup(void)
 	if (!slit_table) {
 		for (i = 0; i < MAX_NUMNODES; i++)
 			for (j = 0; j < MAX_NUMNODES; j++)
-				node_distance(i, j) = i == j ? LOCAL_DISTANCE :
-							REMOTE_DISTANCE;
-		goto out;
+				slit_distance(i, j) = i == j ?
+					LOCAL_DISTANCE : REMOTE_DISTANCE;
+		return;
 	}
 
 	memset(numa_slit, -1, sizeof(numa_slit));
@@ -593,7 +592,7 @@ void __init acpi_numa_fixup(void)
 			if (!pxm_bit_test(j))
 				continue;
 			node_to = pxm_to_node(j);
-			node_distance(node_from, node_to) =
+			slit_distance(node_from, node_to) =
 			    slit_table->entry[i * slit_table->locality_count + j];
 		}
 	}
@@ -606,8 +605,6 @@ void __init acpi_numa_fixup(void)
 		printk("\n");
 	}
 #endif
-out:
-	node_possible_map = node_online_map;
 }
 #endif				/* CONFIG_ACPI_NUMA */
 

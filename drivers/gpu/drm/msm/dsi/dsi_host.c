@@ -1770,6 +1770,7 @@ static int dsi_host_parse_dt(struct msm_dsi_host *msm_host)
 	if (ret) {
 		dev_err(dev, "%s: invalid lane configuration %d\n",
 			__func__, ret);
+		ret = -EINVAL;
 		goto err;
 	}
 
@@ -1777,6 +1778,7 @@ static int dsi_host_parse_dt(struct msm_dsi_host *msm_host)
 	device_node = of_graph_get_remote_node(np, 1, 0);
 	if (!device_node) {
 		dev_dbg(dev, "%s: no valid device\n", __func__);
+		ret = -ENODEV;
 		goto err;
 	}
 

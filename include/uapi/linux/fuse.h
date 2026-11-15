@@ -38,50 +38,12 @@
  *
  * Protocol changelog:
  *
- * 7.1:
- *  - add the following messages:
- *      FUSE_SETATTR, FUSE_SYMLINK, FUSE_MKNOD, FUSE_MKDIR, FUSE_UNLINK,
- *      FUSE_RMDIR, FUSE_RENAME, FUSE_LINK, FUSE_OPEN, FUSE_READ, FUSE_WRITE,
- *      FUSE_RELEASE, FUSE_FSYNC, FUSE_FLUSH, FUSE_SETXATTR, FUSE_GETXATTR,
- *      FUSE_LISTXATTR, FUSE_REMOVEXATTR, FUSE_OPENDIR, FUSE_READDIR,
- *      FUSE_RELEASEDIR
- *  - add padding to messages to accommodate 32-bit servers on 64-bit kernels
- *
- * 7.2:
- *  - add FOPEN_DIRECT_IO and FOPEN_KEEP_CACHE flags
- *  - add FUSE_FSYNCDIR message
- *
- * 7.3:
- *  - add FUSE_ACCESS message
- *  - add FUSE_CREATE message
- *  - add filehandle to fuse_setattr_in
- *
- * 7.4:
- *  - add frsize to fuse_kstatfs
- *  - clean up request size limit checking
- *
- * 7.5:
- *  - add flags and max_write to fuse_init_out
- *
- * 7.6:
- *  - add max_readahead to fuse_init_in and fuse_init_out
- *
- * 7.7:
- *  - add FUSE_INTERRUPT message
- *  - add POSIX file lock support
- *
- * 7.8:
- *  - add lock_owner and flags fields to fuse_release_in
- *  - add FUSE_BMAP message
- *  - add FUSE_DESTROY message
- *
  * 7.9:
  *  - new fuse_getattr_in input argument of GETATTR
  *  - add lk_flags in fuse_lk_in
  *  - add lock_owner field to fuse_setattr_in, fuse_read_in and fuse_write_in
  *  - add blksize field to fuse_attr
  *  - add file flags field to fuse_read_in and fuse_write_in
- *  - Add ATIME_NOW and MTIME_NOW flags to fuse_setattr_in
  *
  * 7.10
  *  - add nonseekable open flag
@@ -92,7 +54,7 @@
  *  - add POLL message and NOTIFY_POLL notification
  *
  * 7.12
- *  - add umask flag to input argument of create, mknod and mkdir
+ *  - add umask flag to input argument of open, mknod and mkdir
  *  - add notification messages for invalidation of inodes and
  *    directory entries
  *
@@ -160,21 +122,6 @@
  *  - add FOPEN_CACHE_DIR
  *  - add FUSE_MAX_PAGES, add max_pages to init_out
  *  - add FUSE_CACHE_SYMLINKS
- *
- *  7.29
- *  - add FUSE_NO_OPENDIR_SUPPORT flag
- *
- *  7.30
- *  - add FUSE_EXPLICIT_INVAL_DATA
- *  - add FUSE_IOCTL_COMPAT_X32
- *
- *  7.31
- *  - add FUSE_WRITE_KILL_PRIV flag
- *  - add FUSE_SETUPMAPPING and FUSE_REMOVEMAPPING
- *  - add map_alignment to fuse_init_out, add FUSE_MAP_ALIGNMENT flag
- *
- *  7.32
- *  - add flags to fuse_attr, add FUSE_ATTR_SUBMOUNT, add FUSE_SUBMOUNTS
  */
 
 #ifndef _LINUX_FUSE_H
@@ -210,7 +157,7 @@
 #define FUSE_KERNEL_VERSION 7
 
 /** Minor version number of this interface */
-#define FUSE_KERNEL_MINOR_VERSION 32
+#define FUSE_KERNEL_MINOR_VERSION 28
 
 /** The node ID of the root inode */
 #define FUSE_ROOT_ID 1
@@ -234,7 +181,7 @@ struct fuse_attr {
 	uint32_t	gid;
 	uint32_t	rdev;
 	uint32_t	blksize;
-	uint32_t	flags;
+	uint32_t	padding;
 };
 
 struct fuse_kstatfs {
@@ -279,13 +226,11 @@ struct fuse_file_lock {
  * FOPEN_KEEP_CACHE: don't invalidate the data cache on open
  * FOPEN_NONSEEKABLE: the file is not seekable
  * FOPEN_CACHE_DIR: allow caching this directory
- * FOPEN_STREAM: the file is stream-like (no file position at all)
  */
 #define FOPEN_DIRECT_IO		(1 << 0)
 #define FOPEN_KEEP_CACHE	(1 << 1)
 #define FOPEN_NONSEEKABLE	(1 << 2)
 #define FOPEN_CACHE_DIR		(1 << 3)
-#define FOPEN_STREAM		(1 << 4)
 
 /**
  * INIT request/reply flags
@@ -314,12 +259,6 @@ struct fuse_file_lock {
  * FUSE_ABORT_ERROR: reading the device after abort returns ECONNABORTED
  * FUSE_MAX_PAGES: init_out.max_pages contains the max number of req pages
  * FUSE_CACHE_SYMLINKS: cache READLINK responses
- * FUSE_NO_OPENDIR_SUPPORT: kernel supports zero-message opendir
- * FUSE_EXPLICIT_INVAL_DATA: only invalidate cached pages on explicit request
- * FUSE_MAP_ALIGNMENT: init_out.map_alignment contains log2(byte alignment) for
- *		       foffset and moffset fields in struct
- *		       fuse_setupmapping_out and fuse_removemapping_one.
- * FUSE_SUBMOUNTS: kernel supports auto-mounting directory submounts
  */
 #define FUSE_ASYNC_READ		(1 << 0)
 #define FUSE_POSIX_LOCKS	(1 << 1)
@@ -345,11 +284,6 @@ struct fuse_file_lock {
 #define FUSE_ABORT_ERROR	(1 << 21)
 #define FUSE_MAX_PAGES		(1 << 22)
 #define FUSE_CACHE_SYMLINKS	(1 << 23)
-#define FUSE_NO_OPENDIR_SUPPORT (1 << 24)
-#define FUSE_EXPLICIT_INVAL_DATA (1 << 25)
-#define FUSE_MAP_ALIGNMENT	(1 << 26)
-#define FUSE_SUBMOUNTS		(1 << 27)
-#define FUSE_PASSTHROUGH	(1 << 31)
 
 /**
  * CUSE INIT request/reply flags
@@ -379,11 +313,9 @@ struct fuse_file_lock {
  *
  * FUSE_WRITE_CACHE: delayed write from page cache, file handle is guessed
  * FUSE_WRITE_LOCKOWNER: lock_owner field is valid
- * FUSE_WRITE_KILL_PRIV: kill suid and sgid bits
  */
 #define FUSE_WRITE_CACHE	(1 << 0)
 #define FUSE_WRITE_LOCKOWNER	(1 << 1)
-#define FUSE_WRITE_KILL_PRIV	(1 << 2)
 
 /**
  * Read flags
@@ -398,7 +330,6 @@ struct fuse_file_lock {
  * FUSE_IOCTL_RETRY: retry with new iovecs
  * FUSE_IOCTL_32BIT: 32bit ioctl
  * FUSE_IOCTL_DIR: is a directory
- * FUSE_IOCTL_COMPAT_X32: x32 compat ioctl on 64bit machine (64bit time_t)
  *
  * FUSE_IOCTL_MAX_IOV: maximum of in_iovecs + out_iovecs
  */
@@ -407,7 +338,6 @@ struct fuse_file_lock {
 #define FUSE_IOCTL_RETRY	(1 << 2)
 #define FUSE_IOCTL_32BIT	(1 << 3)
 #define FUSE_IOCTL_DIR		(1 << 4)
-#define FUSE_IOCTL_COMPAT_X32	(1 << 5)
 
 #define FUSE_IOCTL_MAX_IOV	256
 
@@ -417,20 +347,6 @@ struct fuse_file_lock {
  * FUSE_POLL_SCHEDULE_NOTIFY: request poll notify
  */
 #define FUSE_POLL_SCHEDULE_NOTIFY (1 << 0)
-
-/**
- * Fsync flags
- *
- * FUSE_FSYNC_FDATASYNC: Sync data only, not metadata
- */
-#define FUSE_FSYNC_FDATASYNC	(1 << 0)
-
-/**
- * fuse_attr flags
- *
- * FUSE_ATTR_SUBMOUNT: Object is a submount root
- */
-#define FUSE_ATTR_SUBMOUNT      (1 << 0)
 
 enum fuse_opcode {
 	FUSE_LOOKUP		= 1,
@@ -478,16 +394,9 @@ enum fuse_opcode {
 	FUSE_RENAME2		= 45,
 	FUSE_LSEEK		= 46,
 	FUSE_COPY_FILE_RANGE	= 47,
-	FUSE_SETUPMAPPING	= 48,
-	FUSE_REMOVEMAPPING	= 49,
-	FUSE_CANONICAL_PATH= 2016,
 
 	/* CUSE specific operations */
 	CUSE_INIT		= 4096,
-
-	/* Reserved opcodes: helpful to detect structure endian-ness */
-	CUSE_INIT_BSWAP_RESERVED	= 1048576,	/* CUSE_INIT << 8 */
-	FUSE_INIT_BSWAP_RESERVED	= 436207616,	/* FUSE_INIT << 24 */
 };
 
 enum fuse_notify_code {
@@ -514,23 +423,6 @@ struct fuse_entry_out {
 	uint32_t	entry_valid_nsec;
 	uint32_t	attr_valid_nsec;
 	struct fuse_attr attr;
-};
-
-#define FUSE_ACTION_KEEP	0
-#define FUSE_ACTION_REMOVE	1
-#define FUSE_ACTION_REPLACE	2
-
-struct fuse_entry_bpf_out {
-	uint64_t	backing_action;
-	uint64_t	backing_fd;
-	uint64_t	bpf_action;
-	uint64_t	bpf_fd;
-};
-
-struct fuse_entry_bpf {
-	struct fuse_entry_bpf_out out;
-	struct file *backing_file;
-	struct file *bpf_file;
 };
 
 struct fuse_forget_in {
@@ -624,7 +516,7 @@ struct fuse_create_in {
 struct fuse_open_out {
 	uint64_t	fh;
 	uint32_t	open_flags;
-	uint32_t	passthrough_fh;
+	uint32_t	padding;
 };
 
 struct fuse_release_in {
@@ -648,12 +540,6 @@ struct fuse_read_in {
 	uint32_t	read_flags;
 	uint64_t	lock_owner;
 	uint32_t	flags;
-	uint32_t	padding;
-};
-
-struct fuse_read_out {
-	uint64_t	offset;
-	uint32_t	again;
 	uint32_t	padding;
 };
 
@@ -738,7 +624,7 @@ struct fuse_init_out {
 	uint32_t	max_write;
 	uint32_t	time_gran;
 	uint16_t	max_pages;
-	uint16_t	map_alignment;
+	uint16_t	padding;
 	uint32_t	unused[8];
 };
 
@@ -830,7 +716,7 @@ struct fuse_in_header {
 	uint32_t	uid;
 	uint32_t	gid;
 	uint32_t	pid;
-	uint32_t	error_in;
+	uint32_t	padding;
 };
 
 struct fuse_out_header {
@@ -908,11 +794,7 @@ struct fuse_notify_retrieve_in {
 };
 
 /* Device ioctls: */
-#define FUSE_DEV_IOC_MAGIC		229
-#define FUSE_DEV_IOC_CLONE		_IOR(FUSE_DEV_IOC_MAGIC, 0, uint32_t)
-/* 127 is reserved for the V1 interface implementation in Android (deprecated) */
-/* 126 is reserved for the V2 interface implementation in Android */
-#define FUSE_DEV_IOC_PASSTHROUGH_OPEN	_IOW(FUSE_DEV_IOC_MAGIC, 126, __u32)
+#define FUSE_DEV_IOC_CLONE	_IOR(229, 0, uint32_t)
 
 struct fuse_lseek_in {
 	uint64_t	fh;
@@ -934,83 +816,5 @@ struct fuse_copy_file_range_in {
 	uint64_t	len;
 	uint64_t	flags;
 };
-
-#define FUSE_SETUPMAPPING_FLAG_WRITE (1ull << 0)
-#define FUSE_SETUPMAPPING_FLAG_READ (1ull << 1)
-struct fuse_setupmapping_in {
-	/* An already open handle */
-	uint64_t	fh;
-	/* Offset into the file to start the mapping */
-	uint64_t	foffset;
-	/* Length of mapping required */
-	uint64_t	len;
-	/* Flags, FUSE_SETUPMAPPING_FLAG_* */
-	uint64_t	flags;
-	/* Offset in Memory Window */
-	uint64_t	moffset;
-};
-
-struct fuse_removemapping_in {
-	/* number of fuse_removemapping_one follows */
-	uint32_t        count;
-};
-
-struct fuse_removemapping_one {
-	/* Offset into the dax window start the unmapping */
-	uint64_t        moffset;
-	/* Length of mapping required */
-	uint64_t	len;
-};
-
-#define FUSE_REMOVEMAPPING_MAX_ENTRY   \
-		(PAGE_SIZE / sizeof(struct fuse_removemapping_one))
-
-/*
- * Fuse BPF Args
- *
- * Used to communicate with bpf programs to allow checking or altering certain values.
- * The end_offset allows the bpf verifier to check boundaries statically. This reflects
- * the ends of the buffer. size shows the length that was actually used.
- *
- */
-
-/** One input argument of a request */
-struct fuse_bpf_in_arg {
-	uint32_t size;
-	const void *value;
-	const void *end_offset;
-};
-
-/** One output argument of a request */
-struct fuse_bpf_arg {
-	uint32_t size;
-	void *value;
-	void *end_offset;
-};
-
-#define FUSE_MAX_IN_ARGS 5
-#define FUSE_MAX_OUT_ARGS 3
-
-#define FUSE_BPF_FORCE (1 << 0)
-#define FUSE_BPF_OUT_ARGVAR (1 << 6)
-
-struct fuse_bpf_args {
-	uint64_t nodeid;
-	uint32_t opcode;
-	uint32_t error_in;
-	uint32_t in_numargs;
-	uint32_t out_numargs;
-	uint32_t flags;
-	struct fuse_bpf_in_arg in_args[FUSE_MAX_IN_ARGS];
-	struct fuse_bpf_arg out_args[FUSE_MAX_OUT_ARGS];
-};
-
-#define FUSE_BPF_USER_FILTER	1
-#define FUSE_BPF_BACKING	2
-#define FUSE_BPF_POST_FILTER	4
-
-#define FUSE_OPCODE_FILTER	0x0ffff
-#define FUSE_PREFILTER		0x10000
-#define FUSE_POSTFILTER		0x20000
 
 #endif /* _LINUX_FUSE_H */

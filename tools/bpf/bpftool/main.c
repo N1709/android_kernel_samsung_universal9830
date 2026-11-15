@@ -55,6 +55,7 @@ json_writer_t *json_wtr;
 bool pretty_output;
 bool json_output;
 bool show_pinned;
+int bpf_flags;
 struct pinned_obj_table prog_table;
 struct pinned_obj_table map_table;
 
@@ -85,7 +86,7 @@ static int do_help(int argc, char **argv)
 		"       %s batch file FILE\n"
 		"       %s version\n"
 		"\n"
-		"       OBJECT := { prog | map | cgroup | perf }\n"
+		"       OBJECT := { prog | map | cgroup | perf | net }\n"
 		"       " HELP_SPEC_OPTIONS "\n"
 		"",
 		bin_name, bin_name, bin_name);
@@ -215,6 +216,7 @@ static const struct cmd cmds[] = {
 	{ "map",	do_map },
 	{ "cgroup",	do_cgroup },
 	{ "perf",	do_perf },
+	{ "net",	do_net },
 	{ "version",	do_version },
 	{ 0 }
 };
@@ -321,7 +323,8 @@ static int do_batch(int argc, char **argv)
 		p_err("reading batch file failed: %s", strerror(errno));
 		err = -1;
 	} else {
-		p_info("processed %d commands", lines);
+		if (!json_output)
+			printf("processed %d commands\n", lines);
 		err = 0;
 	}
 err_close:
@@ -342,6 +345,7 @@ int main(int argc, char **argv)
 		{ "pretty",	no_argument,	NULL,	'p' },
 		{ "version",	no_argument,	NULL,	'V' },
 		{ "bpffs",	no_argument,	NULL,	'f' },
+		{ "mapcompat",	no_argument,	NULL,	'm' },
 		{ 0 }
 	};
 	int opt, ret;
@@ -356,7 +360,7 @@ int main(int argc, char **argv)
 	hash_init(map_table.table);
 
 	opterr = 0;
-	while ((opt = getopt_long(argc, argv, "Vhpjf",
+	while ((opt = getopt_long(argc, argv, "Vhpjfm",
 				  options, NULL)) >= 0) {
 		switch (opt) {
 		case 'V':
@@ -379,6 +383,9 @@ int main(int argc, char **argv)
 			break;
 		case 'f':
 			show_pinned = true;
+			break;
+		case 'm':
+			bpf_flags = MAPS_RELAX_COMPAT;
 			break;
 		default:
 			p_err("unrecognized option '%s'", argv[optind - 1]);

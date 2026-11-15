@@ -127,12 +127,26 @@ static int ipoib_new_child_link(struct net *src_net, struct net_device *dev,
 	} else
 		child_pkey  = nla_get_u16(data[IFLA_IPOIB_PKEY]);
 
+	err = ipoib_intf_init(ppriv->ca, ppriv->port, dev->name, dev);
+	if (err) {
+		ipoib_warn(ppriv, "failed to initialize pkey device\n");
+		return err;
+	}
+
 	err = __ipoib_vlan_add(ppriv, ipoib_priv(dev),
 			       child_pkey, IPOIB_RTNL_CHILD);
+	if (err)
+		return err;
 
-	if (!err && data)
+	if (data) {
 		err = ipoib_changelink(dev, tb, data, extack);
-	return err;
+		if (err) {
+			unregister_netdevice(dev);
+			return err;
+		}
+	}
+
+	return 0;
 }
 
 static size_t ipoib_get_size(const struct net_device *dev)
@@ -155,6 +169,11 @@ static struct rtnl_link_ops ipoib_link_ops __read_mostly = {
 	.get_num_rx_queues = ipoib_get_max_num_queues,
 	.get_num_tx_queues = ipoib_get_max_num_queues,
 };
+
+struct rtnl_link_ops *ipoib_get_link_ops(void)
+{
+	return &ipoib_link_ops;
+}
 
 int __init ipoib_netlink_init(void)
 {

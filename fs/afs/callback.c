@@ -219,8 +219,14 @@ void __afs_break_callback(struct afs_vnode *vnode)
 		vnode->cb_break++;
 		afs_clear_permits(vnode);
 
-		if (vnode->lock_state == AFS_VNODE_LOCK_WAITING_FOR_CB)
+		spin_lock(&vnode->lock);
+
+		_debug("break callback");
+
+		if (list_empty(&vnode->granted_locks) &&
+		    !list_empty(&vnode->pending_locks))
 			afs_lock_may_be_available(vnode);
+		spin_unlock(&vnode->lock);
 	}
 }
 
@@ -273,9 +279,9 @@ static void afs_break_one_callback(struct afs_server *server,
 			struct afs_super_info *as = AFS_FS_S(cbi->sb);
 			struct afs_volume *volume = as->volume;
 
-			write_lock(&volume->cb_v_break_lock);
+			write_lock(&volume->cb_break_lock);
 			volume->cb_v_break++;
-			write_unlock(&volume->cb_v_break_lock);
+			write_unlock(&volume->cb_break_lock);
 		} else {
 			data.volume = NULL;
 			data.fid = *fid;
@@ -307,14 +313,10 @@ void afs_break_callbacks(struct afs_server *server, size_t count,
 	/* TODO: Sort the callback break list by volume ID */
 
 	for (; count > 0; callbacks++, count--) {
-		_debug("- Fid { vl=%08llx n=%llu u=%u }  CB { v=%u x=%u t=%u }",
+		_debug("- Fid { vl=%08llx n=%llu u=%u }",
 		       callbacks->fid.vid,
 		       callbacks->fid.vnode,
-		       callbacks->fid.unique,
-		       callbacks->cb.version,
-		       callbacks->cb.expiry,
-		       callbacks->cb.type
-		       );
+		       callbacks->fid.unique);
 		afs_break_one_callback(server, &callbacks->fid);
 	}
 

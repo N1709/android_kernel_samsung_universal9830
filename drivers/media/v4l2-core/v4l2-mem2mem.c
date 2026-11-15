@@ -387,7 +387,7 @@ static void v4l2_m2m_cancel_job(struct v4l2_m2m_ctx *m2m_ctx)
 		spin_unlock_irqrestore(&m2m_dev->job_spinlock, flags);
 		if (m2m_dev->m2m_ops->job_abort)
 			m2m_dev->m2m_ops->job_abort(m2m_ctx->priv);
-		dprintk("m2m_ctx %p running, will wait to complete", m2m_ctx);
+		dprintk("m2m_ctx %p running, will wait to complete\n", m2m_ctx);
 		wait_event(m2m_ctx->finished,
 				!(m2m_ctx->job_flags & TRANS_RUNNING));
 	} else if (m2m_ctx->job_flags & TRANS_QUEUED) {
@@ -445,14 +445,19 @@ int v4l2_m2m_reqbufs(struct file *file, struct v4l2_m2m_ctx *m2m_ctx,
 }
 EXPORT_SYMBOL_GPL(v4l2_m2m_reqbufs);
 
-static void v4l2_m2m_adjust_mem_offset(struct vb2_queue *vq,
-				       struct v4l2_buffer *buf)
+int v4l2_m2m_querybuf(struct file *file, struct v4l2_m2m_ctx *m2m_ctx,
+		      struct v4l2_buffer *buf)
 {
+	struct vb2_queue *vq;
+	int ret = 0;
+	unsigned int i;
+
+	vq = v4l2_m2m_get_vq(m2m_ctx, buf->type);
+	ret = vb2_querybuf(vq, buf);
+
 	/* Adjust MMAP memory offsets for the CAPTURE queue */
 	if (buf->memory == V4L2_MEMORY_MMAP && !V4L2_TYPE_IS_OUTPUT(vq->type)) {
 		if (V4L2_TYPE_IS_MULTIPLANAR(vq->type)) {
-			unsigned int i;
-
 			for (i = 0; i < buf->length; ++i)
 				buf->m.planes[i].m.mem_offset
 					+= DST_QUEUE_OFF_BASE;
@@ -460,43 +465,30 @@ static void v4l2_m2m_adjust_mem_offset(struct vb2_queue *vq,
 			buf->m.offset += DST_QUEUE_OFF_BASE;
 		}
 	}
-}
 
-int v4l2_m2m_querybuf(struct file *file, struct v4l2_m2m_ctx *m2m_ctx,
-		      struct v4l2_buffer *buf)
-{
-	struct vb2_queue *vq;
-	int ret;
-
-	vq = v4l2_m2m_get_vq(m2m_ctx, buf->type);
-	ret = vb2_querybuf(vq, buf);
-	if (ret)
-		return ret;
-
-	/* Adjust MMAP memory offsets for the CAPTURE queue */
-	v4l2_m2m_adjust_mem_offset(vq, buf);
-
-	return 0;
+	return ret;
 }
 EXPORT_SYMBOL_GPL(v4l2_m2m_querybuf);
 
 int v4l2_m2m_qbuf(struct file *file, struct v4l2_m2m_ctx *m2m_ctx,
 		  struct v4l2_buffer *buf)
 {
+	struct video_device *vdev = video_devdata(file);
 	struct vb2_queue *vq;
 	int ret;
 
 	vq = v4l2_m2m_get_vq(m2m_ctx, buf->type);
-	ret = vb2_qbuf(vq, buf);
-	if (ret)
-		return ret;
+	if (!V4L2_TYPE_IS_OUTPUT(vq->type) &&
+	    (buf->flags & V4L2_BUF_FLAG_REQUEST_FD)) {
+		dprintk("%s: requests cannot be used with capture buffers\n",
+			__func__);
+		return -EPERM;
+	}
+	ret = vb2_qbuf(vq, vdev->v4l2_dev->mdev, buf);
+	if (!ret && !(buf->flags & V4L2_BUF_FLAG_IN_REQUEST))
+		v4l2_m2m_try_schedule(m2m_ctx);
 
-	/* Adjust MMAP memory offsets for the CAPTURE queue */
-	v4l2_m2m_adjust_mem_offset(vq, buf);
-
-	v4l2_m2m_try_schedule(m2m_ctx);
-
-	return 0;
+	return ret;
 }
 EXPORT_SYMBOL_GPL(v4l2_m2m_qbuf);
 
@@ -504,37 +496,20 @@ int v4l2_m2m_dqbuf(struct file *file, struct v4l2_m2m_ctx *m2m_ctx,
 		   struct v4l2_buffer *buf)
 {
 	struct vb2_queue *vq;
-	int ret;
 
 	vq = v4l2_m2m_get_vq(m2m_ctx, buf->type);
-	ret = vb2_dqbuf(vq, buf, file->f_flags & O_NONBLOCK);
-	if (ret)
-		return ret;
-
-	/* Adjust MMAP memory offsets for the CAPTURE queue */
-	v4l2_m2m_adjust_mem_offset(vq, buf);
-
-	return 0;
+	return vb2_dqbuf(vq, buf, file->f_flags & O_NONBLOCK);
 }
 EXPORT_SYMBOL_GPL(v4l2_m2m_dqbuf);
 
 int v4l2_m2m_prepare_buf(struct file *file, struct v4l2_m2m_ctx *m2m_ctx,
 			 struct v4l2_buffer *buf)
 {
+	struct video_device *vdev = video_devdata(file);
 	struct vb2_queue *vq;
-	int ret;
 
 	vq = v4l2_m2m_get_vq(m2m_ctx, buf->type);
-	ret = vb2_prepare_buf(vq, buf);
-	if (ret)
-		return ret;
-
-	/* Adjust MMAP memory offsets for the CAPTURE queue */
-	v4l2_m2m_adjust_mem_offset(vq, buf);
-
-	v4l2_m2m_try_schedule(m2m_ctx);
-
-	return 0;
+	return vb2_prepare_buf(vq, vdev->v4l2_dev->mdev, buf);
 }
 EXPORT_SYMBOL_GPL(v4l2_m2m_prepare_buf);
 
@@ -775,17 +750,11 @@ static int v4l2_m2m_register_entity(struct media_device *mdev,
 	entity->function = function;
 
 	ret = media_entity_pads_init(entity, num_pads, pads);
-	if (ret) {
-		kfree(entity->name);
-		entity->name = NULL;
+	if (ret)
 		return ret;
-	}
 	ret = media_device_register_entity(mdev, entity);
-	if (ret) {
-		kfree(entity->name);
-		entity->name = NULL;
+	if (ret)
 		return ret;
-	}
 
 	return 0;
 }
@@ -821,12 +790,12 @@ int v4l2_m2m_register_media_controller(struct v4l2_m2m_dev *m2m_dev,
 		goto err_rel_entity1;
 
 	/* Connect the three entities */
-	ret = media_create_pad_link(m2m_dev->source, 0, &m2m_dev->proc, 0,
+	ret = media_create_pad_link(m2m_dev->source, 0, &m2m_dev->proc, 1,
 			MEDIA_LNK_FL_IMMUTABLE | MEDIA_LNK_FL_ENABLED);
 	if (ret)
 		goto err_rel_entity2;
 
-	ret = media_create_pad_link(&m2m_dev->proc, 1, &m2m_dev->sink, 0,
+	ret = media_create_pad_link(&m2m_dev->proc, 0, &m2m_dev->sink, 0,
 			MEDIA_LNK_FL_IMMUTABLE | MEDIA_LNK_FL_ENABLED);
 	if (ret)
 		goto err_rm_links0;
@@ -983,6 +952,52 @@ void v4l2_m2m_buf_queue(struct v4l2_m2m_ctx *m2m_ctx,
 	spin_unlock_irqrestore(&q_ctx->rdy_spinlock, flags);
 }
 EXPORT_SYMBOL_GPL(v4l2_m2m_buf_queue);
+
+void v4l2_m2m_request_queue(struct media_request *req)
+{
+	struct media_request_object *obj, *obj_safe;
+	struct v4l2_m2m_ctx *m2m_ctx = NULL;
+
+	/*
+	 * Queue all objects. Note that buffer objects are at the end of the
+	 * objects list, after all other object types. Once buffer objects
+	 * are queued, the driver might delete them immediately (if the driver
+	 * processes the buffer at once), so we have to use
+	 * list_for_each_entry_safe() to handle the case where the object we
+	 * queue is deleted.
+	 */
+	list_for_each_entry_safe(obj, obj_safe, &req->objects, list) {
+		struct v4l2_m2m_ctx *m2m_ctx_obj;
+		struct vb2_buffer *vb;
+
+		if (!obj->ops->queue)
+			continue;
+
+		if (vb2_request_object_is_buffer(obj)) {
+			/* Sanity checks */
+			vb = container_of(obj, struct vb2_buffer, req_obj);
+			WARN_ON(!V4L2_TYPE_IS_OUTPUT(vb->vb2_queue->type));
+			m2m_ctx_obj = container_of(vb->vb2_queue,
+						   struct v4l2_m2m_ctx,
+						   out_q_ctx.q);
+			WARN_ON(m2m_ctx && m2m_ctx_obj != m2m_ctx);
+			m2m_ctx = m2m_ctx_obj;
+		}
+
+		/*
+		 * The buffer we queue here can in theory be immediately
+		 * unbound, hence the use of list_for_each_entry_safe()
+		 * above and why we call the queue op last.
+		 */
+		obj->ops->queue(obj);
+	}
+
+	WARN_ON(!m2m_ctx);
+
+	if (m2m_ctx)
+		v4l2_m2m_try_schedule(m2m_ctx);
+}
+EXPORT_SYMBOL_GPL(v4l2_m2m_request_queue);
 
 /* Videobuf2 ioctl helpers */
 

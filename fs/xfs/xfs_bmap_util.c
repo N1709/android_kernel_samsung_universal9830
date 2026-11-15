@@ -130,7 +130,7 @@ xfs_bmap_rtalloc(
 	 * pick an extent that will space things out in the rt area.
 	 */
 	if (ap->eof && ap->offset == 0) {
-		xfs_rtblock_t rtx; /* realtime extent no */
+		xfs_rtblock_t uninitialized_var(rtx); /* realtime extent no */
 
 		error = xfs_rtpick_extent(mp, ap->tp, ralen, &rtx);
 		if (error)
@@ -406,10 +406,10 @@ xfs_getbmap_report_one(
 	struct xfs_bmbt_irec	*got)
 {
 	struct kgetbmap		*p = out + bmv->bmv_entries;
-	bool			shared = false, trimmed = false;
+	bool			shared = false;
 	int			error;
 
-	error = xfs_reflink_trim_around_shared(ip, got, &shared, &trimmed);
+	error = xfs_reflink_trim_around_shared(ip, got, &shared);
 	if (error)
 		return error;
 
@@ -1042,44 +1042,6 @@ out_trans_cancel:
 	goto out_unlock;
 }
 
-static int
-xfs_adjust_extent_unmap_boundaries(
-	struct xfs_inode	*ip,
-	xfs_fileoff_t		*startoffset_fsb,
-	xfs_fileoff_t		*endoffset_fsb)
-{
-	struct xfs_mount	*mp = ip->i_mount;
-	struct xfs_bmbt_irec	imap;
-	int			nimap, error;
-	xfs_extlen_t		mod = 0;
-
-	nimap = 1;
-	error = xfs_bmapi_read(ip, *startoffset_fsb, 1, &imap, &nimap, 0);
-	if (error)
-		return error;
-
-	if (nimap && imap.br_startblock != HOLESTARTBLOCK) {
-		ASSERT(imap.br_startblock != DELAYSTARTBLOCK);
-		div_u64_rem(imap.br_startblock, mp->m_sb.sb_rextsize, &mod);
-		if (mod)
-			*startoffset_fsb += mp->m_sb.sb_rextsize - mod;
-	}
-
-	nimap = 1;
-	error = xfs_bmapi_read(ip, *endoffset_fsb - 1, 1, &imap, &nimap, 0);
-	if (error)
-		return error;
-
-	if (nimap && imap.br_startblock != HOLESTARTBLOCK) {
-		ASSERT(imap.br_startblock != DELAYSTARTBLOCK);
-		mod++;
-		if (mod && mod != mp->m_sb.sb_rextsize)
-			*endoffset_fsb -= mod;
-	}
-
-	return 0;
-}
-
 int
 xfs_flush_unmap_range(
 	struct xfs_inode	*ip,
@@ -1133,19 +1095,8 @@ xfs_free_file_space(
 	endoffset_fsb = XFS_B_TO_FSBT(mp, offset + len);
 
 	/*
-	 * Need to zero the stuff we're not freeing, on disk.  If it's a RT file
-	 * and we can't use unwritten extents then we actually need to ensure
-	 * to zero the whole extent, otherwise we just need to take of block
-	 * boundaries, and xfs_bunmapi will handle the rest.
+	 * Need to zero the stuff we're not freeing, on disk.
 	 */
-	if (XFS_IS_REALTIME_INODE(ip) &&
-	    !xfs_sb_version_hasextflgbit(&mp->m_sb)) {
-		error = xfs_adjust_extent_unmap_boundaries(ip, &startoffset_fsb,
-				&endoffset_fsb);
-		if (error)
-			return error;
-	}
-
 	if (endoffset_fsb > startoffset_fsb) {
 		while (!done) {
 			error = xfs_unmap_extent(ip, startoffset_fsb,
@@ -1245,8 +1196,6 @@ xfs_prepare_shift(
 	 * about to shift down every extent from offset to EOF.
 	 */
 	error = xfs_flush_unmap_range(ip, offset, XFS_ISIZE(ip));
-	if (error)
-		return error;
 
 	/*
 	 * Clean out anything hanging around in the cow fork now that
@@ -1823,7 +1772,7 @@ xfs_swap_extents(
 	if (xfs_inode_has_cow_data(tip)) {
 		error = xfs_reflink_cancel_cow_range(tip, 0, NULLFILEOFF, true);
 		if (error)
-			goto out_unlock;
+			return error;
 	}
 
 	/*

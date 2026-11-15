@@ -13,9 +13,8 @@
 #include <net/netns/generic.h>
 
 struct tcf_idrinfo {
-	spinlock_t	lock;
+	struct mutex	lock;
 	struct idr	action_idr;
-	struct net	*net;
 };
 
 struct tc_action_ops;
@@ -32,10 +31,12 @@ struct tc_action {
 	int				tcfa_action;
 	struct tcf_t			tcfa_tm;
 	struct gnet_stats_basic_packed	tcfa_bstats;
+	struct gnet_stats_basic_packed	tcfa_bstats_hw;
 	struct gnet_stats_queue		tcfa_qstats;
 	struct net_rate_estimator __rcu *tcfa_rate_est;
 	spinlock_t			tcfa_lock;
 	struct gnet_stats_basic_cpu __percpu *cpu_bstats;
+	struct gnet_stats_basic_cpu __percpu *cpu_bstats_hw;
 	struct gnet_stats_queue __percpu *cpu_qstats;
 	struct tc_cookie	__rcu *act_cookie;
 	struct tcf_chain	*goto_chain;
@@ -67,8 +68,7 @@ static inline void tcf_tm_dump(struct tcf_t *dtm, const struct tcf_t *stm)
 {
 	dtm->install = jiffies_to_clock_t(jiffies - stm->install);
 	dtm->lastuse = jiffies_to_clock_t(jiffies - stm->lastuse);
-	dtm->firstuse = stm->firstuse ?
-		jiffies_to_clock_t(jiffies - stm->firstuse) : 0;
+	dtm->firstuse = jiffies_to_clock_t(jiffies - stm->firstuse);
 	dtm->expires = jiffies_to_clock_t(stm->expires);
 }
 
@@ -87,8 +87,7 @@ struct tc_action_ops {
 		       struct tcf_result *); /* called under RCU BH lock*/
 	int     (*dump)(struct sk_buff *, struct tc_action *, int, int);
 	void	(*cleanup)(struct tc_action *);
-	int     (*lookup)(struct net *net, struct tc_action **a, u32 index,
-			  struct netlink_ext_ack *extack);
+	int     (*lookup)(struct net *net, struct tc_action **a, u32 index);
 	int     (*init)(struct net *net, struct nlattr *nla,
 			struct nlattr *est, struct tc_action **act, int ovr,
 			int bind, bool rtnl_held,
@@ -97,7 +96,7 @@ struct tc_action_ops {
 			struct netlink_callback *, int,
 			const struct tc_action_ops *,
 			struct netlink_ext_ack *);
-	void	(*stats_update)(struct tc_action *, u64, u32, u64);
+	void	(*stats_update)(struct tc_action *, u64, u32, u64, bool);
 	size_t  (*get_fill_size)(const struct tc_action *act);
 	struct net_device *(*get_dev)(const struct tc_action *a);
 	void	(*put_dev)(struct net_device *dev);
@@ -109,7 +108,7 @@ struct tc_action_net {
 };
 
 static inline
-int tc_action_net_init(struct net *net, struct tc_action_net *tn,
+int tc_action_net_init(struct tc_action_net *tn,
 		       const struct tc_action_ops *ops)
 {
 	int err = 0;
@@ -118,8 +117,7 @@ int tc_action_net_init(struct net *net, struct tc_action_net *tn,
 	if (!tn->idrinfo)
 		return -ENOMEM;
 	tn->ops = ops;
-	tn->idrinfo->net = net;
-	spin_lock_init(&tn->idrinfo->lock);
+	mutex_init(&tn->idrinfo->lock);
 	idr_init(&tn->idrinfo->action_idr);
 	return err;
 }
@@ -186,13 +184,13 @@ int tcf_action_copy_stats(struct sk_buff *, struct tc_action *, int);
 #endif /* CONFIG_NET_CLS_ACT */
 
 static inline void tcf_action_stats_update(struct tc_action *a, u64 bytes,
-					   u64 packets, u64 lastuse)
+					   u64 packets, u64 lastuse, bool hw)
 {
 #ifdef CONFIG_NET_CLS_ACT
 	if (!a->ops->stats_update)
 		return;
 
-	a->ops->stats_update(a, bytes, packets, lastuse);
+	a->ops->stats_update(a, bytes, packets, lastuse, hw);
 #endif
 }
 

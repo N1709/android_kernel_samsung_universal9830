@@ -317,11 +317,11 @@ struct inode *afs_iget(struct super_block *sb, struct key *key,
 			 * didn't give us a callback) */
 			vnode->cb_version = 0;
 			vnode->cb_type = 0;
-			vnode->cb_expires_at = 0;
+			vnode->cb_expires_at = ktime_get();
 		} else {
 			vnode->cb_version = cb->version;
 			vnode->cb_type = cb->type;
-			vnode->cb_expires_at = cb->expiry;
+			vnode->cb_expires_at = cb->expires_at;
 			vnode->cb_interest = afs_get_cb_interest(cbi);
 			set_bit(AFS_VNODE_CB_PROMISED, &vnode->flags);
 		}
@@ -401,9 +401,12 @@ int afs_validate(struct afs_vnode *vnode, struct key *key)
 			vnode->cb_s_break = vnode->cb_interest->server->cb_s_break;
 			vnode->cb_v_break = vnode->volume->cb_v_break;
 			valid = false;
-		} else if (test_bit(AFS_VNODE_ZAP_DATA, &vnode->flags)) {
+		} else if (vnode->status.type == AFS_FTYPE_DIR &&
+			   (!test_bit(AFS_VNODE_DIR_VALID, &vnode->flags) ||
+			    vnode->cb_expires_at - 10 <= now)) {
 			valid = false;
-		} else if (vnode->cb_expires_at - 10 <= now) {
+		} else if (test_bit(AFS_VNODE_ZAP_DATA, &vnode->flags) ||
+			   vnode->cb_expires_at - 10 <= now) {
 			valid = false;
 		} else {
 			valid = true;
@@ -411,6 +414,7 @@ int afs_validate(struct afs_vnode *vnode, struct key *key)
 	} else if (test_bit(AFS_VNODE_DELETED, &vnode->flags)) {
 		valid = true;
 	} else {
+		vnode->cb_s_break = vnode->cb_interest->server->cb_s_break;
 		vnode->cb_v_break = vnode->volume->cb_v_break;
 		valid = false;
 	}
@@ -471,22 +475,9 @@ int afs_getattr(const struct path *path, struct kstat *stat,
 {
 	struct inode *inode = d_inode(path->dentry);
 	struct afs_vnode *vnode = AFS_FS_I(inode);
-	struct key *key;
-	int ret, seq = 0;
+	int seq = 0;
 
 	_enter("{ ino=%lu v=%u }", inode->i_ino, inode->i_generation);
-
-	if (vnode->volume &&
-	    !(query_flags & AT_STATX_DONT_SYNC) &&
-	    !test_bit(AFS_VNODE_CB_PROMISED, &vnode->flags)) {
-		key = afs_request_key(vnode->volume->cell);
-		if (IS_ERR(key))
-			return PTR_ERR(key);
-		ret = afs_validate(vnode, key);
-		key_put(key);
-		if (ret < 0)
-			return ret;
-	}
 
 	do {
 		read_seqbegin_or_lock(&vnode->cb_lock, &seq);
@@ -554,10 +545,7 @@ void afs_evict_inode(struct inode *inode)
 	}
 #endif
 
-	afs_prune_wb_keys(vnode);
 	afs_put_permits(rcu_access_pointer(vnode->permit_cache));
-	key_put(vnode->lock_key);
-	vnode->lock_key = NULL;
 	_leave("");
 }
 

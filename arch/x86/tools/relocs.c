@@ -46,7 +46,6 @@ static const char * const sym_regex_kernel[S_NSYMTYPES] = {
 	"^(xen_irq_disable_direct_reloc$|"
 	"xen_save_fl_direct_reloc$|"
 	"VDSO|"
-	"__typeid__|"
 	"__crc_)",
 
 /*
@@ -131,7 +130,7 @@ static void regex_init(int use_real_mode)
 			      REG_EXTENDED|REG_NOSUB);
 
 		if (err) {
-			regerror(err, &sym_regex_c[i], errbuf, sizeof errbuf);
+			regerror(err, &sym_regex_c[i], errbuf, sizeof(errbuf));
 			die("%s", errbuf);
 		}
         }
@@ -197,6 +196,7 @@ static const char *rel_type(unsigned type)
 #if ELF_BITS == 64
 		REL_TYPE(R_X86_64_NONE),
 		REL_TYPE(R_X86_64_64),
+		REL_TYPE(R_X86_64_PC64),
 		REL_TYPE(R_X86_64_PC32),
 		REL_TYPE(R_X86_64_GOT32),
 		REL_TYPE(R_X86_64_PLT32),
@@ -405,7 +405,7 @@ static void read_shdrs(FILE *fp)
 	}
 	for (i = 0; i < ehdr.e_shnum; i++) {
 		struct section *sec = &secs[i];
-		if (fread(&shdr, sizeof shdr, 1, fp) != 1)
+		if (fread(&shdr, sizeof(shdr), 1, fp) != 1)
 			die("Cannot read ELF section headers %d/%d: %s\n",
 			    i, ehdr.e_shnum, strerror(errno));
 		sec->shdr.sh_name      = elf_word_to_cpu(shdr.sh_name);
@@ -580,14 +580,6 @@ static void print_absolute_relocs(void)
 		if (!(sec_applies->shdr.sh_flags & SHF_ALLOC)) {
 			continue;
 		}
-		/*
-		 * Do not perform relocations in .notes section; any
-		 * values there are meant for pre-boot consumption (e.g.
-		 * startup_xen).
-		 */
-		if (sec_applies->shdr.sh_type == SHT_NOTE) {
-			continue;
-		}
 		sh_symtab  = sec_symtab->symtab;
 		sym_strtab = sec_symtab->link->strtab;
 		for (j = 0; j < sec->shdr.sh_size/sizeof(Elf_Rel); j++) {
@@ -673,15 +665,6 @@ static void walk_relocs(int (*process)(struct section *sec, Elf_Rel *rel,
 		if (!(sec_applies->shdr.sh_flags & SHF_ALLOC)) {
 			continue;
 		}
-
-		/*
-		 * Do not perform relocations in .notes sections; any
-		 * values there are meant for pre-boot consumption (e.g.
-		 * startup_xen).
-		 */
-		if (sec_applies->shdr.sh_type == SHT_NOTE)
-			continue;
-
 		sh_symtab = sec_symtab->symtab;
 		sym_strtab = sec_symtab->link->strtab;
 		for (j = 0; j < sec->shdr.sh_size/sizeof(Elf_Rel); j++) {
@@ -800,10 +783,13 @@ static int do_reloc64(struct section *sec, Elf_Rel *rel, ElfW(Sym) *sym,
 			add_reloc(&relocs32neg, offset);
 		break;
 
-	case R_X86_64_8:
-		if (!shn_abs || !is_reloc(S_ABS, symname))
-			die("Non-whitelisted %s relocation: %s\n",
-				rel_type(r_type), symname);
+	case R_X86_64_PC64:
+		/*
+		 * Only used by jump labels
+		 */
+		if (is_percpu_sym(sym, symname))
+			die("Invalid R_X86_64_PC64 relocation against per-CPU symbol %s\n",
+			    symname);
 		break;
 
 	case R_X86_64_32:
@@ -865,11 +851,9 @@ static int do_reloc32(struct section *sec, Elf_Rel *rel, Elf_Sym *sym,
 	case R_386_PC32:
 	case R_386_PC16:
 	case R_386_PC8:
-	case R_386_PLT32:
 		/*
-		 * NONE can be ignored and PC relative relocations don't need
-		 * to be adjusted. Because sym must be defined, R_386_PLT32 can
-		 * be treated the same way as R_386_PC32.
+		 * NONE can be ignored and PC relative relocations don't
+		 * need to be adjusted.
 		 */
 		break;
 
@@ -910,11 +894,9 @@ static int do_reloc_real(struct section *sec, Elf_Rel *rel, Elf_Sym *sym,
 	case R_386_PC32:
 	case R_386_PC16:
 	case R_386_PC8:
-	case R_386_PLT32:
 		/*
-		 * NONE can be ignored and PC relative relocations don't need
-		 * to be adjusted. Because sym must be defined, R_386_PLT32 can
-		 * be treated the same way as R_386_PC32.
+		 * NONE can be ignored and PC relative relocations don't
+		 * need to be adjusted.
 		 */
 		break;
 

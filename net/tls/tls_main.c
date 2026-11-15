@@ -56,7 +56,7 @@ enum {
 static struct proto *saved_tcpv6_prot;
 static DEFINE_MUTEX(tcpv6_prot_mutex);
 static LIST_HEAD(device_list);
-static DEFINE_MUTEX(device_mutex);
+static DEFINE_SPINLOCK(device_spinlock);
 static struct proto tls_prots[TLS_NUM_PROTS][TLS_NUM_CONFIG][TLS_NUM_CONFIG];
 static struct proto_ops tls_sw_proto_ops;
 
@@ -177,9 +177,12 @@ int tls_proccess_cmsg(struct sock *sk, struct msghdr *msg,
 			if (msg->msg_flags & MSG_MORE)
 				return -EINVAL;
 
-			*record_type = *(unsigned char *)CMSG_DATA(cmsg);
-
 			rc = tls_handle_open_record(sk, msg->msg_flags);
+			if (rc)
+				return rc;
+
+			*record_type = *(unsigned char *)CMSG_DATA(cmsg);
+			rc = 0;
 			break;
 		default:
 			return -EINVAL;
@@ -218,6 +221,7 @@ int tls_push_pending_closed_record(struct sock *sk,
 static void tls_write_space(struct sock *sk)
 {
 	struct tls_context *ctx = tls_get_ctx(sk);
+	struct tls_sw_context_tx *tx_ctx = tls_sw_ctx_tx(ctx);
 
 	/* If in_tcp_sendpages call lower protocol write space handler
 	 * to ensure we wake up any waiting operations there. For example
@@ -228,15 +232,17 @@ static void tls_write_space(struct sock *sk)
 		return;
 	}
 
-#ifdef CONFIG_TLS_DEVICE
-	if (ctx->tx_conf == TLS_HW)
-		tls_device_write_space(sk, ctx);
-	else
-#endif
-		tls_sw_write_space(sk, ctx);
+	/* Schedule the transmission if tx list is ready */
+	if (is_tx_ready(tx_ctx) && !sk->sk_write_pending) {
+		/* Schedule the transmission */
+		if (!test_and_set_bit(BIT_TX_SCHEDULED, &tx_ctx->tx_bitmask))
+			schedule_delayed_work(&tx_ctx->tx_work.work, 0);
+	}
+
+	ctx->sk_write_space(sk);
 }
 
-void tls_ctx_free(struct tls_context *ctx)
+static void tls_ctx_free(struct tls_context *ctx)
 {
 	if (!ctx)
 		return;
@@ -272,8 +278,11 @@ static void tls_sk_proto_close(struct sock *sk, long timeout)
 		tls_sw_free_resources_tx(sk);
 	}
 
-	if (ctx->rx_conf == TLS_SW)
+	if (ctx->rx_conf == TLS_SW) {
+		kfree(ctx->rx.rec_seq);
+		kfree(ctx->rx.iv);
 		tls_sw_free_resources_rx(sk);
+	}
 
 #ifdef CONFIG_TLS_DEVICE
 	if (ctx->rx_conf == TLS_HW)
@@ -283,8 +292,6 @@ static void tls_sk_proto_close(struct sock *sk, long timeout)
 #else
 	{
 #endif
-		if (sk->sk_write_space == tls_write_space)
-			sk->sk_write_space = ctx->sk_write_space;
 		tls_ctx_free(ctx);
 		ctx = NULL;
 	}
@@ -548,7 +555,7 @@ static int tls_hw_prot(struct sock *sk)
 	struct tls_device *dev;
 	int rc = 0;
 
-	mutex_lock(&device_mutex);
+	spin_lock_bh(&device_spinlock);
 	list_for_each_entry(dev, &device_list, dev_list) {
 		if (dev->feature && dev->feature(dev)) {
 			ctx = create_ctx(sk);
@@ -566,7 +573,7 @@ static int tls_hw_prot(struct sock *sk)
 		}
 	}
 out:
-	mutex_unlock(&device_mutex);
+	spin_unlock_bh(&device_spinlock);
 	return rc;
 }
 
@@ -575,12 +582,17 @@ static void tls_hw_unhash(struct sock *sk)
 	struct tls_context *ctx = tls_get_ctx(sk);
 	struct tls_device *dev;
 
-	mutex_lock(&device_mutex);
+	spin_lock_bh(&device_spinlock);
 	list_for_each_entry(dev, &device_list, dev_list) {
-		if (dev->unhash)
+		if (dev->unhash) {
+			kref_get(&dev->kref);
+			spin_unlock_bh(&device_spinlock);
 			dev->unhash(dev, sk);
+			kref_put(&dev->kref, dev->release);
+			spin_lock_bh(&device_spinlock);
+		}
 	}
-	mutex_unlock(&device_mutex);
+	spin_unlock_bh(&device_spinlock);
 	ctx->unhash(sk);
 }
 
@@ -591,12 +603,17 @@ static int tls_hw_hash(struct sock *sk)
 	int err;
 
 	err = ctx->hash(sk);
-	mutex_lock(&device_mutex);
+	spin_lock_bh(&device_spinlock);
 	list_for_each_entry(dev, &device_list, dev_list) {
-		if (dev->hash)
+		if (dev->hash) {
+			kref_get(&dev->kref);
+			spin_unlock_bh(&device_spinlock);
 			err |= dev->hash(dev, sk);
+			kref_put(&dev->kref, dev->release);
+			spin_lock_bh(&device_spinlock);
+		}
 	}
-	mutex_unlock(&device_mutex);
+	spin_unlock_bh(&device_spinlock);
 
 	if (err)
 		tls_hw_unhash(sk);
@@ -692,24 +709,22 @@ out:
 
 void tls_register_device(struct tls_device *device)
 {
-	mutex_lock(&device_mutex);
+	spin_lock_bh(&device_spinlock);
 	list_add_tail(&device->dev_list, &device_list);
-	mutex_unlock(&device_mutex);
+	spin_unlock_bh(&device_spinlock);
 }
 EXPORT_SYMBOL(tls_register_device);
 
 void tls_unregister_device(struct tls_device *device)
 {
-	mutex_lock(&device_mutex);
+	spin_lock_bh(&device_spinlock);
 	list_del(&device->dev_list);
-	mutex_unlock(&device_mutex);
+	spin_unlock_bh(&device_spinlock);
 }
 EXPORT_SYMBOL(tls_unregister_device);
 
 static struct tcp_ulp_ops tcp_tls_ulp_ops __read_mostly = {
 	.name			= "tls",
-	.uid			= TCP_ULP_TLS,
-	.user_visible		= true,
 	.owner			= THIS_MODULE,
 	.init			= tls_init,
 };

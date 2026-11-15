@@ -227,6 +227,52 @@ bool ipv6_chk_mcast_addr(struct net_device *dev, const struct in6_addr *group,
 
 void ipv6_mc_dad_complete(struct inet6_dev *idev);
 
+/* A stub used by vxlan module. This is ugly, ideally these
+ * symbols should be built into the core kernel.
+ */
+struct ipv6_stub {
+	int (*ipv6_sock_mc_join)(struct sock *sk, int ifindex,
+				 const struct in6_addr *addr);
+	int (*ipv6_sock_mc_drop)(struct sock *sk, int ifindex,
+				 const struct in6_addr *addr);
+	int (*ipv6_dst_lookup)(struct net *net, struct sock *sk,
+			       struct dst_entry **dst, struct flowi6 *fl6);
+
+	struct fib6_table *(*fib6_get_table)(struct net *net, u32 id);
+	struct fib6_info *(*fib6_lookup)(struct net *net, int oif,
+					 struct flowi6 *fl6, int flags);
+	struct fib6_info *(*fib6_table_lookup)(struct net *net,
+					      struct fib6_table *table,
+					      int oif, struct flowi6 *fl6,
+					      int flags);
+	struct fib6_info *(*fib6_multipath_select)(const struct net *net,
+						   struct fib6_info *f6i,
+						   struct flowi6 *fl6, int oif,
+						   const struct sk_buff *skb,
+						   int strict);
+	u32 (*ip6_mtu_from_fib6)(struct fib6_info *f6i, struct in6_addr *daddr,
+				 struct in6_addr *saddr);
+
+	void (*udpv6_encap_enable)(void);
+	void (*ndisc_send_na)(struct net_device *dev, const struct in6_addr *daddr,
+			      const struct in6_addr *solicited_addr,
+			      bool router, bool solicited, bool override, bool inc_opt);
+	struct neigh_table *nd_tbl;
+};
+extern const struct ipv6_stub *ipv6_stub __read_mostly;
+
+/* A stub used by bpf helpers. Similarly ugly as ipv6_stub */
+struct ipv6_bpf_stub {
+	int (*inet6_bind)(struct sock *sk, struct sockaddr *uaddr, int addr_len,
+			  bool force_bind_address_no_port, bool with_lock);
+	struct sock *(*udp6_lib_lookup)(struct net *net,
+					const struct in6_addr *saddr, __be16 sport,
+					const struct in6_addr *daddr, __be16 dport,
+					int dif, int sdif, struct udp_table *tbl,
+					struct sk_buff *skb);
+};
+extern const struct ipv6_bpf_stub *ipv6_bpf_stub __read_mostly;
+
 /*
  * identify MLD packets for MLD filter exceptions
  */
@@ -255,18 +301,6 @@ static inline bool ipv6_is_mld(struct sk_buff *skb, int nexthdr, int offset)
 void addrconf_prefix_rcv(struct net_device *dev,
 			 u8 *opt, int len, bool sllao);
 
-/* Determines into what table to put autoconf PIO/RIO/default routes
- * learned on this device.
- *
- * - If 0, use the same table for every device. This puts routes into
- *   one of RT_TABLE_{PREFIX,INFO,DFLT} depending on the type of route
- *   (but note that these three are currently all equal to
- *   RT6_TABLE_MAIN).
- * - If > 0, use the specified table.
- * - If < 0, put routes into table dev->ifindex + (-rt_table).
- */
-u32 addrconf_rt_table(const struct net_device *dev, u32 default_table);
-
 /*
  *	anycast prototypes (anycast.c)
  */
@@ -274,7 +308,6 @@ int ipv6_sock_ac_join(struct sock *sk, int ifindex,
 		      const struct in6_addr *addr);
 int ipv6_sock_ac_drop(struct sock *sk, int ifindex,
 		      const struct in6_addr *addr);
-void __ipv6_sock_ac_close(struct sock *sk);
 void ipv6_sock_ac_close(struct sock *sk);
 
 int __ipv6_dev_ac_inc(struct inet6_dev *idev, const struct in6_addr *addr);
@@ -284,6 +317,8 @@ bool ipv6_chk_acast_addr(struct net *net, struct net_device *dev,
 			 const struct in6_addr *addr);
 bool ipv6_chk_acast_addr_src(struct net *net, struct net_device *dev,
 			     const struct in6_addr *addr);
+int ipv6_anycast_init(void);
+void ipv6_anycast_cleanup(void);
 
 /* Device notifier */
 int register_inet6addr_notifier(struct notifier_block *nb);
@@ -307,22 +342,6 @@ void inet6_netconf_notify_devconf(struct net *net, int event, int type,
 static inline struct inet6_dev *__in6_dev_get(const struct net_device *dev)
 {
 	return rcu_dereference_rtnl(dev->ip6_ptr);
-}
-
-/**
- * __in6_dev_stats_get - get inet6_dev pointer for stats
- * @dev: network device
- * @skb: skb for original incoming interface if neeeded
- *
- * Caller must hold rcu_read_lock or RTNL, because this function
- * does not take a reference on the inet6_dev.
- */
-static inline struct inet6_dev *__in6_dev_stats_get(const struct net_device *dev,
-						    const struct sk_buff *skb)
-{
-	if (netif_is_l3_master(dev))
-		dev = dev_get_by_index_rcu(dev_net(dev), inet6_iif(skb));
-	return __in6_dev_get(dev);
 }
 
 /**
@@ -412,10 +431,6 @@ static inline void in6_ifa_hold(struct inet6_ifaddr *ifp)
 	refcount_inc(&ifp->refcnt);
 }
 
-static inline bool in6_ifa_hold_safe(struct inet6_ifaddr *ifp)
-{
-	return refcount_inc_not_zero(&ifp->refcnt);
-}
 
 /*
  *	compute link-local solicited-node multicast address

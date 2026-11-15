@@ -14,7 +14,6 @@
 
 #include <linux/module.h>
 #include <linux/mm.h>
-#include <linux/bootmem.h>
 #include <linux/memblock.h>
 #include <linux/gfp.h>
 #include <linux/delay.h>
@@ -27,13 +26,12 @@
 #include <linux/compat.h>
 
 #include <asm/pgalloc.h>
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 #include <asm/tlb.h>
 #include <asm/pdc_chassis.h>
 #include <asm/mmzone.h>
 #include <asm/sections.h>
 #include <asm/msgbuf.h>
-#include <asm/sparsemem.h>
 
 extern int  data_start;
 extern void parisc_kernel_start(void);	/* Kernel entry point in head.S */
@@ -49,6 +47,11 @@ pmd_t pmd0[PTRS_PER_PMD] __attribute__ ((__section__ (".data..vm0.pmd"), aligned
 
 pgd_t swapper_pg_dir[PTRS_PER_PGD] __attribute__ ((__section__ (".data..vm0.pgd"), aligned(PAGE_SIZE)));
 pte_t pg0[PT_INITIAL * PTRS_PER_PTE] __attribute__ ((__section__ (".data..vm0.pte"), aligned(PAGE_SIZE)));
+
+#ifdef CONFIG_DISCONTIGMEM
+struct node_map_data node_data[MAX_NUMNODES] __read_mostly;
+signed char pfnnid_map[PFNNID_MAP_MAX] __read_mostly;
+#endif
 
 static struct resource data_resource = {
 	.name	= "Kernel data",
@@ -73,8 +76,8 @@ static struct resource sysram_resources[MAX_PHYSMEM_RANGES] __read_mostly;
  * information retrieved in kernel/inventory.c.
  */
 
-physmem_range_t pmem_ranges[MAX_PHYSMEM_RANGES] __initdata;
-int npmem_ranges __initdata;
+physmem_range_t pmem_ranges[MAX_PHYSMEM_RANGES] __read_mostly;
+int npmem_ranges __read_mostly;
 
 /*
  * get_memblock() allocates pages via memblock.
@@ -107,7 +110,7 @@ static void * __init get_memblock(unsigned long size)
 }
 
 #ifdef CONFIG_64BIT
-#define MAX_MEM         (1UL << MAX_PHYSMEM_BITS)
+#define MAX_MEM         (~0UL)
 #else /* !CONFIG_64BIT */
 #define MAX_MEM         (3584U*1024U*1024U)
 #endif /* !CONFIG_64BIT */
@@ -146,7 +149,7 @@ static void __init mem_limit_func(void)
 static void __init setup_bootmem(void)
 {
 	unsigned long mem_max;
-#ifndef CONFIG_SPARSEMEM
+#ifndef CONFIG_DISCONTIGMEM
 	physmem_range_t pmem_holes[MAX_PHYSMEM_RANGES - 1];
 	int npmem_holes;
 #endif
@@ -164,20 +167,23 @@ static void __init setup_bootmem(void)
 		int j;
 
 		for (j = i; j > 0; j--) {
-			physmem_range_t tmp;
+			unsigned long tmp;
 
 			if (pmem_ranges[j-1].start_pfn <
 			    pmem_ranges[j].start_pfn) {
 
 				break;
 			}
-			tmp = pmem_ranges[j-1];
-			pmem_ranges[j-1] = pmem_ranges[j];
-			pmem_ranges[j] = tmp;
+			tmp = pmem_ranges[j-1].start_pfn;
+			pmem_ranges[j-1].start_pfn = pmem_ranges[j].start_pfn;
+			pmem_ranges[j].start_pfn = tmp;
+			tmp = pmem_ranges[j-1].pages;
+			pmem_ranges[j-1].pages = pmem_ranges[j].pages;
+			pmem_ranges[j].pages = tmp;
 		}
 	}
 
-#ifndef CONFIG_SPARSEMEM
+#ifndef CONFIG_DISCONTIGMEM
 	/*
 	 * Throw out ranges that are too far apart (controlled by
 	 * MAX_GAP).
@@ -189,7 +195,7 @@ static void __init setup_bootmem(void)
 			 pmem_ranges[i-1].pages) > MAX_GAP) {
 			npmem_ranges = i;
 			printk("Large gap in memory detected (%ld pages). "
-			       "Consider turning on CONFIG_SPARSEMEM\n",
+			       "Consider turning on CONFIG_DISCONTIGMEM\n",
 			       pmem_ranges[i].start_pfn -
 			       (pmem_ranges[i-1].start_pfn +
 			        pmem_ranges[i-1].pages));
@@ -254,8 +260,9 @@ static void __init setup_bootmem(void)
 
 	printk(KERN_INFO "Total Memory: %ld MB\n",mem_max >> 20);
 
-#ifndef CONFIG_SPARSEMEM
+#ifndef CONFIG_DISCONTIGMEM
 	/* Merge the ranges, keeping track of the holes */
+
 	{
 		unsigned long end_pfn;
 		unsigned long hole_pages;
@@ -275,6 +282,18 @@ static void __init setup_bootmem(void)
 
 		pmem_ranges[0].pages = end_pfn - pmem_ranges[0].start_pfn;
 		npmem_ranges = 1;
+	}
+#endif
+
+#ifdef CONFIG_DISCONTIGMEM
+	for (i = 0; i < MAX_PHYSMEM_RANGES; i++) {
+		memset(NODE_DATA(i), 0, sizeof(pg_data_t));
+	}
+	memset(pfnnid_map, 0xff, sizeof(pfnnid_map));
+
+	for (i = 0; i < npmem_ranges; i++) {
+		node_set_state(i, N_NORMAL_MEMORY);
+		node_set_online(i);
 	}
 #endif
 
@@ -318,7 +337,7 @@ static void __init setup_bootmem(void)
 	memblock_reserve(__pa(KERNEL_BINARY_TEXT_START),
 			(unsigned long)(_end - KERNEL_BINARY_TEXT_START));
 
-#ifndef CONFIG_SPARSEMEM
+#ifndef CONFIG_DISCONTIGMEM
 
 	/* reserve the holes */
 
@@ -364,9 +383,6 @@ static void __init setup_bootmem(void)
 
 	/* Initialize Page Deallocation Table (PDT) and check for bad memory. */
 	pdc_pdt_init();
-
-	memblock_allow_resize();
-	memblock_dump_all();
 }
 
 static int __init parisc_text_address(unsigned long vaddr)
@@ -494,6 +510,19 @@ static void __init map_pages(unsigned long start_vaddr,
 	}
 }
 
+void __init set_kernel_text_rw(int enable_read_write)
+{
+	unsigned long start = (unsigned long)__init_begin;
+	unsigned long end   = (unsigned long)_etext;
+
+	map_pages(start, __pa(start), end-start,
+		PAGE_KERNEL_RWX, enable_read_write ? 1:0);
+
+	/* force the kernel to see the new page table entries */
+	flush_cache_all();
+	flush_tlb_all();
+}
+
 void __ref free_initmem(void)
 {
 	unsigned long init_begin = (unsigned long)__init_begin;
@@ -590,8 +619,8 @@ void __init mem_init(void)
 			> BITS_PER_LONG);
 
 	high_memory = __va((max_pfn << PAGE_SHIFT));
-	set_max_mapnr(max_low_pfn);
-	free_all_bootmem();
+	set_max_mapnr(page_to_pfn(virt_to_page(high_memory - 1)) + 1);
+	memblock_free_all();
 
 #ifdef CONFIG_PA11
 	if (boot_cpu_data.cpu_type == pcxl2 || boot_cpu_data.cpu_type == pcxl) {
@@ -694,46 +723,37 @@ static void __init gateway_init(void)
 		  PAGE_SIZE, PAGE_GATEWAY, 1);
 }
 
-static void __init parisc_bootmem_free(void)
-{
-	unsigned long zones_size[MAX_NR_ZONES] = { 0, };
-	unsigned long holes_size[MAX_NR_ZONES] = { 0, };
-	unsigned long mem_start_pfn = ~0UL, mem_end_pfn = 0, mem_size_pfn = 0;
-	int i;
-
-	for (i = 0; i < npmem_ranges; i++) {
-		unsigned long start = pmem_ranges[i].start_pfn;
-		unsigned long size = pmem_ranges[i].pages;
-		unsigned long end = start + size;
-
-		if (mem_start_pfn > start)
-			mem_start_pfn = start;
-		if (mem_end_pfn < end)
-			mem_end_pfn = end;
-		mem_size_pfn += size;
-	}
-
-	zones_size[0] = mem_end_pfn - mem_start_pfn;
-	holes_size[0] = zones_size[0] - mem_size_pfn;
-
-	free_area_init_node(0, zones_size, mem_start_pfn, holes_size);
-}
-
 void __init paging_init(void)
 {
+	int i;
+
 	setup_bootmem();
 	pagetable_init();
 	gateway_init();
 	flush_cache_all_local(); /* start with known state */
 	flush_tlb_all_local(NULL);
 
-	/*
-	 * Mark all memblocks as present for sparsemem using
-	 * memory_present() and then initialize sparsemem.
-	 */
-	memblocks_present();
-	sparse_init();
-	parisc_bootmem_free();
+	for (i = 0; i < npmem_ranges; i++) {
+		unsigned long zones_size[MAX_NR_ZONES] = { 0, };
+
+		zones_size[ZONE_NORMAL] = pmem_ranges[i].pages;
+
+#ifdef CONFIG_DISCONTIGMEM
+		/* Need to initialize the pfnnid_map before we can initialize
+		   the zone */
+		{
+		    int j;
+		    for (j = (pmem_ranges[i].start_pfn >> PFNNID_SHIFT);
+			 j <= ((pmem_ranges[i].start_pfn + pmem_ranges[i].pages) >> PFNNID_SHIFT);
+			 j++) {
+			pfnnid_map[j] = i;
+		    }
+		}
+#endif
+
+		free_area_init_node(i, zones_size,
+				pmem_ranges[i].start_pfn, NULL);
+	}
 }
 
 #ifdef CONFIG_PA20
@@ -887,9 +907,9 @@ void flush_tlb_all(void)
 {
 	int do_recycle;
 
+	__inc_irq_stat(irq_tlb_count);
 	do_recycle = 0;
 	spin_lock(&sid_lock);
-	__inc_irq_stat(irq_tlb_count);
 	if (dirty_space_ids > RECYCLE_THRESHOLD) {
 	    BUG_ON(recycle_inuse);  /* FIXME: Use a semaphore/wait queue here */
 	    get_dirty_sids(&recycle_ndirty,recycle_dirty_array);
@@ -908,8 +928,8 @@ void flush_tlb_all(void)
 #else
 void flush_tlb_all(void)
 {
-	spin_lock(&sid_lock);
 	__inc_irq_stat(irq_tlb_count);
+	spin_lock(&sid_lock);
 	flush_tlb_all_local(NULL);
 	recycle_sids();
 	spin_unlock(&sid_lock);

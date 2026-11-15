@@ -220,6 +220,10 @@ struct ib_mad_agent *ib_register_mad_agent(struct ib_device *device,
 	int ret2, qpn;
 	u8 mgmt_class, vclass;
 
+	if ((qp_type == IB_QPT_SMI && !rdma_cap_ib_smi(device, port_num)) ||
+	    (qp_type == IB_QPT_GSI && !rdma_cap_ib_cm(device, port_num)))
+		return ERR_PTR(-EPROTONOSUPPORT);
+
 	/* Validate parameters */
 	qpn = get_spl_qp_index(qp_type);
 	if (qpn == -1) {
@@ -615,10 +619,10 @@ static void unregister_mad_agent(struct ib_mad_agent_private *mad_agent_priv)
 	idr_unlock(&ib_mad_clients);
 
 	flush_workqueue(port_priv->wq);
+	ib_cancel_rmpp_recvs(mad_agent_priv);
 
 	deref_mad_agent(mad_agent_priv);
 	wait_for_completion(&mad_agent_priv->comp);
-	ib_cancel_rmpp_recvs(mad_agent_priv);
 
 	ib_mad_agent_security_cleanup(&mad_agent_priv->agent);
 
@@ -2410,7 +2414,7 @@ static void wait_for_response(struct ib_mad_send_wr_private *mad_send_wr)
 }
 
 void ib_reset_mad_timeout(struct ib_mad_send_wr_private *mad_send_wr,
-			  int timeout_ms)
+			  unsigned long timeout_ms)
 {
 	mad_send_wr->timeout = msecs_to_jiffies(timeout_ms);
 	wait_for_response(mad_send_wr);
@@ -2886,11 +2890,11 @@ static int ib_mad_post_receive_mads(struct ib_mad_qp_info *qp_info,
 				    struct ib_mad_private *mad)
 {
 	unsigned long flags;
+	int post, ret;
 	struct ib_mad_private *mad_priv;
 	struct ib_sge sg_list;
 	struct ib_recv_wr recv_wr;
 	struct ib_mad_queue *recv_queue = &qp_info->recv_queue;
-	int ret = 0;
 
 	/* Initialize common scatter list fields */
 	sg_list.lkey = qp_info->port_priv->pd->local_dma_lkey;
@@ -2900,7 +2904,7 @@ static int ib_mad_post_receive_mads(struct ib_mad_qp_info *qp_info,
 	recv_wr.sg_list = &sg_list;
 	recv_wr.num_sge = 1;
 
-	while (true) {
+	do {
 		/* Allocate and map receive buffer */
 		if (mad) {
 			mad_priv = mad;
@@ -2908,8 +2912,10 @@ static int ib_mad_post_receive_mads(struct ib_mad_qp_info *qp_info,
 		} else {
 			mad_priv = alloc_mad_private(port_mad_size(qp_info->port_priv),
 						     GFP_ATOMIC);
-			if (!mad_priv)
-				return -ENOMEM;
+			if (!mad_priv) {
+				ret = -ENOMEM;
+				break;
+			}
 		}
 		sg_list.length = mad_priv_dma_size(mad_priv);
 		sg_list.addr = ib_dma_map_single(qp_info->port_priv->device,
@@ -2919,40 +2925,35 @@ static int ib_mad_post_receive_mads(struct ib_mad_qp_info *qp_info,
 		if (unlikely(ib_dma_mapping_error(qp_info->port_priv->device,
 						  sg_list.addr))) {
 			ret = -ENOMEM;
-			goto free_mad_priv;
+			break;
 		}
 		mad_priv->header.mapping = sg_list.addr;
 		mad_priv->header.mad_list.mad_queue = recv_queue;
 		mad_priv->header.mad_list.cqe.done = ib_mad_recv_done;
 		recv_wr.wr_cqe = &mad_priv->header.mad_list.cqe;
-		spin_lock_irqsave(&recv_queue->lock, flags);
-		if (recv_queue->count >= recv_queue->max_active) {
-			/* Fully populated the receive queue */
-			spin_unlock_irqrestore(&recv_queue->lock, flags);
-			break;
-		}
-		recv_queue->count++;
-		list_add_tail(&mad_priv->header.mad_list.list,
-			      &recv_queue->list);
-		spin_unlock_irqrestore(&recv_queue->lock, flags);
 
+		/* Post receive WR */
+		spin_lock_irqsave(&recv_queue->lock, flags);
+		post = (++recv_queue->count < recv_queue->max_active);
+		list_add_tail(&mad_priv->header.mad_list.list, &recv_queue->list);
+		spin_unlock_irqrestore(&recv_queue->lock, flags);
 		ret = ib_post_recv(qp_info->qp, &recv_wr, NULL);
 		if (ret) {
 			spin_lock_irqsave(&recv_queue->lock, flags);
 			list_del(&mad_priv->header.mad_list.list);
 			recv_queue->count--;
 			spin_unlock_irqrestore(&recv_queue->lock, flags);
+			ib_dma_unmap_single(qp_info->port_priv->device,
+					    mad_priv->header.mapping,
+					    mad_priv_dma_size(mad_priv),
+					    DMA_FROM_DEVICE);
+			kfree(mad_priv);
 			dev_err(&qp_info->port_priv->device->dev,
 				"ib_post_recv failed: %d\n", ret);
 			break;
 		}
-	}
+	} while (post);
 
-	ib_dma_unmap_single(qp_info->port_priv->device,
-			    mad_priv->header.mapping,
-			    mad_priv_dma_size(mad_priv), DMA_FROM_DEVICE);
-free_mad_priv:
-	kfree(mad_priv);
 	return ret;
 }
 
@@ -3187,18 +3188,18 @@ static int ib_mad_port_open(struct ib_device *device,
 	if (has_smi)
 		cq_size *= 2;
 
-	port_priv->pd = ib_alloc_pd(device, 0);
-	if (IS_ERR(port_priv->pd)) {
-		dev_err(&device->dev, "Couldn't create ib_mad PD\n");
-		ret = PTR_ERR(port_priv->pd);
-		goto error3;
-	}
-
 	port_priv->cq = ib_alloc_cq(port_priv->device, port_priv, cq_size, 0,
 			IB_POLL_UNBOUND_WORKQUEUE);
 	if (IS_ERR(port_priv->cq)) {
 		dev_err(&device->dev, "Couldn't create ib_mad CQ\n");
 		ret = PTR_ERR(port_priv->cq);
+		goto error3;
+	}
+
+	port_priv->pd = ib_alloc_pd(device, 0);
+	if (IS_ERR(port_priv->pd)) {
+		dev_err(&device->dev, "Couldn't create ib_mad PD\n");
+		ret = PTR_ERR(port_priv->pd);
 		goto error4;
 	}
 
@@ -3241,11 +3242,11 @@ error8:
 error7:
 	destroy_mad_qp(&port_priv->qp_info[0]);
 error6:
+	ib_dealloc_pd(port_priv->pd);
+error4:
 	ib_free_cq(port_priv->cq);
 	cleanup_recv_queue(&port_priv->qp_info[1]);
 	cleanup_recv_queue(&port_priv->qp_info[0]);
-error4:
-	ib_dealloc_pd(port_priv->pd);
 error3:
 	kfree(port_priv);
 
@@ -3275,8 +3276,8 @@ static int ib_mad_port_close(struct ib_device *device, int port_num)
 	destroy_workqueue(port_priv->wq);
 	destroy_mad_qp(&port_priv->qp_info[1]);
 	destroy_mad_qp(&port_priv->qp_info[0]);
-	ib_free_cq(port_priv->cq);
 	ib_dealloc_pd(port_priv->pd);
+	ib_free_cq(port_priv->cq);
 	cleanup_recv_queue(&port_priv->qp_info[1]);
 	cleanup_recv_queue(&port_priv->qp_info[0]);
 	/* XXX: Handle deallocation of MAD registration tables */

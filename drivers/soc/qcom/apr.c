@@ -87,7 +87,7 @@ static int apr_callback(struct rpmsg_device *rpdev, void *buf,
 	}
 
 	if (hdr->pkt_size < APR_HDR_SIZE || hdr->pkt_size != len) {
-		dev_err(apr->dev, "APR: Wrong paket size\n");
+		dev_err(apr->dev, "APR: Wrong packet size\n");
 		return -EINVAL;
 	}
 
@@ -219,7 +219,7 @@ static int apr_add_device(struct device *dev, struct device_node *np,
 	adev->domain_id = id->domain_id;
 	adev->version = id->svc_version;
 	if (np)
-		strscpy(adev->name, np->name, APR_NAME_SIZE);
+		snprintf(adev->name, APR_NAME_SIZE, "%pOFn", np);
 	else
 		strscpy(adev->name, id->name, APR_NAME_SIZE);
 

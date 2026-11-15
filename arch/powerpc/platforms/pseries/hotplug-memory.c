@@ -31,7 +31,7 @@ static bool rtas_hp_event;
 unsigned long pseries_memory_block_size(void)
 {
 	struct device_node *np;
-	u64 memblock_size = MIN_MEMORY_BLOCK_SIZE;
+	unsigned int memblock_size = MIN_MEMORY_BLOCK_SIZE;
 	struct resource r;
 
 	np = of_find_node_by_path("/ibm,dynamic-reconfiguration-memory");
@@ -197,7 +197,6 @@ static int update_lmb_associativity_index(struct drmem_lmb *lmb)
 
 	found = find_aa_index(dr_node, ala_prop, lmb_assoc, &aa_index);
 
-	of_node_put(dr_node);
 	dlpar_free_cc_nodes(lmb_node);
 
 	if (!found) {
@@ -227,7 +226,7 @@ static int get_lmb_range(u32 drc_index, int n_lmbs,
 			 struct drmem_lmb **end_lmb)
 {
 	struct drmem_lmb *lmb, *start, *end;
-	struct drmem_lmb *limit;
+	struct drmem_lmb *last_lmb;
 
 	start = NULL;
 	for_each_drmem_lmb(lmb) {
@@ -240,10 +239,10 @@ static int get_lmb_range(u32 drc_index, int n_lmbs,
 	if (!start)
 		return -EINVAL;
 
-	end = &start[n_lmbs];
+	end = &start[n_lmbs - 1];
 
-	limit = &drmem_info->lmbs[drmem_info->n_lmbs];
-	if (end > limit)
+	last_lmb = &drmem_info->lmbs[drmem_info->n_lmbs - 1];
+	if (end > last_lmb)
 		return -EINVAL;
 
 	*start_lmb = start;
@@ -301,7 +300,7 @@ static int pseries_remove_memblock(unsigned long base, unsigned int memblock_siz
 	nid = memory_add_physaddr_to_nid(base);
 
 	for (i = 0; i < sections_per_block; i++) {
-		remove_memory(nid, base, MIN_MEMORY_BLOCK_SIZE);
+		__remove_memory(nid, base, MIN_MEMORY_BLOCK_SIZE);
 		base += MIN_MEMORY_BLOCK_SIZE;
 	}
 
@@ -356,20 +355,15 @@ static bool lmb_is_removable(struct drmem_lmb *lmb)
 	phys_addr = lmb->base_addr;
 
 #ifdef CONFIG_FA_DUMP
-	/*
-	 * Don't hot-remove memory that falls in fadump boot memory area
-	 * and memory that is reserved for capturing old kernel memory.
-	 */
-	if (is_fadump_memory_area(phys_addr, block_sz))
+	/* Don't hot-remove memory that falls in fadump boot memory area */
+	if (is_fadump_boot_memory_area(phys_addr, block_sz))
 		return false;
 #endif
 
 	for (i = 0; i < scns_per_block; i++) {
 		pfn = PFN_DOWN(phys_addr);
-		if (!pfn_present(pfn)) {
-			phys_addr += MIN_MEMORY_BLOCK_SIZE;
+		if (!pfn_present(pfn))
 			continue;
-		}
 
 		rc &= is_mem_section_removable(pfn, PAGES_PER_SECTION);
 		phys_addr += MIN_MEMORY_BLOCK_SIZE;
@@ -395,7 +389,7 @@ static int dlpar_remove_lmb(struct drmem_lmb *lmb)
 	block_sz = pseries_memory_block_size();
 	nid = memory_add_physaddr_to_nid(lmb->base_addr);
 
-	remove_memory(nid, lmb->base_addr, block_sz);
+	__remove_memory(nid, lmb->base_addr, block_sz);
 
 	/* Update memory regions for memory remove */
 	memblock_remove(lmb->base_addr, block_sz);
@@ -487,7 +481,7 @@ static int dlpar_memory_remove_by_index(u32 drc_index)
 	int lmb_found;
 	int rc;
 
-	pr_debug("Attempting to hot-remove LMB, drc index %x\n", drc_index);
+	pr_info("Attempting to hot-remove LMB, drc index %x\n", drc_index);
 
 	lmb_found = 0;
 	for_each_drmem_lmb(lmb) {
@@ -501,15 +495,14 @@ static int dlpar_memory_remove_by_index(u32 drc_index)
 		}
 	}
 
-	if (!lmb_found) {
-		pr_debug("Failed to look up LMB for drc index %x\n", drc_index);
+	if (!lmb_found)
 		rc = -EINVAL;
-	} else if (rc) {
-		pr_debug("Failed to hot-remove memory at %llx\n",
-			 lmb->base_addr);
-	} else {
-		pr_debug("Memory at %llx was hot-removed\n", lmb->base_addr);
-	}
+
+	if (rc)
+		pr_info("Failed to hot-remove memory at %llx\n",
+			lmb->base_addr);
+	else
+		pr_info("Memory at %llx was hot-removed\n", lmb->base_addr);
 
 	return rc;
 }
@@ -683,7 +676,7 @@ static int dlpar_add_lmb(struct drmem_lmb *lmb)
 
 	rc = dlpar_online_lmb(lmb);
 	if (rc) {
-		remove_memory(nid, lmb->base_addr, block_sz);
+		__remove_memory(nid, lmb->base_addr, block_sz);
 		invalidate_lmb_associativity_index(lmb);
 	} else {
 		lmb->flags |= DRCONF_MEM_ASSIGNED;
@@ -762,8 +755,8 @@ static int dlpar_memory_add_by_count(u32 lmbs_to_add)
 			if (!drmem_lmb_reserved(lmb))
 				continue;
 
-			pr_debug("Memory at %llx (drc index %x) was hot-added\n",
-				 lmb->base_addr, lmb->drc_index);
+			pr_info("Memory at %llx (drc index %x) was hot-added\n",
+				lmb->base_addr, lmb->drc_index);
 			drmem_remove_lmb_reservation(lmb);
 		}
 		rc = 0;
@@ -987,9 +980,6 @@ static int pseries_update_drconf_memory(struct of_reconfig_data *pr)
 	memblock_size = pseries_memory_block_size();
 	if (!memblock_size)
 		return -EINVAL;
-
-	if (!pr->old_prop)
-		return 0;
 
 	p = (__be32 *) pr->old_prop->value;
 	if (!p)

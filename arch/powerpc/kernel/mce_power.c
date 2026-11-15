@@ -70,7 +70,7 @@ out:
 
 /* flush SLBs and reload */
 #ifdef CONFIG_PPC_BOOK3S_64
-static void flush_and_reload_slb(void)
+void flush_and_reload_slb(void)
 {
 	/* Invalidate all SLBs */
 	slb_flush_all_realmode();

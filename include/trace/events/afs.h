@@ -137,6 +137,7 @@ enum afs_io_error {
 	afs_io_error_extract,
 	afs_io_error_fs_probe_fail,
 	afs_io_error_vl_lookup_fail,
+	afs_io_error_vl_probe_fail,
 };
 
 enum afs_file_error {
@@ -150,40 +151,6 @@ enum afs_file_error {
 	afs_file_error_writeback_fail,
 };
 
-enum afs_flock_event {
-	afs_flock_acquired,
-	afs_flock_callback_break,
-	afs_flock_defer_unlock,
-	afs_flock_fail_other,
-	afs_flock_fail_perm,
-	afs_flock_no_lockers,
-	afs_flock_timestamp,
-	afs_flock_try_to_lock,
-	afs_flock_vfs_lock,
-	afs_flock_vfs_locking,
-	afs_flock_waited,
-	afs_flock_waiting,
-	afs_flock_work_extending,
-	afs_flock_work_retry,
-	afs_flock_work_unlocking,
-	afs_flock_would_block,
-};
-
-enum afs_flock_operation {
-	afs_flock_op_copy_lock,
-	afs_flock_op_flock,
-	afs_flock_op_grant,
-	afs_flock_op_lock,
-	afs_flock_op_release_lock,
-	afs_flock_op_return_ok,
-	afs_flock_op_return_eagain,
-	afs_flock_op_return_edeadlk,
-	afs_flock_op_return_error,
-	afs_flock_op_set_lock,
-	afs_flock_op_unlock,
-	afs_flock_op_wake,
-};
-
 #endif /* end __AFS_DECLARE_TRACE_ENUMS_ONCE_ONLY */
 
 /*
@@ -194,7 +161,7 @@ enum afs_flock_operation {
 	EM(afs_call_trace_free,			"FREE ") \
 	EM(afs_call_trace_put,			"PUT  ") \
 	EM(afs_call_trace_wake,			"WAKE ") \
-	E_(afs_call_trace_work,			"QUEUE")
+	E_(afs_call_trace_work,			"WORK ")
 
 #define afs_fs_operations \
 	EM(afs_FS_FetchData,			"FS.FetchData") \
@@ -295,7 +262,8 @@ enum afs_flock_operation {
 	EM(afs_io_error_cm_reply,		"CM_REPLY")		\
 	EM(afs_io_error_extract,		"EXTRACT")		\
 	EM(afs_io_error_fs_probe_fail,		"FS_PROBE_FAIL")	\
-	E_(afs_io_error_vl_lookup_fail,		"VL_LOOKUP_FAIL")
+	EM(afs_io_error_vl_lookup_fail,		"VL_LOOKUP_FAIL")	\
+	E_(afs_io_error_vl_probe_fail,		"VL_PROBE_FAIL")
 
 #define afs_file_errors							\
 	EM(afs_file_error_dir_bad_magic,	"DIR_BAD_MAGIC")	\
@@ -306,52 +274,6 @@ enum afs_flock_operation {
 	EM(afs_file_error_dir_unmarked_ext,	"DIR_UNMARKED_EXT")	\
 	EM(afs_file_error_mntpt,		"MNTPT_READ_FAILED")	\
 	E_(afs_file_error_writeback_fail,	"WRITEBACK_FAILED")
-
-#define afs_flock_types							\
-	EM(F_RDLCK,				"RDLCK")		\
-	EM(F_WRLCK,				"WRLCK")		\
-	E_(F_UNLCK,				"UNLCK")
-
-#define afs_flock_states						\
-	EM(AFS_VNODE_LOCK_NONE,			"NONE")			\
-	EM(AFS_VNODE_LOCK_WAITING_FOR_CB,	"WAIT_FOR_CB")		\
-	EM(AFS_VNODE_LOCK_SETTING,		"SETTING")		\
-	EM(AFS_VNODE_LOCK_GRANTED,		"GRANTED")		\
-	EM(AFS_VNODE_LOCK_EXTENDING,		"EXTENDING")		\
-	EM(AFS_VNODE_LOCK_NEED_UNLOCK,		"NEED_UNLOCK")		\
-	E_(AFS_VNODE_LOCK_UNLOCKING,		"UNLOCKING")		\
-
-#define afs_flock_events						\
-	EM(afs_flock_acquired,			"Acquired")		\
-	EM(afs_flock_callback_break,		"Callback")		\
-	EM(afs_flock_defer_unlock,		"D-Unlock")		\
-	EM(afs_flock_fail_other,		"ErrOther")		\
-	EM(afs_flock_fail_perm,			"ErrPerm ")		\
-	EM(afs_flock_no_lockers,		"NoLocker")		\
-	EM(afs_flock_timestamp,			"Timestmp")		\
-	EM(afs_flock_try_to_lock,		"TryToLck")		\
-	EM(afs_flock_vfs_lock,			"VFSLock ")		\
-	EM(afs_flock_vfs_locking,		"VFSLking")		\
-	EM(afs_flock_waited,			"Waited  ")		\
-	EM(afs_flock_waiting,			"Waiting ")		\
-	EM(afs_flock_work_extending,		"Extendng")		\
-	EM(afs_flock_work_retry,		"Retry   ")		\
-	EM(afs_flock_work_unlocking,		"Unlcking")		\
-	E_(afs_flock_would_block,		"EWOULDBL")
-
-#define afs_flock_operations						\
-	EM(afs_flock_op_copy_lock,		"COPY    ")		\
-	EM(afs_flock_op_flock,			"->flock ")		\
-	EM(afs_flock_op_grant,			"GRANT   ")		\
-	EM(afs_flock_op_lock,			"->lock  ")		\
-	EM(afs_flock_op_release_lock,		"RELEASE ")		\
-	EM(afs_flock_op_return_ok,		"<-OK    ")		\
-	EM(afs_flock_op_return_edeadlk,		"<-EDEADL")		\
-	EM(afs_flock_op_return_eagain,		"<-EAGAIN")		\
-	EM(afs_flock_op_return_error,		"<-ERROR ")		\
-	EM(afs_flock_op_set_lock,		"SET     ")		\
-	EM(afs_flock_op_unlock,			"UNLOCK  ")		\
-	E_(afs_flock_op_wake,			"WAKE    ")
 
 /*
  * Export enum symbols via userspace.
@@ -369,8 +291,6 @@ afs_edit_dir_reasons;
 afs_eproto_causes;
 afs_io_errors;
 afs_file_errors;
-afs_flock_types;
-afs_flock_operations;
 
 /*
  * Now redefine the EM() and E_() macros to map the enums to the strings that
@@ -381,17 +301,16 @@ afs_flock_operations;
 #define EM(a, b)	{ a, b },
 #define E_(a, b)	{ a, b }
 
-TRACE_EVENT(afs_recv_data,
-	    TP_PROTO(struct afs_call *call, unsigned count, unsigned offset,
+TRACE_EVENT(afs_receive_data,
+	    TP_PROTO(struct afs_call *call, struct iov_iter *iter,
 		     bool want_more, int ret),
 
-	    TP_ARGS(call, count, offset, want_more, ret),
+	    TP_ARGS(call, iter, want_more, ret),
 
 	    TP_STRUCT__entry(
+		    __field(loff_t,			remain		)
 		    __field(unsigned int,		call		)
 		    __field(enum afs_call_state,	state		)
-		    __field(unsigned int,		count		)
-		    __field(unsigned int,		offset		)
 		    __field(unsigned short,		unmarshall	)
 		    __field(bool,			want_more	)
 		    __field(int,			ret		)
@@ -401,17 +320,18 @@ TRACE_EVENT(afs_recv_data,
 		    __entry->call	= call->debug_id;
 		    __entry->state	= call->state;
 		    __entry->unmarshall	= call->unmarshall;
-		    __entry->count	= count;
-		    __entry->offset	= offset;
+		    __entry->remain	= iov_iter_count(iter);
 		    __entry->want_more	= want_more;
 		    __entry->ret	= ret;
 			   ),
 
-	    TP_printk("c=%08x s=%u u=%u %u/%u wm=%u ret=%d",
+	    TP_printk("c=%08x r=%llu u=%u w=%u s=%u ret=%d",
 		      __entry->call,
-		      __entry->state, __entry->unmarshall,
-		      __entry->offset, __entry->count,
-		      __entry->want_more, __entry->ret)
+		      __entry->remain,
+		      __entry->unmarshall,
+		      __entry->want_more,
+		      __entry->state,
+		      __entry->ret)
 	    );
 
 TRACE_EVENT(afs_notify_call,
@@ -518,41 +438,6 @@ TRACE_EVENT(afs_make_fs_call,
 		      __entry->fid.vnode,
 		      __entry->fid.unique,
 		      __print_symbolic(__entry->op, afs_fs_operations))
-	    );
-
-TRACE_EVENT(afs_make_fs_calli,
-	    TP_PROTO(struct afs_call *call, const struct afs_fid *fid,
-		     unsigned int i),
-
-	    TP_ARGS(call, fid, i),
-
-	    TP_STRUCT__entry(
-		    __field(unsigned int,		call		)
-		    __field(unsigned int,		i		)
-		    __field(enum afs_fs_operation,	op		)
-		    __field_struct(struct afs_fid,	fid		)
-			     ),
-
-	    TP_fast_assign(
-		    __entry->call = call->debug_id;
-		    __entry->i = i;
-		    __entry->op = call->operation_ID;
-		    if (fid) {
-			    __entry->fid = *fid;
-		    } else {
-			    __entry->fid.vid = 0;
-			    __entry->fid.vnode = 0;
-			    __entry->fid.unique = 0;
-		    }
-			   ),
-
-	    TP_printk("c=%08x %06llx:%06llx:%06x %s i=%u",
-		      __entry->call,
-		      __entry->fid.vid,
-		      __entry->fid.vnode,
-		      __entry->fid.unique,
-		      __print_symbolic(__entry->op, afs_fs_operations),
-		      __entry->i)
 	    );
 
 TRACE_EVENT(afs_make_vl_call,
@@ -907,70 +792,6 @@ TRACE_EVENT(afs_cm_no_server_u,
 
 	    TP_printk("c=%08x op=%u %pU",
 		      __entry->call, __entry->op_id, &__entry->uuid)
-	    );
-
-TRACE_EVENT(afs_flock_ev,
-	    TP_PROTO(struct afs_vnode *vnode, struct file_lock *fl,
-		     enum afs_flock_event event, int error),
-
-	    TP_ARGS(vnode, fl, event, error),
-
-	    TP_STRUCT__entry(
-		    __field_struct(struct afs_fid,	fid		)
-		    __field(enum afs_flock_event,	event		)
-		    __field(enum afs_lock_state,	state		)
-		    __field(int,			error		)
-		    __field(unsigned int,		debug_id	)
-			     ),
-
-	    TP_fast_assign(
-		    __entry->fid = vnode->fid;
-		    __entry->event = event;
-		    __entry->state = vnode->lock_state;
-		    __entry->error = error;
-		    __entry->debug_id = fl ? fl->fl_u.afs.debug_id : 0;
-			   ),
-
-	    TP_printk("%llx:%llx:%x %04x %s s=%s e=%d",
-		      __entry->fid.vid, __entry->fid.vnode, __entry->fid.unique,
-		      __entry->debug_id,
-		      __print_symbolic(__entry->event, afs_flock_events),
-		      __print_symbolic(__entry->state, afs_flock_states),
-		      __entry->error)
-	    );
-
-TRACE_EVENT(afs_flock_op,
-	    TP_PROTO(struct afs_vnode *vnode, struct file_lock *fl,
-		     enum afs_flock_operation op),
-
-	    TP_ARGS(vnode, fl, op),
-
-	    TP_STRUCT__entry(
-		    __field_struct(struct afs_fid,	fid		)
-		    __field(loff_t,			from		)
-		    __field(loff_t,			len		)
-		    __field(enum afs_flock_operation,	op		)
-		    __field(unsigned char,		type		)
-		    __field(unsigned int,		flags		)
-		    __field(unsigned int,		debug_id	)
-			     ),
-
-	    TP_fast_assign(
-		    __entry->fid = vnode->fid;
-		    __entry->from = fl->fl_start;
-		    __entry->len = fl->fl_end - fl->fl_start + 1;
-		    __entry->op = op;
-		    __entry->type = fl->fl_type;
-		    __entry->flags = fl->fl_flags;
-		    __entry->debug_id = fl->fl_u.afs.debug_id;
-			   ),
-
-	    TP_printk("%llx:%llx:%x %04x %s t=%s R=%llx/%llx f=%x",
-		      __entry->fid.vid, __entry->fid.vnode, __entry->fid.unique,
-		      __entry->debug_id,
-		      __print_symbolic(__entry->op, afs_flock_operations),
-		      __print_symbolic(__entry->type, afs_flock_types),
-		      __entry->from, __entry->len, __entry->flags)
 	    );
 
 #endif /* _TRACE_AFS_H */

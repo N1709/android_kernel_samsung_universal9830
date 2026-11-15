@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Driver for the MMC / SD / SDIO cell found in:
  *
@@ -7,10 +8,6 @@
  * Copyright (C) 2017 Horms Solutions, Simon Horman
  * Copyright (C) 2007 Ian Molton
  * Copyright (C) 2004 Ian Molton
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/delay.h>
@@ -23,6 +20,11 @@
 #include <linux/scatterlist.h>
 
 #include "tmio_mmc.h"
+
+/* Registers specific to this variant */
+#define CTL_SDIO_REGS		0x100
+#define CTL_CLK_AND_WAIT_CTL	0x138
+#define CTL_RESET_SDIO		0x1e0
 
 static void tmio_mmc_clk_start(struct tmio_mmc_host *host)
 {
@@ -48,19 +50,22 @@ static void tmio_mmc_clk_stop(struct tmio_mmc_host *host)
 static void tmio_mmc_set_clock(struct tmio_mmc_host *host,
 			       unsigned int new_clock)
 {
-	u32 clk = 0, clock;
+	unsigned int divisor;
+	u32 clk = 0;
+	int clk_sel;
 
 	if (new_clock == 0) {
 		tmio_mmc_clk_stop(host);
 		return;
 	}
 
-	clock = host->mmc->f_min;
+	divisor = host->pdata->hclk / new_clock;
 
-	for (clk = 0x80000080; new_clock >= (clock << 1); clk >>= 1)
-		clock <<= 1;
+	/* bit7 set: 1/512, ... bit0 set: 1/4, all bits clear: 1/2 */
+	clk_sel = (divisor <= 1);
+	clk = clk_sel ? 0 : (roundup_pow_of_two(divisor) >> 2);
 
-	host->pdata->set_clk_div(host->pdev, (clk >> 22) & 1);
+	host->pdata->set_clk_div(host->pdev, clk_sel);
 
 	sd_ctrl_write16(host, CTL_SD_CARD_CLK_CTL, ~CLK_CTL_SCLKEN &
 			sd_ctrl_read16(host, CTL_SD_CARD_CLK_CTL));
@@ -68,6 +73,22 @@ static void tmio_mmc_set_clock(struct tmio_mmc_host *host,
 	usleep_range(10000, 11000);
 
 	tmio_mmc_clk_start(host);
+}
+
+static void tmio_mmc_reset(struct tmio_mmc_host *host)
+{
+	/* FIXME - should we set stop clock reg here */
+	sd_ctrl_write16(host, CTL_RESET_SD, 0x0000);
+	sd_ctrl_write16(host, CTL_RESET_SDIO, 0x0000);
+	usleep_range(10000, 11000);
+	sd_ctrl_write16(host, CTL_RESET_SD, 0x0001);
+	sd_ctrl_write16(host, CTL_RESET_SDIO, 0x0001);
+	usleep_range(10000, 11000);
+
+	if (host->pdata->flags & TMIO_MMC_SDIO_IRQ) {
+		sd_ctrl_write16(host, CTL_SDIO_IRQ_MASK, host->sdio_irq_mask);
+		sd_ctrl_write16(host, CTL_TRANSACTION_CTL, 0x0001);
+	}
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -137,8 +158,6 @@ static int tmio_mmc_probe(struct platform_device *pdev)
 		goto cell_disable;
 	}
 
-	pdata->flags |= TMIO_MMC_HAVE_HIGH_REG;
-
 	host = tmio_mmc_host_alloc(pdev, pdata);
 	if (IS_ERR(host)) {
 		ret = PTR_ERR(host);
@@ -148,6 +167,7 @@ static int tmio_mmc_probe(struct platform_device *pdev)
 	/* SD control register space size is 0x200, 0x400 for bus_shift=1 */
 	host->bus_shift = resource_size(res) >> 10;
 	host->set_clock = tmio_mmc_set_clock;
+	host->reset = tmio_mmc_reset;
 
 	host->mmc->f_max = pdata->hclk;
 	host->mmc->f_min = pdata->hclk / 512;

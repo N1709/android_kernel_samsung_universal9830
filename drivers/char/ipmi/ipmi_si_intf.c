@@ -19,6 +19,8 @@
  * and drives the real SMI state machine.
  */
 
+#define pr_fmt(fmt) "ipmi_si: " fmt
+
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/sched.h>
@@ -40,8 +42,6 @@
 #include "ipmi_si.h"
 #include <linux/string.h>
 #include <linux/ctype.h>
-
-#define PFX "ipmi_si: "
 
 /* Measure times between events in the driver. */
 #undef DEBUG_TIMING
@@ -221,9 +221,6 @@ struct smi_info {
 	 */
 	bool irq_enable_broken;
 
-	/* Is the driver in maintenance mode? */
-	bool in_maintenance_mode;
-
 	/*
 	 * Did we get an attention that we did not handle?
 	 */
@@ -272,7 +269,7 @@ void debug_timestamp(char *msg)
 {
 	struct timespec64 t;
 
-	getnstimeofday64(&t);
+	ktime_get_ts64(&t);
 	pr_debug("**%s: %lld.%9.9ld\n", msg, (long long) t.tv_sec, t.tv_nsec);
 }
 #else
@@ -964,12 +961,12 @@ static inline int ipmi_thread_busy_wait(enum si_sm_result smi_result,
 	if (max_busy_us == 0 || smi_result != SI_SM_CALL_WITH_DELAY)
 		ipmi_si_set_not_busy(busy_until);
 	else if (!ipmi_si_is_busy(busy_until)) {
-		getnstimeofday64(busy_until);
+		ktime_get_ts64(busy_until);
 		timespec64_add_ns(busy_until, max_busy_us*NSEC_PER_USEC);
 	} else {
 		struct timespec64 now;
 
-		getnstimeofday64(&now);
+		ktime_get_ts64(&now);
 		if (unlikely(timespec64_compare(&now, busy_until) > 0)) {
 			ipmi_si_set_not_busy(busy_until);
 			return 0;
@@ -1016,20 +1013,11 @@ static int ipmi_thread(void *data)
 		spin_unlock_irqrestore(&(smi_info->si_lock), flags);
 		busy_wait = ipmi_thread_busy_wait(smi_result, smi_info,
 						  &busy_until);
-		if (smi_result == SI_SM_CALL_WITHOUT_DELAY) {
+		if (smi_result == SI_SM_CALL_WITHOUT_DELAY)
 			; /* do nothing */
-		} else if (smi_result == SI_SM_CALL_WITH_DELAY && busy_wait) {
-			/*
-			 * In maintenance mode we run as fast as
-			 * possible to allow firmware updates to
-			 * complete as fast as possible, but normally
-			 * don't bang on the scheduler.
-			 */
-			if (smi_info->in_maintenance_mode)
-				schedule();
-			else
-				usleep_range(100, 200);
-		} else if (smi_result == SI_SM_IDLE) {
+		else if (smi_result == SI_SM_CALL_WITH_DELAY && busy_wait)
+			schedule();
+		else if (smi_result == SI_SM_IDLE) {
 			if (atomic_read(&smi_info->need_watch)) {
 				schedule_timeout_interruptible(100);
 			} else {
@@ -1037,9 +1025,8 @@ static int ipmi_thread(void *data)
 				__set_current_state(TASK_INTERRUPTIBLE);
 				schedule();
 			}
-		} else {
+		} else
 			schedule_timeout_interruptible(1);
-		}
 	}
 	return 0;
 }
@@ -1073,13 +1060,10 @@ static void request_events(void *send_info)
 	atomic_set(&smi_info->req_events, 1);
 }
 
-static void set_need_watch(void *send_info, unsigned int watch_mask)
+static void set_need_watch(void *send_info, bool enable)
 {
 	struct smi_info *smi_info = send_info;
 	unsigned long flags;
-	int enable;
-
-	enable = !!watch_mask;
 
 	atomic_set(&smi_info->need_watch, enable);
 	spin_lock_irqsave(&smi_info->si_lock, flags);
@@ -1217,7 +1201,6 @@ static void set_maintenance_mode(void *send_info, bool enable)
 
 	if (!enable)
 		atomic_set(&smi_info->req_events, 0);
-	smi_info->in_maintenance_mode = enable;
 }
 
 static void shutdown_smi(void *send_info);
@@ -1547,7 +1530,7 @@ static int try_enable_event_buffer(struct smi_info *smi_info)
 
 	rv = wait_for_msg_done(smi_info);
 	if (rv) {
-		pr_warn(PFX "Error getting response from get global enables command, the event buffer is not enabled.\n");
+		pr_warn("Error getting response from get global enables command, the event buffer is not enabled\n");
 		goto out;
 	}
 
@@ -1558,7 +1541,7 @@ static int try_enable_event_buffer(struct smi_info *smi_info)
 			resp[0] != (IPMI_NETFN_APP_REQUEST | 1) << 2 ||
 			resp[1] != IPMI_GET_BMC_GLOBAL_ENABLES_CMD   ||
 			resp[2] != 0) {
-		pr_warn(PFX "Invalid return from get global enables command, cannot enable the event buffer.\n");
+		pr_warn("Invalid return from get global enables command, cannot enable the event buffer\n");
 		rv = -EINVAL;
 		goto out;
 	}
@@ -1576,7 +1559,7 @@ static int try_enable_event_buffer(struct smi_info *smi_info)
 
 	rv = wait_for_msg_done(smi_info);
 	if (rv) {
-		pr_warn(PFX "Error getting response from set global, enables command, the event buffer is not enabled.\n");
+		pr_warn("Error getting response from set global, enables command, the event buffer is not enabled\n");
 		goto out;
 	}
 
@@ -1586,7 +1569,7 @@ static int try_enable_event_buffer(struct smi_info *smi_info)
 	if (resp_len < 3 ||
 			resp[0] != (IPMI_NETFN_APP_REQUEST | 1) << 2 ||
 			resp[1] != IPMI_SET_BMC_GLOBAL_ENABLES_CMD) {
-		pr_warn(PFX "Invalid return from get global, enables command, not enable the event buffer.\n");
+		pr_warn("Invalid return from get global, enables command, not enable the event buffer\n");
 		rv = -EINVAL;
 		goto out;
 	}
@@ -1879,18 +1862,6 @@ int ipmi_si_add_smi(struct si_sm_io *io)
 	int rv = 0;
 	struct smi_info *new_smi, *dup;
 
-	/*
-	 * If the user gave us a hard-coded device at the same
-	 * address, they presumably want us to use it and not what is
-	 * in the firmware.
-	 */
-	if (io->addr_source != SI_HARDCODED &&
-	    ipmi_si_hardcode_match(io->addr_type, io->addr_data)) {
-		dev_info(io->dev,
-			 "Hard-coded device at this address already exists");
-		return -ENODEV;
-	}
-
 	if (!io->io_setup) {
 		if (io->addr_type == IPMI_IO_ADDR_SPACE) {
 			io->io_setup = ipmi_si_port_setup;
@@ -1929,7 +1900,7 @@ int ipmi_si_add_smi(struct si_sm_io *io)
 		}
 	}
 
-	pr_info(PFX "Adding %s-specified %s state machine\n",
+	pr_info("Adding %s-specified %s state machine\n",
 		ipmi_addr_src_to_str(new_smi->io.addr_source),
 		si_to_str[new_smi->io.si_type]);
 
@@ -1953,7 +1924,7 @@ static int try_smi_init(struct smi_info *new_smi)
 	int i;
 	char *init_name = NULL;
 
-	pr_info(PFX "Trying %s-specified %s state machine at %s address 0x%lx, slave address 0x%x, irq %d\n",
+	pr_info("Trying %s-specified %s state machine at %s address 0x%lx, slave address 0x%x, irq %d\n",
 		ipmi_addr_src_to_str(new_smi->io.addr_source),
 		si_to_str[new_smi->io.si_type],
 		addr_space_to_str[new_smi->io.addr_type],
@@ -1993,7 +1964,7 @@ static int try_smi_init(struct smi_info *new_smi)
 		new_smi->pdev = platform_device_alloc("ipmi_si",
 						      new_smi->si_num);
 		if (!new_smi->pdev) {
-			pr_err(PFX "Unable to allocate platform device\n");
+			pr_err("Unable to allocate platform device\n");
 			rv = -ENOMEM;
 			goto out_err;
 		}
@@ -2114,21 +2085,11 @@ static int try_smi_init(struct smi_info *new_smi)
 	WARN_ON(new_smi->io.dev->init_name != NULL);
 
  out_err:
-	if (rv && new_smi->io.io_cleanup) {
-		new_smi->io.io_cleanup(&new_smi->io);
-		new_smi->io.io_cleanup = NULL;
-	}
-
-	if (rv && new_smi->si_sm) {
-		kfree(new_smi->si_sm);
-		new_smi->si_sm = NULL;
-	}
-
 	kfree(init_name);
 	return rv;
 }
 
-static int __init init_ipmi_si(void)
+static int init_ipmi_si(void)
 {
 	struct smi_info *e;
 	enum ipmi_addr_src type = SI_INVALID;
@@ -2136,8 +2097,11 @@ static int __init init_ipmi_si(void)
 	if (initialized)
 		return 0;
 
-	ipmi_hardcode_init();
-	pr_info("IPMI System Interface driver.\n");
+	pr_info("IPMI System Interface driver\n");
+
+	/* If the user gave us a device, they presumably want us to use it */
+	if (!ipmi_si_hardcode_find_bmc())
+		goto do_scan;
 
 	ipmi_si_platform_init();
 
@@ -2149,6 +2113,7 @@ static int __init init_ipmi_si(void)
 	   with multiple BMCs we assume that there will be several instances
 	   of a given type so if we succeed in registering a type then also
 	   try to register everything else of the same type */
+do_scan:
 	mutex_lock(&smi_infos_lock);
 	list_for_each_entry(e, &smi_infos, link) {
 		/* Try to register a device if it has an IRQ and we either
@@ -2186,7 +2151,7 @@ skip_fallback_noirq:
 	if (unload_when_empty && list_empty(&smi_infos)) {
 		mutex_unlock(&smi_infos_lock);
 		cleanup_ipmi_si();
-		pr_warn(PFX "Unable to find any System Interface(s)\n");
+		pr_warn("Unable to find any System Interface(s)\n");
 		return -ENODEV;
 	} else {
 		mutex_unlock(&smi_infos_lock);
@@ -2194,20 +2159,6 @@ skip_fallback_noirq:
 	}
 }
 module_init(init_ipmi_si);
-
-static void wait_msg_processed(struct smi_info *smi_info)
-{
-	unsigned long jiffies_now;
-	long time_diff;
-
-	while (smi_info->curr_msg || (smi_info->si_state != SI_NORMAL)) {
-		jiffies_now = jiffies;
-		time_diff = (((long)jiffies_now - (long)smi_info->last_timeout_jiffies)
-		     * SI_USEC_PER_JIFFY);
-		smi_event_handler(smi_info, time_diff);
-		schedule_timeout_uninterruptible(1);
-	}
-}
 
 static void shutdown_smi(void *send_info)
 {
@@ -2243,13 +2194,16 @@ static void shutdown_smi(void *send_info)
 	 * in the BMC.  Note that timers and CPU interrupts are off,
 	 * so no need for locks.
 	 */
-	wait_msg_processed(smi_info);
-
+	while (smi_info->curr_msg || (smi_info->si_state != SI_NORMAL)) {
+		poll(smi_info);
+		schedule_timeout_uninterruptible(1);
+	}
 	if (smi_info->handlers)
 		disable_si_irq(smi_info);
-
-	wait_msg_processed(smi_info);
-
+	while (smi_info->curr_msg || (smi_info->si_state != SI_NORMAL)) {
+		poll(smi_info);
+		schedule_timeout_uninterruptible(1);
+	}
 	if (smi_info->handlers)
 		smi_info->handlers->cleanup(smi_info->si_sm);
 
@@ -2345,8 +2299,6 @@ static void cleanup_ipmi_si(void)
 	list_for_each_entry_safe(e, tmp_e, &smi_infos, link)
 		cleanup_one_si(e);
 	mutex_unlock(&smi_infos_lock);
-
-	ipmi_si_hardcode_exit();
 }
 module_exit(cleanup_ipmi_si);
 

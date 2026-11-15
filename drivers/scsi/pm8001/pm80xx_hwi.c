@@ -2136,7 +2136,7 @@ mpi_sata_completion(struct pm8001_hba_info *pm8001_ha, void *piomb)
 			sata_resp = &psataPayload->sata_resp[0];
 			resp = (struct ata_task_resp *)ts->buf;
 			if (t->ata_task.dma_xfer == 0 &&
-			t->data_dir == PCI_DMA_FROMDEVICE) {
+			    t->data_dir == DMA_FROM_DEVICE) {
 				len = sizeof(struct pio_setup_fis);
 				PM8001_IO_DBG(pm8001_ha,
 				pm8001_printk("PIO read len = %d\n", len));
@@ -3133,8 +3133,9 @@ static int mpi_phy_start_resp(struct pm8001_hba_info *pm8001_ha, void *piomb)
 		pm8001_printk("phy start resp status:0x%x, phyid:0x%x\n",
 				status, phy_id));
 	if (status == 0) {
-		phy->phy_state = 1;
-		if (pm8001_ha->flags == PM8001F_RUN_TIME)
+		phy->phy_state = PHY_LINK_DOWN;
+		if (pm8001_ha->flags == PM8001F_RUN_TIME &&
+				phy->enable_completion != NULL)
 			complete(phy->enable_completion);
 	}
 	return 0;
@@ -3226,7 +3227,7 @@ static int mpi_hw_event(struct pm8001_hba_info *pm8001_ha, void *piomb)
 			return 0;
 		}
 		phy->phy_attached = 0;
-		phy->phy_state = 0;
+		phy->phy_state = PHY_LINK_DISABLE;
 		break;
 	case HW_EVENT_PORT_INVALID:
 		PM8001_MSG_DBG(pm8001_ha,
@@ -3399,13 +3400,14 @@ static int mpi_phy_stop_resp(struct pm8001_hba_info *pm8001_ha, void *piomb)
 	u32 status =
 		le32_to_cpu(pPayload->status);
 	u32 phyid =
-		le32_to_cpu(pPayload->phyid);
+		le32_to_cpu(pPayload->phyid) & 0xFF;
 	struct pm8001_phy *phy = &pm8001_ha->phy[phyid];
 	PM8001_MSG_DBG(pm8001_ha,
 			pm8001_printk("phy:0x%x status:0x%x\n",
 					phyid, status));
-	if (status == 0)
-		phy->phy_state = 0;
+	if (status == PHY_STOP_SUCCESS ||
+		status == PHY_STOP_ERR_DEVICE_ATTACHED)
+		phy->phy_state = PHY_LINK_DISABLE;
 	return 0;
 }
 
@@ -3858,12 +3860,12 @@ static int process_oq(struct pm8001_hba_info *pm8001_ha, u8 vec)
 	return ret;
 }
 
-/* PCI_DMA_... to our direction translation. */
+/* DMA_... to our direction translation. */
 static const u8 data_dir_flags[] = {
-	[PCI_DMA_BIDIRECTIONAL] = DATA_DIR_BYRECIPIENT,/* UNSPECIFIED */
-	[PCI_DMA_TODEVICE]	= DATA_DIR_OUT,/* OUTBOUND */
-	[PCI_DMA_FROMDEVICE]	= DATA_DIR_IN,/* INBOUND */
-	[PCI_DMA_NONE]		= DATA_DIR_NONE,/* NO TRANSFER */
+	[DMA_BIDIRECTIONAL]	= DATA_DIR_BYRECIPIENT,	/* UNSPECIFIED */
+	[DMA_TO_DEVICE]		= DATA_DIR_OUT,		/* OUTBOUND */
+	[DMA_FROM_DEVICE]	= DATA_DIR_IN,		/* INBOUND */
+	[DMA_NONE]		= DATA_DIR_NONE,	/* NO TRANSFER */
 };
 
 static void build_smp_cmd(u32 deviceID, __le32 hTag,
@@ -3905,13 +3907,13 @@ static int pm80xx_chip_smp_req(struct pm8001_hba_info *pm8001_ha,
 	 * DMA-map SMP request, response buffers
 	 */
 	sg_req = &task->smp_task.smp_req;
-	elem = dma_map_sg(pm8001_ha->dev, sg_req, 1, PCI_DMA_TODEVICE);
+	elem = dma_map_sg(pm8001_ha->dev, sg_req, 1, DMA_TO_DEVICE);
 	if (!elem)
 		return -ENOMEM;
 	req_len = sg_dma_len(sg_req);
 
 	sg_resp = &task->smp_task.smp_resp;
-	elem = dma_map_sg(pm8001_ha->dev, sg_resp, 1, PCI_DMA_FROMDEVICE);
+	elem = dma_map_sg(pm8001_ha->dev, sg_resp, 1, DMA_FROM_DEVICE);
 	if (!elem) {
 		rc = -ENOMEM;
 		goto err_out;
@@ -4002,10 +4004,10 @@ static int pm80xx_chip_smp_req(struct pm8001_hba_info *pm8001_ha,
 
 err_out_2:
 	dma_unmap_sg(pm8001_ha->dev, &ccb->task->smp_task.smp_resp, 1,
-			PCI_DMA_FROMDEVICE);
+			DMA_FROM_DEVICE);
 err_out:
 	dma_unmap_sg(pm8001_ha->dev, &ccb->task->smp_task.smp_req, 1,
-			PCI_DMA_TODEVICE);
+			DMA_TO_DEVICE);
 	return rc;
 }
 
@@ -4229,7 +4231,7 @@ static int pm80xx_chip_sata_req(struct pm8001_hba_info *pm8001_ha,
 	q_index = (u32) (pm8001_ha_dev->id & 0x00ffffff) % PM8001_MAX_INB_NUM;
 	circularQ = &pm8001_ha->inbnd_q_tbl[q_index];
 
-	if (task->data_dir == PCI_DMA_NONE) {
+	if (task->data_dir == DMA_NONE) {
 		ATAP = 0x04; /* no data*/
 		PM8001_IO_DBG(pm8001_ha, pm8001_printk("no data\n"));
 	} else if (likely(!task->ata_task.device_control_reg_update)) {
@@ -4679,9 +4681,8 @@ void mpi_set_phy_profile_req(struct pm8001_hba_info *pm8001_ha,
 void pm8001_set_phy_profile(struct pm8001_hba_info *pm8001_ha,
 	u32 length, u8 *buf)
 {
-	u32 page_code, i;
+	u32 i;
 
-	page_code = SAS_PHY_ANALOG_SETTINGS_PAGE;
 	for (i = 0; i < pm8001_ha->chip->n_phy; i++) {
 		mpi_set_phy_profile_req(pm8001_ha,
 			SAS_PHY_ANALOG_SETTINGS_PAGE, i, length, (u32 *)buf);

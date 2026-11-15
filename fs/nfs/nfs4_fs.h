@@ -193,6 +193,7 @@ struct nfs4_state {
 	refcount_t count;
 
 	wait_queue_head_t waitq;
+	struct rcu_head rcu_head;
 };
 
 

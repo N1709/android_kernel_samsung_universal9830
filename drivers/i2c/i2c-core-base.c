@@ -32,7 +32,6 @@
 #include <linux/i2c-smbus.h>
 #include <linux/idr.h>
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/irqflags.h>
 #include <linux/jump_label.h>
 #include <linux/kernel.h>
@@ -47,7 +46,6 @@
 #include <linux/property.h>
 #include <linux/rwsem.h>
 #include <linux/slab.h>
-#include <linux/debug-snapshot.h>
 
 #include "i2c-core.h"
 
@@ -187,7 +185,7 @@ static int i2c_generic_bus_free(struct i2c_adapter *adap)
 int i2c_generic_scl_recovery(struct i2c_adapter *adap)
 {
 	struct i2c_bus_recovery_info *bri = adap->bus_recovery_info;
-	int i = 0, scl = 1, ret = 0;
+	int i = 0, scl = 1, ret;
 
 	if (bri->prepare_recovery)
 		bri->prepare_recovery(adap);
@@ -196,11 +194,10 @@ int i2c_generic_scl_recovery(struct i2c_adapter *adap)
 	 * If we can set SDA, we will always create a STOP to ensure additional
 	 * pulses will do no harm. This is achieved by letting SDA follow SCL
 	 * half a cycle later. Check the 'incomplete_write_byte' fault injector
-	 * for details. Note that we must honour tsu:sto, 4us, but lets use 5us
-	 * here for simplicity.
+	 * for details.
 	 */
 	bri->set_scl(adap, scl);
-	ndelay(RECOVERY_NDELAY);
+	ndelay(RECOVERY_NDELAY / 2);
 	if (bri->set_sda)
 		bri->set_sda(adap, scl);
 	ndelay(RECOVERY_NDELAY / 2);
@@ -222,13 +219,7 @@ int i2c_generic_scl_recovery(struct i2c_adapter *adap)
 		scl = !scl;
 		bri->set_scl(adap, scl);
 		/* Creating STOP again, see above */
-		if (scl)  {
-			/* Honour minimum tsu:sto */
-			ndelay(RECOVERY_NDELAY);
-		} else {
-			/* Honour minimum tf and thd:dat */
-			ndelay(RECOVERY_NDELAY / 2);
-		}
+		ndelay(RECOVERY_NDELAY / 2);
 		if (bri->set_sda)
 			bri->set_sda(adap, scl);
 		ndelay(RECOVERY_NDELAY / 2);
@@ -264,14 +255,13 @@ EXPORT_SYMBOL_GPL(i2c_recover_bus);
 static void i2c_init_recovery(struct i2c_adapter *adap)
 {
 	struct i2c_bus_recovery_info *bri = adap->bus_recovery_info;
-	char *err_str, *err_level = KERN_ERR;
+	char *err_str;
 
 	if (!bri)
 		return;
 
 	if (!bri->recover_bus) {
-		err_str = "no suitable method provided";
-		err_level = KERN_DEBUG;
+		err_str = "no recover_bus() found";
 		goto err;
 	}
 
@@ -301,7 +291,7 @@ static void i2c_init_recovery(struct i2c_adapter *adap)
 
 	return;
  err:
-	dev_printk(err_level, &adap->dev, "Not using recovery: %s\n", err_str);
+	dev_err(&adap->dev, "Not using recovery: %s\n", err_str);
 	adap->bus_recovery_info = NULL;
 }
 
@@ -337,8 +327,6 @@ static int i2c_device_probe(struct device *dev)
 
 		if (client->flags & I2C_CLIENT_HOST_NOTIFY) {
 			dev_dbg(dev, "Using Host Notify IRQ\n");
-			/* Keep adapter active when Host Notify is required */
-			pm_runtime_get_sync(&client->adapter->dev);
 			irq = i2c_smbus_host_notify_to_irq(client);
 		} else if (dev->of_node) {
 			irq = of_irq_get_byname(dev->of_node, "irq");
@@ -442,9 +430,7 @@ static int i2c_device_remove(struct device *dev)
 	dev_pm_clear_wake_irq(&client->dev);
 	device_init_wakeup(&client->dev, false);
 
-	client->irq = client->init_irq;
-	if (client->flags & I2C_CLIENT_HOST_NOTIFY)
-		pm_runtime_put(&client->adapter->dev);
+	client->irq = 0;
 
 	return status;
 }
@@ -459,8 +445,6 @@ static void i2c_device_shutdown(struct device *dev)
 	driver = to_i2c_driver(dev->driver);
 	if (driver->shutdown)
 		driver->shutdown(client);
-	else if (client->irq > 0)
-		disable_irq(client->irq);
 }
 
 static void i2c_client_dev_release(struct device *dev)
@@ -559,10 +543,6 @@ static int i2c_check_addr_validity(unsigned int addr, unsigned short flags)
 	if (flags & I2C_CLIENT_TEN) {
 		/* 10-bit address, all values are valid */
 		if (addr > 0x3ff)
-			return -EINVAL;
-	} else if (flags & I2C_CLIENT_SPEEDY) {
-		/* 12-bit address for SPEEDY, all values are valid */
-		if (addr > 0xfff)
 			return -EINVAL;
 	} else {
 		/* 7-bit address, reject the general call address */
@@ -761,11 +741,10 @@ i2c_new_device(struct i2c_adapter *adap, struct i2c_board_info const *info)
 	client->flags = info->flags;
 	client->addr = info->addr;
 
-	client->init_irq = info->irq;
-	if (!client->init_irq)
-		client->init_irq = i2c_dev_irq_from_resources(info->resources,
+	client->irq = info->irq;
+	if (!client->irq)
+		client->irq = i2c_dev_irq_from_resources(info->resources,
 							 info->num_resources);
-	client->irq = client->init_irq;
 
 	strlcpy(client->name, info->type, sizeof(client->name));
 
@@ -1301,8 +1280,8 @@ static int i2c_register_adapter(struct i2c_adapter *adap)
 
 	/* create pre-declared device nodes */
 	of_i2c_register_devices(adap);
-	i2c_acpi_install_space_handler(adap);
 	i2c_acpi_register_devices(adap);
+	i2c_acpi_install_space_handler(adap);
 
 	if (adap->nr < __i2c_first_dynamic_bus_num)
 		i2c_scan_static_board_info(adap);
@@ -1877,17 +1856,12 @@ static int i2c_check_for_quirks(struct i2c_adapter *adap, struct i2c_msg *msgs, 
  * Returns negative errno, else the number of messages executed.
  *
  * Adapter lock must be held when calling this function. No debug logging
- * takes place.
+ * takes place. adap->algo->master_xfer existence isn't checked.
  */
 int __i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 {
 	unsigned long orig_jiffies;
 	int ret, try;
-
-	if (!adap->algo->master_xfer) {
-		dev_dbg(&adap->dev, "I2C level transfers not supported\n");
-		return -EOPNOTSUPP;
-	}
 
 	if (WARN_ON(!msgs || num < 1))
 		return -EINVAL;
@@ -1947,6 +1921,11 @@ int i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 {
 	int ret;
 
+	if (!adap->algo->master_xfer) {
+		dev_dbg(&adap->dev, "I2C level transfers not supported\n");
+		return -EOPNOTSUPP;
+	}
+
 	/* REVISIT the fault reporting model here is weak:
 	 *
 	 *  - When we get an error after receiving N bytes from a slave,
@@ -1963,37 +1942,19 @@ int i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 	 *    one (discarding status on the second message) or errno
 	 *    (discarding status on the first one).
 	 */
-
-	if (adap->algo->master_xfer) {
-#ifdef DEBUG
-		for (ret = 0; ret < num; ret++) {
-			dev_dbg(&adap->dev,
-				"master_xfer[%d] %c, addr=0x%02x, len=%d%s\n",
-				ret, (msgs[ret].flags & I2C_M_RD) ? 'R' : 'W',
-				msgs[ret].addr, msgs[ret].len,
-				(msgs[ret].flags & I2C_M_RECV_LEN) ? "+" : "");
-		}
-#endif
-
-		if (in_atomic() || irqs_disabled()) {
-			ret = i2c_trylock_bus(adap, I2C_LOCK_SEGMENT);
-			if (!ret)
-				/* I2C activity is ongoing. */
-				return -EAGAIN;
-		} else {
-			i2c_lock_bus(adap, I2C_LOCK_SEGMENT);
-		}
-
-		dbg_snapshot_i2c(adap, msgs, num, DSS_FLAG_IN);
-		ret = __i2c_transfer(adap, msgs, num);
-		dbg_snapshot_i2c(adap, msgs, num, DSS_FLAG_OUT);
-		i2c_unlock_bus(adap, I2C_LOCK_SEGMENT);
-
-		return ret;
+	if (in_atomic() || irqs_disabled()) {
+		ret = i2c_trylock_bus(adap, I2C_LOCK_SEGMENT);
+		if (!ret)
+			/* I2C activity is ongoing. */
+			return -EAGAIN;
 	} else {
-		dev_dbg(&adap->dev, "I2C level transfers not supported\n");
-		return -EOPNOTSUPP;
+		i2c_lock_bus(adap, I2C_LOCK_SEGMENT);
 	}
+
+	ret = __i2c_transfer(adap, msgs, num);
+	i2c_unlock_bus(adap, I2C_LOCK_SEGMENT);
+
+	return ret;
 }
 EXPORT_SYMBOL(i2c_transfer);
 
@@ -2285,9 +2246,8 @@ void i2c_put_adapter(struct i2c_adapter *adap)
 	if (!adap)
 		return;
 
-	module_put(adap->owner);
-	/* Should be last, otherwise we risk use-after-free with 'adap' */
 	put_device(&adap->dev);
+	module_put(adap->owner);
 }
 EXPORT_SYMBOL(i2c_put_adapter);
 

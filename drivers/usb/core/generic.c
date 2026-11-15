@@ -21,10 +21,8 @@
 
 #include <linux/usb.h>
 #include <linux/usb/hcd.h>
+#include <uapi/linux/usb/audio.h>
 #include "usb.h"
-#if defined(CONFIG_USB_HOST_CERTI) || defined(CONFIG_USB_NOTIFY_PROC_LOG)
-#include <linux/usb_notify.h>
-#endif
 
 static inline const char *plural(int n)
 {
@@ -45,34 +43,14 @@ static int is_activesync(struct usb_interface_descriptor *desc)
 		&& desc->bInterfaceProtocol == 1;
 }
 
-static int get_usb_audio_config(struct usb_host_bos *bos)
+static bool is_audio(struct usb_interface_descriptor *desc)
 {
-	unsigned int desc_cnt, num_cfg_desc, len = 0;
-	unsigned char *buffer;
-	struct usb_config_summary_descriptor *conf_summary;
+	return desc->bInterfaceClass == USB_CLASS_AUDIO;
+}
 
-	if (!bos || !bos->config_summary)
-		goto done;
-
-	num_cfg_desc = bos->num_config_summary_desc;
-	conf_summary = bos->config_summary;
-	buffer = (unsigned char *)conf_summary;
-	for (desc_cnt = 0; desc_cnt < num_cfg_desc; desc_cnt++) {
-		conf_summary =
-			(struct usb_config_summary_descriptor *)(buffer + len);
-
-		len += conf_summary->bLength;
-
-		if (conf_summary->bcdVersion != USB_CONFIG_SUMMARY_DESC_REV ||
-				conf_summary->bClass != USB_CLASS_AUDIO)
-			continue;
-
-		/* return 1st config as per device preference */
-		return conf_summary->bConfigurationIndex[0];
-	}
-
-done:
-	return -EINVAL;
+static bool is_uac3_config(struct usb_interface_descriptor *desc)
+{
+	return desc->bInterfaceProtocol == UAC_VERSION_3;
 }
 
 int usb_choose_configuration(struct usb_device *udev)
@@ -154,6 +132,22 @@ int usb_choose_configuration(struct usb_device *udev)
 #endif
 		}
 
+		/*
+		 * Select first configuration as default for audio so that
+		 * devices that don't comply with UAC3 protocol are supported.
+		 * But, still iterate through other configurations and
+		 * select UAC3 compliant config if present.
+		 */
+		if (i == 0 && num_configs > 1 && desc && is_audio(desc)) {
+			best = c;
+			continue;
+		}
+
+		if (i > 0 && desc && is_audio(desc) && is_uac3_config(desc)) {
+			best = c;
+			break;
+		}
+
 		/* From the remaining configs, choose the first one whose
 		 * first interface is for a non-vendor-specific class.
 		 * Reason: Linux is more likely to have a class driver
@@ -172,20 +166,13 @@ int usb_choose_configuration(struct usb_device *udev)
 			best = c;
 	}
 
-	if (insufficient_power > 0) {
+	if (insufficient_power > 0)
 		dev_info(&udev->dev, "rejected %d configuration%s "
 			"due to insufficient available bus power\n",
 			insufficient_power, plural(insufficient_power));
-#if defined(CONFIG_USB_HOST_CERTI)
-		send_usb_certi_uevent(USB_CERTI_HUB_POWER_EXCEED);
-#endif
-	}
 
 	if (best) {
-		/* choose device preferred config */
-		i = get_usb_audio_config(udev->bos);
-		if (i < 0)
-			i = best->desc.bConfigurationValue;
+		i = best->desc.bConfigurationValue;
 		dev_dbg(&udev->dev,
 			"configuration #%d chosen from %d choice%s\n",
 			i, num_configs, plural(num_configs));
@@ -241,9 +228,6 @@ static void generic_disconnect(struct usb_device *udev)
 static int generic_suspend(struct usb_device *udev, pm_message_t msg)
 {
 	int rc;
-#if defined(CONFIG_USB_NOTIFY_PROC_LOG)
-	int event;
-#endif
 
 	/* Normal USB devices suspend through their upstream port.
 	 * Root hubs don't have upstream ports to suspend,
@@ -263,13 +247,6 @@ static int generic_suspend(struct usb_device *udev, pm_message_t msg)
 		rc = 0;
 	else
 		rc = usb_port_suspend(udev, msg);
-
-#if defined(CONFIG_USB_NOTIFY_PROC_LOG)
-	if (!udev->parent && rc) {
-		event = NOTIFY_EXTRA_ROOTHUB_SUSPEND_FAIL;
-		store_usblog_notify(NOTIFY_EXTRA, (void *)&event, NULL);
-	}
-#endif
 
 	return rc;
 }

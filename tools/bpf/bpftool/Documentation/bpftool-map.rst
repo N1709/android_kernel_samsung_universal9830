@@ -15,13 +15,15 @@ SYNOPSIS
 	*OPTIONS* := { { **-j** | **--json** } [{ **-p** | **--pretty** }] | { **-f** | **--bpffs** } }
 
 	*COMMANDS* :=
-	{ **show** | **list** | **dump** | **update** | **lookup** | **getnext** | **delete**
-	| **pin** | **help** }
+	{ **show** | **list** | **create** | **dump** | **update** | **lookup** | **getnext**
+	| **delete** | **pin** | **help** }
 
 MAP COMMANDS
 =============
 
 |	**bpftool** **map { show | list }**   [*MAP*]
+|	**bpftool** **map create**     *FILE* **type** *TYPE* **key** *KEY_SIZE* **value** *VALUE_SIZE* \
+|		**entries** *MAX_ENTRIES* **name** *NAME* [**flags** *FLAGS*] [**dev** *NAME*]
 |	**bpftool** **map dump**       *MAP*
 |	**bpftool** **map update**     *MAP*  **key** *DATA*   **value** *VALUE* [*UPDATE_FLAGS*]
 |	**bpftool** **map lookup**     *MAP*  **key** *DATA*
@@ -39,9 +41,8 @@ MAP COMMANDS
 |	*TYPE* := { **hash** | **array** | **prog_array** | **perf_event_array** | **percpu_hash**
 |		| **percpu_array** | **stack_trace** | **cgroup_array** | **lru_hash**
 |		| **lru_percpu_hash** | **lpm_trie** | **array_of_maps** | **hash_of_maps**
-|		| **devmap** | **devmap_hash** | **sockmap** | **cpumap** | **xskmap** | **sockhash**
-|		| **cgroup_storage** | **reuseport_sockarray** | **percpu_cgroup_storage**
-|		| **queue** | **stack** | **sk_storage** | **struct_ops** | **ringbuf** | **inode_storage** }
+|		| **devmap** | **sockmap** | **cpumap** | **xskmap** | **sockhash**
+|		| **cgroup_storage** | **reuseport_sockarray** | **percpu_cgroup_storage** }
 
 DESCRIPTION
 ===========
@@ -52,6 +53,10 @@ DESCRIPTION
 
 		  Output will start with map ID followed by map type and
 		  zero or more named attributes (depending on kernel version).
+
+	**bpftool map create** *FILE* **type** *TYPE* **key** *KEY_SIZE* **value** *VALUE_SIZE*  **entries** *MAX_ENTRIES* **name** *NAME* [**flags** *FLAGS*] [**dev** *NAME*]
+		  Create a new map with given parameters and pin it to *bpffs*
+		  as *FILE*.
 
 	**bpftool map dump**    *MAP*
 		  Dump all entries in a given *MAP*.
@@ -81,7 +86,9 @@ DESCRIPTION
 	**bpftool map pin**     *MAP*  *FILE*
 		  Pin map *MAP* as *FILE*.
 
-		  Note: *FILE* must be located in *bpffs* mount.
+		  Note: *FILE* must be located in *bpffs* mount. It must not
+		  contain a dot character ('.'), which is reserved for future
+		  extensions of *bpffs*.
 
 	**bpftool** **map event_pipe** *MAP* [**cpu** *N* **index** *M*]
 		  Read events from a BPF_MAP_TYPE_PERF_EVENT_ARRAY map.
@@ -164,4 +171,10 @@ The following three commands are equivalent:
 
 SEE ALSO
 ========
-	**bpftool**\ (8), **bpftool-prog**\ (8), **bpftool-cgroup**\ (8)
+	**bpf**\ (2),
+	**bpf-helpers**\ (7),
+	**bpftool**\ (8),
+	**bpftool-prog**\ (8),
+	**bpftool-cgroup**\ (8),
+	**bpftool-net**\ (8),
+	**bpftool-perf**\ (8)

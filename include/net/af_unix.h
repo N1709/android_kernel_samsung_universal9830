@@ -14,7 +14,7 @@ void unix_destruct_scm(struct sk_buff *skb);
 void unix_gc(void);
 void wait_for_unix_gc(void);
 struct sock *unix_get_socket(struct file *filp);
-struct sock *unix_peer_get(struct sock *);
+struct sock *unix_peer_get(struct sock *sk);
 
 #define UNIX_HASH_SIZE	256
 #define UNIX_HASH_BITS	8
@@ -41,13 +41,13 @@ struct unix_skb_parms {
 	u32			consumed;
 } __randomize_layout;
 
-#define UNIXCB(skb) 	(*(struct unix_skb_parms *)&((skb)->cb))
+#define UNIXCB(skb)	(*(struct unix_skb_parms *)&((skb)->cb))
 
 /* The AF_UNIX socket */
 struct unix_sock {
 	/* WARNING: sk has to be the first member */
 	struct sock		sk;
-	struct unix_address     *addr;
+	struct unix_address	*addr;
 	struct path		path;
 	struct mutex		iolock, bindlock;
 	struct sock		*peer;
@@ -58,7 +58,7 @@ struct unix_sock {
 #define UNIX_GC_CANDIDATE	0
 #define UNIX_GC_MAYBE_CYCLE	1
 	struct socket_wq	peer_wq;
-	wait_queue_entry_t		peer_wake;
+	wait_queue_entry_t	peer_wake;
 };
 
 static inline struct unix_sock *unix_sk(const struct sock *sk)

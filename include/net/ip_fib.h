@@ -77,26 +77,26 @@ struct fnhe_hash_bucket {
 #define FNHE_RECLAIM_DEPTH	5
 
 struct fib_nh {
-	struct net_device	*fib_nh_dev;
+	struct net_device	*nh_dev;
 	struct hlist_node	nh_hash;
 	struct fib_info		*nh_parent;
-	unsigned int		fib_nh_flags;
-	unsigned char		fib_nh_scope;
+	unsigned int		nh_flags;
+	unsigned char		nh_scope;
 #ifdef CONFIG_IP_ROUTE_MULTIPATH
-	int			fib_nh_weight;
-	atomic_t		fib_nh_upper_bound;
+	int			nh_weight;
+	atomic_t		nh_upper_bound;
 #endif
 #ifdef CONFIG_IP_ROUTE_CLASSID
 	__u32			nh_tclassid;
 #endif
-	int			fib_nh_oif;
-	__be32			fib_nh_gw4;
+	int			nh_oif;
+	__be32			nh_gw;
 	__be32			nh_saddr;
 	int			nh_saddr_genid;
 	struct rtable __rcu * __percpu *nh_pcpu_rth_output;
 	struct rtable __rcu	*nh_rth_input;
 	struct fnhe_hash_bucket	__rcu *nh_exceptions;
-	struct lwtunnel_state	*fib_nh_lws;
+	struct lwtunnel_state	*nh_lwtstate;
 };
 
 /*
@@ -125,7 +125,7 @@ struct fib_info {
 	int			fib_nhs;
 	struct rcu_head		rcu;
 	struct fib_nh		fib_nh[0];
-#define fib_dev		fib_nh[0].fib_nh_dev
+#define fib_dev		fib_nh[0].nh_dev
 };
 
 
@@ -180,9 +180,9 @@ __be32 fib_info_update_nh_saddr(struct net *net, struct fib_nh *nh);
 	  atomic_read(&(net)->ipv4.dev_addr_genid)) ?	\
 	 FIB_RES_NH(res).nh_saddr :			\
 	 fib_info_update_nh_saddr((net), &FIB_RES_NH(res)))
-#define FIB_RES_GW(res)			(FIB_RES_NH(res).fib_nh_gw4)
-#define FIB_RES_DEV(res)		(FIB_RES_NH(res).fib_nh_dev)
-#define FIB_RES_OIF(res)		(FIB_RES_NH(res).fib_nh_oif)
+#define FIB_RES_GW(res)			(FIB_RES_NH(res).nh_gw)
+#define FIB_RES_DEV(res)		(FIB_RES_NH(res).nh_dev)
+#define FIB_RES_OIF(res)		(FIB_RES_NH(res).nh_oif)
 
 #define FIB_RES_PREFSRC(net, res)	((res).fi->fib_prefsrc ? : \
 					 FIB_RES_SADDR(net, res))
@@ -222,6 +222,17 @@ struct fib_table {
 	unsigned long		__data[0];
 };
 
+struct fib_dump_filter {
+	u32			table_id;
+	/* filter_set is an optimization that an entry is set */
+	bool			filter_set;
+	bool			dump_all_families;
+	unsigned char		protocol;
+	unsigned char		rt_type;
+	unsigned int		flags;
+	struct net_device	*dev;
+};
+
 int fib_table_lookup(struct fib_table *tb, const struct flowi4 *flp,
 		     struct fib_result *res, int fib_flags);
 int fib_table_insert(struct net *, struct fib_table *, struct fib_config *,
@@ -229,8 +240,8 @@ int fib_table_insert(struct net *, struct fib_table *, struct fib_config *,
 int fib_table_delete(struct net *, struct fib_table *, struct fib_config *,
 		     struct netlink_ext_ack *extack);
 int fib_table_dump(struct fib_table *table, struct sk_buff *skb,
-		   struct netlink_callback *cb);
-int fib_table_flush(struct net *net, struct fib_table *table, bool flush_all);
+		   struct netlink_callback *cb, struct fib_dump_filter *filter);
+int fib_table_flush(struct net *net, struct fib_table *table);
 struct fib_table *fib_trie_unmerge(struct fib_table *main_tb);
 void fib_table_flush_external(struct fib_table *table);
 void fib_free_table(struct fib_table *tb);
@@ -373,6 +384,7 @@ static inline bool fib4_rules_early_flow_dissect(struct net *net,
 extern const struct nla_policy rtm_ipv4_policy[];
 void ip_fib_init(void);
 __be32 fib_compute_spec_dst(struct sk_buff *skb);
+bool fib_info_nh_uses_dev(struct fib_info *fi, const struct net_device *dev);
 int fib_validate_source(struct sk_buff *skb, __be32 src, __be32 dst,
 			u8 tos, int oif, struct net_device *dev,
 			struct in_device *idev, u32 *itag);
@@ -452,4 +464,7 @@ static inline void fib_proc_exit(struct net *net)
 
 u32 ip_mtu_from_fib_result(struct fib_result *res, __be32 daddr);
 
+int ip_valid_fib_dump_req(struct net *net, const struct nlmsghdr *nlh,
+			  struct fib_dump_filter *filter,
+			  struct netlink_callback *cb);
 #endif  /* _NET_FIB_H */

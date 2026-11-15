@@ -1,14 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * rcar_du_vsp.h  --  R-Car Display Unit VSP-Based Compositor
  *
  * Copyright (C) 2015 Renesas Electronics Corporation
  *
  * Contact: Laurent Pinchart (laurent.pinchart@ideasonboard.com)
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include <drm/drmP.h>
@@ -115,7 +111,8 @@ void rcar_du_vsp_atomic_flush(struct rcar_du_crtc *crtc)
 	vsp1_du_atomic_flush(crtc->vsp->vsp, crtc->vsp_pipe, &cfg);
 }
 
-static const u32 rcar_du_vsp_formats[] = {
+/* Keep the two tables in sync. */
+static const u32 formats_kms[] = {
 	DRM_FORMAT_RGB332,
 	DRM_FORMAT_ARGB4444,
 	DRM_FORMAT_XRGB4444,
@@ -143,13 +140,40 @@ static const u32 rcar_du_vsp_formats[] = {
 	DRM_FORMAT_YVU444,
 };
 
+static const u32 formats_v4l2[] = {
+	V4L2_PIX_FMT_RGB332,
+	V4L2_PIX_FMT_ARGB444,
+	V4L2_PIX_FMT_XRGB444,
+	V4L2_PIX_FMT_ARGB555,
+	V4L2_PIX_FMT_XRGB555,
+	V4L2_PIX_FMT_RGB565,
+	V4L2_PIX_FMT_RGB24,
+	V4L2_PIX_FMT_BGR24,
+	V4L2_PIX_FMT_ARGB32,
+	V4L2_PIX_FMT_XRGB32,
+	V4L2_PIX_FMT_ABGR32,
+	V4L2_PIX_FMT_XBGR32,
+	V4L2_PIX_FMT_UYVY,
+	V4L2_PIX_FMT_YUYV,
+	V4L2_PIX_FMT_YVYU,
+	V4L2_PIX_FMT_NV12M,
+	V4L2_PIX_FMT_NV21M,
+	V4L2_PIX_FMT_NV16M,
+	V4L2_PIX_FMT_NV61M,
+	V4L2_PIX_FMT_YUV420M,
+	V4L2_PIX_FMT_YVU420M,
+	V4L2_PIX_FMT_YUV422M,
+	V4L2_PIX_FMT_YVU422M,
+	V4L2_PIX_FMT_YUV444M,
+	V4L2_PIX_FMT_YVU444M,
+};
+
 static void rcar_du_vsp_plane_setup(struct rcar_du_vsp_plane *plane)
 {
 	struct rcar_du_vsp_plane_state *state =
 		to_rcar_vsp_plane_state(plane->plane.state);
 	struct rcar_du_crtc *crtc = to_rcar_crtc(state->state.crtc);
 	struct drm_framebuffer *fb = plane->plane.state->fb;
-	const struct rcar_du_format_info *format;
 	struct vsp1_du_atomic_config cfg = {
 		.pixelformat = 0,
 		.pitch = fb->pitches[0],
@@ -172,8 +196,12 @@ static void rcar_du_vsp_plane_setup(struct rcar_du_vsp_plane *plane)
 		cfg.mem[i] = sg_dma_address(state->sg_tables[i].sgl)
 			   + fb->offsets[i];
 
-	format = rcar_du_format_info(state->format->fourcc);
-	cfg.pixelformat = format->v4l2;
+	for (i = 0; i < ARRAY_SIZE(formats_kms); ++i) {
+		if (formats_kms[i] == state->format->fourcc) {
+			cfg.pixelformat = formats_v4l2[i];
+			break;
+		}
+	}
 
 	vsp1_du_atomic_update(plane->vsp->vsp, crtc->vsp_pipe,
 			      plane->index, &cfg);
@@ -313,11 +341,8 @@ static void rcar_du_vsp_plane_reset(struct drm_plane *plane)
 	if (state == NULL)
 		return;
 
-	state->state.alpha = DRM_BLEND_ALPHA_OPAQUE;
+	__drm_atomic_helper_plane_reset(plane, &state->state);
 	state->state.zpos = plane->type == DRM_PLANE_TYPE_PRIMARY ? 0 : 1;
-
-	plane->state = &state->state;
-	plane->state->plane = plane;
 }
 
 static const struct drm_plane_funcs rcar_du_vsp_plane_funcs = {
@@ -371,8 +396,8 @@ int rcar_du_vsp_init(struct rcar_du_vsp *vsp, struct device_node *np,
 
 		ret = drm_universal_plane_init(rcdu->ddev, &plane->plane, crtcs,
 					       &rcar_du_vsp_plane_funcs,
-					       rcar_du_vsp_formats,
-					       ARRAY_SIZE(rcar_du_vsp_formats),
+					       formats_kms,
+					       ARRAY_SIZE(formats_kms),
 					       NULL, type, NULL);
 		if (ret < 0)
 			return ret;

@@ -5,7 +5,6 @@
  * Description: CoreSight Embedded Trace Buffer driver
  */
 
-#include <linux/atomic.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/types.h>
@@ -137,11 +136,6 @@ static void __etb_enable_hw(struct etb_drvdata *drvdata)
 
 static int etb_enable_hw(struct etb_drvdata *drvdata)
 {
-	int rc = coresight_claim_device(drvdata->base);
-
-	if (rc)
-		return rc;
-
 	__etb_enable_hw(drvdata);
 	return 0;
 }
@@ -160,15 +154,14 @@ static int etb_enable_sysfs(struct coresight_device *csdev)
 		goto out;
 	}
 
-	if (drvdata->mode == CS_MODE_DISABLED) {
-		ret = etb_enable_hw(drvdata);
-		if (ret)
-			goto out;
+	/* Nothing to do, the tracer is already enabled. */
+	if (drvdata->mode == CS_MODE_SYSFS)
+		goto out;
 
+	ret = etb_enable_hw(drvdata);
+	if (!ret)
 		drvdata->mode = CS_MODE_SYSFS;
-	}
 
-	atomic_inc(csdev->refcnt);
 out:
 	spin_unlock_irqrestore(&drvdata->spinlock, flags);
 	return ret;
@@ -198,10 +191,8 @@ static int etb_enable_perf(struct coresight_device *csdev, void *data)
 		goto out;
 
 	ret = etb_enable_hw(drvdata);
-	if (!ret) {
+	if (!ret)
 		drvdata->mode = CS_MODE_PERF;
-		atomic_inc(csdev->refcnt);
-	}
 
 out:
 	spin_unlock_irqrestore(&drvdata->spinlock, flags);
@@ -232,7 +223,7 @@ static int etb_enable(struct coresight_device *csdev, u32 mode, void *data)
 	return 0;
 }
 
-static void __etb_disable_hw(struct etb_drvdata *drvdata)
+static void etb_disable_hw(struct etb_drvdata *drvdata)
 {
 	u32 ffcr;
 
@@ -322,43 +313,33 @@ static void etb_dump_hw(struct etb_drvdata *drvdata)
 	CS_LOCK(drvdata->base);
 }
 
-static void etb_disable_hw(struct etb_drvdata *drvdata)
-{
-	__etb_disable_hw(drvdata);
-	etb_dump_hw(drvdata);
-	coresight_disclaim_device(drvdata->base);
-}
-
-static int etb_disable(struct coresight_device *csdev)
+static void etb_disable(struct coresight_device *csdev)
 {
 	struct etb_drvdata *drvdata = dev_get_drvdata(csdev->dev.parent);
 	unsigned long flags;
 
 	spin_lock_irqsave(&drvdata->spinlock, flags);
 
-	if (atomic_dec_return(csdev->refcnt)) {
-		spin_unlock_irqrestore(&drvdata->spinlock, flags);
-		return -EBUSY;
+	/* Disable the ETB only if it needs to */
+	if (drvdata->mode != CS_MODE_DISABLED) {
+		etb_disable_hw(drvdata);
+		etb_dump_hw(drvdata);
+		drvdata->mode = CS_MODE_DISABLED;
 	}
-
-	/* Complain if we (somehow) got out of sync */
-	WARN_ON_ONCE(drvdata->mode == CS_MODE_DISABLED);
-	etb_disable_hw(drvdata);
-	drvdata->mode = CS_MODE_DISABLED;
 	spin_unlock_irqrestore(&drvdata->spinlock, flags);
 
 	dev_dbg(drvdata->dev, "ETB disabled\n");
-	return 0;
 }
 
-static void *etb_alloc_buffer(struct coresight_device *csdev,
-			      struct perf_event *event, void **pages,
-			      int nr_pages, bool overwrite)
+static void *etb_alloc_buffer(struct coresight_device *csdev, int cpu,
+			      void **pages, int nr_pages, bool overwrite)
 {
-	int node, cpu = event->cpu;
+	int node;
 	struct cs_buffers *buf;
 
-	node = (cpu == -1) ? NUMA_NO_NODE : cpu_to_node(cpu);
+	if (cpu == -1)
+		cpu = smp_processor_id();
+	node = cpu_to_node(cpu);
 
 	buf = kzalloc_node(sizeof(struct cs_buffers), GFP_KERNEL, node);
 	if (!buf)
@@ -412,7 +393,7 @@ static unsigned long etb_update_buffer(struct coresight_device *csdev,
 	const u32 *barrier;
 	u32 read_ptr, write_ptr, capacity;
 	u32 status, read_data;
-	unsigned long offset, to_read, flags;
+	unsigned long offset, to_read;
 	struct cs_buffers *buf = sink_config;
 	struct etb_drvdata *drvdata = dev_get_drvdata(csdev->dev.parent);
 
@@ -421,8 +402,7 @@ static unsigned long etb_update_buffer(struct coresight_device *csdev,
 
 	capacity = drvdata->buffer_depth * ETB_FRAME_SIZE_WORDS;
 
-	spin_lock_irqsave(&drvdata->spinlock, flags);
-	__etb_disable_hw(drvdata);
+	etb_disable_hw(drvdata);
 	CS_UNLOCK(drvdata->base);
 
 	/* unit is in words, not bytes */
@@ -487,13 +467,7 @@ static unsigned long etb_update_buffer(struct coresight_device *csdev,
 		lost = true;
 	}
 
-	/*
-	 * Don't set the TRUNCATED flag in snapshot mode because 1) the
-	 * captured buffer is expected to be truncated and 2) a full buffer
-	 * prevents the event from being re-enabled by the perf core,
-	 * resulting in stale data being send to user space.
-	 */
-	if (!buf->snapshot && lost)
+	if (lost)
 		perf_aux_output_flag(handle, PERF_AUX_FLAG_TRUNCATED);
 
 	/* finally tell HW where we want to start reading from */
@@ -536,9 +510,8 @@ static unsigned long etb_update_buffer(struct coresight_device *csdev,
 		handle->head = (cur * PAGE_SIZE) + offset;
 		to_read = buf->nr_pages << PAGE_SHIFT;
 	}
-	__etb_enable_hw(drvdata);
+	etb_enable_hw(drvdata);
 	CS_LOCK(drvdata->base);
-	spin_unlock_irqrestore(&drvdata->spinlock, flags);
 
 	return to_read;
 }
@@ -561,9 +534,9 @@ static void etb_dump(struct etb_drvdata *drvdata)
 
 	spin_lock_irqsave(&drvdata->spinlock, flags);
 	if (drvdata->mode == CS_MODE_SYSFS) {
-		__etb_disable_hw(drvdata);
+		etb_disable_hw(drvdata);
 		etb_dump_hw(drvdata);
-		__etb_enable_hw(drvdata);
+		etb_enable_hw(drvdata);
 	}
 	spin_unlock_irqrestore(&drvdata->spinlock, flags);
 

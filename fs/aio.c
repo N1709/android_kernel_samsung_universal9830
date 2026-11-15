@@ -1468,6 +1468,7 @@ static int aio_prep_rw(struct kiocb *req, const struct iocb *iocb)
 		ret = ioprio_check_cap(iocb->aio_reqprio);
 		if (ret) {
 			pr_debug("aio ioprio check cap error: %d\n", ret);
+			fput(req->ki_filp);
 			return ret;
 		}
 
@@ -2290,12 +2291,12 @@ COMPAT_SYSCALL_DEFINE5(io_getevents, compat_aio_context_t, ctx_id,
 		       compat_long_t, min_nr,
 		       compat_long_t, nr,
 		       struct io_event __user *, events,
-		       struct compat_timespec __user *, timeout)
+		       struct old_timespec32 __user *, timeout)
 {
 	struct timespec64 t;
 	int ret;
 
-	if (timeout && compat_get_timespec64(&t, timeout))
+	if (timeout && get_old_timespec32(&t, timeout))
 		return -EFAULT;
 
 	ret = do_io_getevents(ctx_id, min_nr, nr, events, timeout ? &t : NULL);
@@ -2315,7 +2316,7 @@ COMPAT_SYSCALL_DEFINE6(io_pgetevents,
 		compat_long_t, min_nr,
 		compat_long_t, nr,
 		struct io_event __user *, events,
-		struct compat_timespec __user *, timeout,
+		struct old_timespec32 __user *, timeout,
 		const struct __compat_aio_sigset __user *, usig)
 {
 	struct __compat_aio_sigset ksig = { NULL, };
@@ -2323,7 +2324,7 @@ COMPAT_SYSCALL_DEFINE6(io_pgetevents,
 	struct timespec64 t;
 	int ret;
 
-	if (timeout && compat_get_timespec64(&t, timeout))
+	if (timeout && get_old_timespec32(&t, timeout))
 		return -EFAULT;
 
 	if (usig && copy_from_user(&ksig, usig, sizeof(ksig)))

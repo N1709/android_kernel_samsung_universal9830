@@ -32,8 +32,6 @@
 #define SLAB_HWCACHE_ALIGN	((slab_flags_t __force)0x00002000U)
 /* Use GFP_DMA memory */
 #define SLAB_CACHE_DMA		((slab_flags_t __force)0x00004000U)
-/* Use GFP_DMA32 memory */
-#define SLAB_CACHE_DMA32	((slab_flags_t __force)0x00008000U)
 /* DEBUG: Store the last owner for bug hunting */
 #define SLAB_STORE_USER		((slab_flags_t __force)0x00010000U)
 /* Panic if kmem_cache_create() fails */
@@ -84,7 +82,7 @@
 
 /* Flag to prevent checks on free */
 #ifdef CONFIG_DEBUG_OBJECTS
-#define SLAB_DEBUG_OBJECTS	((slab_flags_t __force)0x00400000U)
+# define SLAB_DEBUG_OBJECTS	((slab_flags_t __force)0x00400000U)
 #else
 # define SLAB_DEBUG_OBJECTS	0
 #endif
@@ -94,15 +92,15 @@
 
 /* Fault injection mark */
 #ifdef CONFIG_FAILSLAB
-#define SLAB_FAILSLAB		((slab_flags_t __force)0x02000000U)
+# define SLAB_FAILSLAB		((slab_flags_t __force)0x02000000U)
 #else
-#define SLAB_FAILSLAB		0
+# define SLAB_FAILSLAB		0
 #endif
 /* Account to memcg */
 #ifdef CONFIG_MEMCG_KMEM
-#define SLAB_ACCOUNT		((slab_flags_t __force)0x04000000U)
+# define SLAB_ACCOUNT		((slab_flags_t __force)0x04000000U)
 #else
-#define SLAB_ACCOUNT		0
+# define SLAB_ACCOUNT		0
 #endif
 
 #ifdef CONFIG_KASAN
@@ -316,22 +314,22 @@ kmalloc_caches[NR_KMALLOC_TYPES][KMALLOC_SHIFT_HIGH + 1];
 
 static __always_inline enum kmalloc_cache_type kmalloc_type(gfp_t flags)
 {
+	int is_dma = 0;
+	int type_dma = 0;
+	int is_reclaimable;
+
 #ifdef CONFIG_ZONE_DMA
-	/*
-	 * The most common case is KMALLOC_NORMAL, so test for it
-	 * with a single branch for both flags.
-	 */
-	if (likely((flags & (__GFP_DMA | __GFP_RECLAIMABLE)) == 0))
-		return KMALLOC_NORMAL;
+	is_dma = !!(flags & __GFP_DMA);
+	type_dma = is_dma * KMALLOC_DMA;
+#endif
+
+	is_reclaimable = !!(flags & __GFP_RECLAIMABLE);
 
 	/*
-	 * At least one of the flags has to be set. If both are, __GFP_DMA
-	 * is more important.
+	 * If an allocation is both __GFP_DMA and __GFP_RECLAIMABLE, return
+	 * KMALLOC_DMA and effectively ignore __GFP_RECLAIMABLE
 	 */
-	return flags & __GFP_DMA ? KMALLOC_DMA : KMALLOC_RECLAIM;
-#else
-	return flags & __GFP_RECLAIMABLE ? KMALLOC_RECLAIM : KMALLOC_NORMAL;
-#endif
+	return type_dma + (is_reclaimable & !is_dma) * KMALLOC_RECLAIM;
 }
 
 /*
@@ -446,7 +444,7 @@ static __always_inline void *kmem_cache_alloc_trace(struct kmem_cache *s,
 {
 	void *ret = kmem_cache_alloc(s, flags);
 
-	ret = kasan_kmalloc(s, ret, size, flags);
+	kasan_kmalloc(s, ret, size, flags);
 	return ret;
 }
 
@@ -457,7 +455,7 @@ kmem_cache_alloc_node_trace(struct kmem_cache *s,
 {
 	void *ret = kmem_cache_alloc_node(s, gfpflags, node);
 
-	ret = kasan_kmalloc(s, ret, size, gfpflags);
+	kasan_kmalloc(s, ret, size, gfpflags);
 	return ret;
 }
 #endif /* CONFIG_TRACING */

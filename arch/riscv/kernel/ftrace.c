@@ -24,8 +24,7 @@ static int ftrace_check_current_call(unsigned long hook_pos,
 	 * Read the text we want to modify;
 	 * return must be -EFAULT on read error
 	 */
-	if (copy_from_kernel_nofault(replaced, (void *)hook_pos,
-			MCOUNT_INSN_SIZE))
+	if (probe_kernel_read(replaced, (void *)hook_pos, MCOUNT_INSN_SIZE))
 		return -EFAULT;
 
 	/*
@@ -52,7 +51,7 @@ static int __ftrace_modify_call(unsigned long hook_pos, unsigned long target,
 	make_call(hook_pos, target, call);
 
 	/* replace the auipc-jalr pair at once */
-	ret = copy_to_kernel_nofault((void *)hook_pos, enable ? call : nops,
+	ret = probe_kernel_write((void *)hook_pos, enable ? call : nops,
 				 MCOUNT_INSN_SIZE);
 	/* return must be -EPERM on write error */
 	if (ret)
@@ -87,25 +86,6 @@ int ftrace_make_nop(struct module *mod, struct dyn_ftrace *rec,
 		return ret;
 
 	return __ftrace_modify_call(rec->ip, addr, false);
-}
-
-
-/*
- * This is called early on, and isn't wrapped by
- * ftrace_arch_code_modify_{prepare,post_process}() and therefor doesn't hold
- * text_mutex, which triggers a lockdep failure.  SMP isn't running so we could
- * just directly poke the text, but it's simpler to just take the lock
- * ourselves.
- */
-int ftrace_init_nop(struct module *mod, struct dyn_ftrace *rec)
-{
-	int out;
-
-	ftrace_arch_code_modify_prepare();
-	out = ftrace_make_nop(mod, rec, MCOUNT_ADDR);
-	ftrace_arch_code_modify_post_process();
-
-	return out;
 }
 
 int ftrace_update_ftrace_func(ftrace_func_t func)
@@ -152,6 +132,7 @@ void prepare_ftrace_return(unsigned long *parent, unsigned long self_addr,
 {
 	unsigned long return_hooker = (unsigned long)&return_to_handler;
 	unsigned long old;
+	int err;
 
 	if (unlikely(atomic_read(&current->tracing_graph_pause)))
 		return;
@@ -162,7 +143,7 @@ void prepare_ftrace_return(unsigned long *parent, unsigned long self_addr,
 	 */
 	old = *parent;
 
-	if (!function_graph_enter(old, self_addr, frame_pointer, parent))
+	if (function_graph_enter(old, self_addr, frame_pointer, parent))
 		*parent = return_hooker;
 }
 

@@ -191,13 +191,18 @@ el1_error:
 	b	__guest_exit
 
 el2_sync:
-	save_caller_saved_regs_vect
-	stp     x29, x30, [sp, #-16]!
-	bl	kvm_unexpected_el2_exception
-	ldp     x29, x30, [sp], #16
-	restore_caller_saved_regs_vect
+	/* Check for illegal exception return, otherwise panic */
+	mrs	x0, spsr_el2
 
-	eret
+	/* if this was something else, then panic! */
+	tst	x0, #PSR_IL_BIT
+	b.eq	__hyp_panic
+
+	/* Let's attempt a recovery from the illegal exception return */
+	get_vcpu_ptr	x1, x0
+	mov	x0, #ARM_EXCEPTION_IL
+	b	__guest_exit
+
 
 el2_error:
 	save_caller_saved_regs_vect

@@ -20,8 +20,8 @@
 
 struct nft_lookup {
 	struct nft_set			*set;
-	u8				sreg;
-	u8				dreg;
+	enum nft_registers		sreg:8;
+	enum nft_registers		dreg:8;
 	bool				invert;
 	struct nft_set_binding		binding;
 };
@@ -76,8 +76,11 @@ static int nft_lookup_init(const struct nft_ctx *ctx,
 	if (IS_ERR(set))
 		return PTR_ERR(set);
 
-	err = nft_parse_register_load(tb[NFTA_LOOKUP_SREG], &priv->sreg,
-				      set->klen);
+	if (set->flags & NFT_SET_EVAL)
+		return -EOPNOTSUPP;
+
+	priv->sreg = nft_parse_register(tb[NFTA_LOOKUP_SREG]);
+	err = nft_validate_register_load(priv->sreg, set->klen);
 	if (err < 0)
 		return err;
 
@@ -100,10 +103,9 @@ static int nft_lookup_init(const struct nft_ctx *ctx,
 		if (!(set->flags & NFT_SET_MAP))
 			return -EINVAL;
 
-		err = nft_parse_register_store(ctx, tb[NFTA_LOOKUP_DREG],
-					       &priv->dreg, NULL,
-					       nft_set_datatype(set),
-					       set->dlen);
+		priv->dreg = nft_parse_register(tb[NFTA_LOOKUP_DREG]);
+		err = nft_validate_register_store(ctx, priv->dreg, NULL,
+						  set->dtype, set->dlen);
 		if (err < 0)
 			return err;
 	} else if (set->flags & NFT_SET_MAP)
@@ -119,21 +121,20 @@ static int nft_lookup_init(const struct nft_ctx *ctx,
 	return 0;
 }
 
-static void nft_lookup_deactivate(const struct nft_ctx *ctx,
-				  const struct nft_expr *expr,
-				  enum nft_trans_phase phase)
-{
-	struct nft_lookup *priv = nft_expr_priv(expr);
-
-	nf_tables_deactivate_set(ctx, priv->set, &priv->binding, phase);
-}
-
 static void nft_lookup_activate(const struct nft_ctx *ctx,
 				const struct nft_expr *expr)
 {
 	struct nft_lookup *priv = nft_expr_priv(expr);
 
-	nf_tables_activate_set(ctx, priv->set);
+	nf_tables_rebind_set(ctx, priv->set, &priv->binding);
+}
+
+static void nft_lookup_deactivate(const struct nft_ctx *ctx,
+				  const struct nft_expr *expr)
+{
+	struct nft_lookup *priv = nft_expr_priv(expr);
+
+	nf_tables_unbind_set(ctx, priv->set, &priv->binding);
 }
 
 static void nft_lookup_destroy(const struct nft_ctx *ctx,

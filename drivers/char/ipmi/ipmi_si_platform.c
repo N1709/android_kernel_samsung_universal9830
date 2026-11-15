@@ -5,6 +5,10 @@
  * Handling for platform devices in IPMI (ACPI, OF, and things
  * coming from the platform.
  */
+
+#define pr_fmt(fmt) "ipmi_platform: " fmt
+#define dev_fmt pr_fmt
+
 #include <linux/types.h>
 #include <linux/module.h>
 #include <linux/of_device.h>
@@ -14,8 +18,6 @@
 #include <linux/acpi.h>
 #include "ipmi_si.h"
 #include "ipmi_dmi.h"
-
-#define PFX "ipmi_platform: "
 
 static bool si_tryplatform = true;
 #ifdef CONFIG_ACPI
@@ -126,6 +128,8 @@ ipmi_get_info_from_resources(struct platform_device *pdev,
 		if (res_second->start > io->addr_data)
 			io->regspacing = res_second->start - io->addr_data;
 	}
+	io->regsize = DEFAULT_REGSIZE;
+	io->regshift = 0;
 
 	return res;
 }
@@ -133,7 +137,7 @@ ipmi_get_info_from_resources(struct platform_device *pdev,
 static int platform_ipmi_probe(struct platform_device *pdev)
 {
 	struct si_sm_io io;
-	u8 type, slave_addr, addr_source, regsize, regshift;
+	u8 type, slave_addr, addr_source;
 	int rv;
 
 	rv = device_property_read_u8(&pdev->dev, "addr-source", &addr_source);
@@ -145,7 +149,7 @@ static int platform_ipmi_probe(struct platform_device *pdev)
 	if (addr_source == SI_SMBIOS) {
 		if (!si_trydmi)
 			return -ENODEV;
-	} else if (addr_source != SI_HARDCODED) {
+	} else {
 		if (!si_tryplatform)
 			return -ENODEV;
 	}
@@ -156,7 +160,7 @@ static int platform_ipmi_probe(struct platform_device *pdev)
 
 	memset(&io, 0, sizeof(io));
 	io.addr_source = addr_source;
-	dev_info(&pdev->dev, PFX "probing via %s\n",
+	dev_info(&pdev->dev, "probing via %s\n",
 		 ipmi_addr_src_to_str(addr_source));
 
 	switch (type) {
@@ -165,22 +169,10 @@ static int platform_ipmi_probe(struct platform_device *pdev)
 	case SI_BT:
 		io.si_type = type;
 		break;
-	case SI_TYPE_INVALID: /* User disabled this in hardcode. */
-		return -ENODEV;
 	default:
 		dev_err(&pdev->dev, "ipmi-type property is invalid\n");
 		return -EINVAL;
 	}
-
-	io.regsize = DEFAULT_REGSIZE;
-	rv = device_property_read_u8(&pdev->dev, "reg-size", &regsize);
-	if (!rv)
-		io.regsize = regsize;
-
-	io.regshift = 0;
-	rv = device_property_read_u8(&pdev->dev, "reg-shift", &regshift);
-	if (!rv)
-		io.regshift = regshift;
 
 	if (!ipmi_get_info_from_resources(pdev, &io))
 		return -EINVAL;
@@ -201,8 +193,7 @@ static int platform_ipmi_probe(struct platform_device *pdev)
 
 	io.dev = &pdev->dev;
 
-	pr_info("ipmi_si: %s: %s %#lx regsize %d spacing %d irq %d\n",
-		ipmi_addr_src_to_str(addr_source),
+	pr_info("ipmi_si: SMBIOS: %s %#lx regsize %d spacing %d irq %d\n",
 		(io.addr_type == IPMI_IO_ADDR_SPACE) ? "io" : "mem",
 		io.addr_data, io.regsize, io.regspacing, io.irq);
 
@@ -247,25 +238,25 @@ static int of_ipmi_probe(struct platform_device *pdev)
 
 	ret = of_address_to_resource(np, 0, &resource);
 	if (ret) {
-		dev_warn(&pdev->dev, PFX "invalid address from OF\n");
+		dev_warn(&pdev->dev, "invalid address from OF\n");
 		return ret;
 	}
 
 	regsize = of_get_property(np, "reg-size", &proplen);
 	if (regsize && proplen != 4) {
-		dev_warn(&pdev->dev, PFX "invalid regsize from OF\n");
+		dev_warn(&pdev->dev, "invalid regsize from OF\n");
 		return -EINVAL;
 	}
 
 	regspacing = of_get_property(np, "reg-spacing", &proplen);
 	if (regspacing && proplen != 4) {
-		dev_warn(&pdev->dev, PFX "invalid regspacing from OF\n");
+		dev_warn(&pdev->dev, "invalid regspacing from OF\n");
 		return -EINVAL;
 	}
 
 	regshift = of_get_property(np, "reg-shift", &proplen);
 	if (regshift && proplen != 4) {
-		dev_warn(&pdev->dev, PFX "invalid regshift from OF\n");
+		dev_warn(&pdev->dev, "invalid regshift from OF\n");
 		return -EINVAL;
 	}
 
@@ -337,7 +328,7 @@ static int acpi_ipmi_probe(struct platform_device *pdev)
 
 	memset(&io, 0, sizeof(io));
 	io.addr_source = SI_ACPI;
-	dev_info(&pdev->dev, PFX "probing via ACPI\n");
+	dev_info(&pdev->dev, "probing via ACPI\n");
 
 	io.addr_info.acpi_info.acpi_handle = handle;
 
@@ -366,9 +357,6 @@ static int acpi_ipmi_probe(struct platform_device *pdev)
 		dev_info(&pdev->dev, "unknown IPMI type %lld\n", tmp);
 		goto err_free;
 	}
-
-	io.regsize = DEFAULT_REGSIZE;
-	io.regshift = 0;
 
 	res = ipmi_get_info_from_resources(pdev, &io);
 	if (!res) {
@@ -432,7 +420,7 @@ static int ipmi_remove(struct platform_device *pdev)
 }
 
 static const struct platform_device_id si_plat_ids[] = {
-    { "hardcode-ipmi-si", 0 },
+    { "dmi-ipmi-si", 0 },
     { }
 };
 
@@ -451,7 +439,7 @@ void ipmi_si_platform_init(void)
 {
 	int rv = platform_driver_register(&ipmi_platform_driver);
 	if (rv)
-		pr_err(PFX "Unable to register driver: %d\n", rv);
+		pr_err("Unable to register driver: %d\n", rv);
 }
 
 void ipmi_si_platform_shutdown(void)

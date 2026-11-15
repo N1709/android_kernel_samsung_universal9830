@@ -26,12 +26,44 @@
 #include "amdgpu.h"
 #include "amdgpu_gfx.h"
 
-/* 0.5 second timeout */
-#define GFX_OFF_DELAY_ENABLE         msecs_to_jiffies(500)
+/* delay 0.1 second to enable gfx off feature */
+#define GFX_OFF_DELAY_ENABLE         msecs_to_jiffies(100)
 
 /*
- * GPU scratch registers helpers function.
+ * GPU GFX IP block helpers function.
  */
+
+int amdgpu_gfx_queue_to_bit(struct amdgpu_device *adev, int mec,
+			    int pipe, int queue)
+{
+	int bit = 0;
+
+	bit += mec * adev->gfx.mec.num_pipe_per_mec
+		* adev->gfx.mec.num_queue_per_pipe;
+	bit += pipe * adev->gfx.mec.num_queue_per_pipe;
+	bit += queue;
+
+	return bit;
+}
+
+void amdgpu_gfx_bit_to_queue(struct amdgpu_device *adev, int bit,
+			     int *mec, int *pipe, int *queue)
+{
+	*queue = bit % adev->gfx.mec.num_queue_per_pipe;
+	*pipe = (bit / adev->gfx.mec.num_queue_per_pipe)
+		% adev->gfx.mec.num_pipe_per_mec;
+	*mec = (bit / adev->gfx.mec.num_queue_per_pipe)
+	       / adev->gfx.mec.num_pipe_per_mec;
+
+}
+
+bool amdgpu_gfx_is_mec_queue_enabled(struct amdgpu_device *adev,
+				     int mec, int pipe, int queue)
+{
+	return test_bit(amdgpu_gfx_queue_to_bit(adev, mec, pipe, queue),
+			adev->gfx.mec.queue_bitmap);
+}
+
 /**
  * amdgpu_gfx_scratch_get - Allocate a scratch register
  *
@@ -176,7 +208,7 @@ static int amdgpu_gfx_kiq_acquire(struct amdgpu_device *adev,
 		    * adev->gfx.mec.num_pipe_per_mec
 		    * adev->gfx.mec.num_queue_per_pipe;
 
-	while (--queue_bit >= 0) {
+	while (queue_bit-- >= 0) {
 		if (test_bit(queue_bit, adev->gfx.mec.queue_bitmap))
 			continue;
 
@@ -360,7 +392,7 @@ void amdgpu_gfx_off_ctrl(struct amdgpu_device *adev, bool enable)
 	if (!(adev->powerplay.pp_feature & PP_GFXOFF_MASK))
 		return;
 
-	if (!adev->powerplay.pp_funcs->set_powergating_by_smu)
+	if (!adev->powerplay.pp_funcs || !adev->powerplay.pp_funcs->set_powergating_by_smu)
 		return;
 
 

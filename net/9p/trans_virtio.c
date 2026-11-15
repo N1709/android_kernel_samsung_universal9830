@@ -329,7 +329,7 @@ static int p9_get_mapped_pages(struct virtio_chan *chan,
 	if (!iov_iter_count(data))
 		return 0;
 
-	if (iov_iter_is_kvec(data)) {
+	if (!iov_iter_is_kvec(data)) {
 		int n;
 		/*
 		 * We allow only p9_max_pages pinned. We wait for the
@@ -409,7 +409,7 @@ p9_virtio_zc_request(struct p9_client *client, struct p9_req_t *req,
 	struct page **in_pages = NULL, **out_pages = NULL;
 	struct virtio_chan *chan = client->trans;
 	struct scatterlist *sgs[4];
-	size_t offs = 0;
+	size_t offs;
 	int need_drop = 0;
 	int kicked = 0;
 
@@ -620,7 +620,7 @@ static int p9_virtio_probe(struct virtio_device *vdev)
 	chan->vc_wq = kmalloc(sizeof(wait_queue_head_t), GFP_KERNEL);
 	if (!chan->vc_wq) {
 		err = -ENOMEM;
-		goto out_remove_file;
+		goto out_free_tag;
 	}
 	init_waitqueue_head(chan->vc_wq);
 	chan->ring_bufs_avail = 1;
@@ -638,8 +638,6 @@ static int p9_virtio_probe(struct virtio_device *vdev)
 
 	return 0;
 
-out_remove_file:
-	sysfs_remove_file(&vdev->dev.kobj, &dev_attr_mount_tag.attr);
 out_free_tag:
 	kfree(tag);
 out_free_vq:
@@ -784,16 +782,10 @@ static struct p9_trans_module p9_virtio_trans = {
 /* The standard init function */
 static int __init p9_virtio_init(void)
 {
-	int rc;
-
 	INIT_LIST_HEAD(&virtio_chan_list);
 
 	v9fs_register_trans(&p9_virtio_trans);
-	rc = register_virtio_driver(&p9_virtio_drv);
-	if (rc)
-		v9fs_unregister_trans(&p9_virtio_trans);
-
-	return rc;
+	return register_virtio_driver(&p9_virtio_drv);
 }
 
 static void __exit p9_virtio_cleanup(void)

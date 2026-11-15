@@ -66,7 +66,7 @@ void do_page_fault(unsigned long address, struct pt_regs *regs)
 	struct vm_area_struct *vma = NULL;
 	struct task_struct *tsk = current;
 	struct mm_struct *mm = tsk->mm;
-	int si_code = SEGV_MAPERR;
+	int si_code = 0;
 	int ret;
 	vm_fault_t fault;
 	int write = regs->ecr_cause & ECR_C_PROTV_STORE;  /* ST/EX */
@@ -81,13 +81,15 @@ void do_page_fault(unsigned long address, struct pt_regs *regs)
 	 * only copy the information from the master page table,
 	 * nothing more.
 	 */
-	if (address >= VMALLOC_START && !user_mode(regs)) {
+	if (address >= VMALLOC_START) {
 		ret = handle_kernel_vaddr_fault(address);
 		if (unlikely(ret))
-			goto no_context;
+			goto bad_area_nosemaphore;
 		else
 			return;
 	}
+
+	si_code = SEGV_MAPERR;
 
 	/*
 	 * If we're in an interrupt or have no user
@@ -99,7 +101,7 @@ void do_page_fault(unsigned long address, struct pt_regs *regs)
 	if (user_mode(regs))
 		flags |= FAULT_FLAG_USER;
 retry:
-	mmap_read_lock(mm);
+	down_read(&mm->mmap_sem);
 	vma = find_vma(mm, address);
 	if (!vma)
 		goto bad_area;
@@ -139,17 +141,12 @@ good_area:
 	 */
 	fault = handle_mm_fault(vma, address, flags);
 
+	/* If Pagefault was interrupted by SIGKILL, exit page fault "early" */
 	if (unlikely(fatal_signal_pending(current))) {
-
-		/*
-		 * if fault retry, mmap_sem already relinquished by core mm
-		 * so OK to return to user mode (with signal handled first)
-		 */
-		if (fault & VM_FAULT_RETRY) {
-			if (!user_mode(regs))
-				goto no_context;
+		if ((fault & VM_FAULT_ERROR) && !(fault & VM_FAULT_RETRY))
+			up_read(&mm->mmap_sem);
+		if (user_mode(regs))
 			return;
-		}
 	}
 
 	perf_sw_event(PERF_COUNT_SW_PAGE_FAULTS, 1, regs, address);
@@ -175,7 +172,7 @@ good_area:
 		}
 
 		/* Fault Handled Gracefully */
-		mmap_read_unlock(mm);
+		up_read(&mm->mmap_sem);
 		return;
 	}
 
@@ -194,8 +191,9 @@ good_area:
 	 * Fix it, but check if it's kernel or user first..
 	 */
 bad_area:
-	mmap_read_unlock(mm);
+	up_read(&mm->mmap_sem);
 
+bad_area_nosemaphore:
 	/* User mode accesses just cause a SIGSEGV */
 	if (user_mode(regs)) {
 		tsk->thread.fault_address = address;
@@ -218,7 +216,7 @@ no_context:
 	die("Oops", regs, address);
 
 out_of_memory:
-	mmap_read_unlock(mm);
+	up_read(&mm->mmap_sem);
 
 	if (user_mode(regs)) {
 		pagefault_out_of_memory();
@@ -228,7 +226,7 @@ out_of_memory:
 	goto no_context;
 
 do_sigbus:
-	mmap_read_unlock(mm);
+	up_read(&mm->mmap_sem);
 
 	if (!user_mode(regs))
 		goto no_context;

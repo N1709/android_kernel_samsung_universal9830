@@ -26,9 +26,6 @@
 #include <linux/smpboot.h>
 #include <linux/tick.h>
 #include <linux/irq.h>
-#include <linux/debug-snapshot.h>
-#include <linux/sched/clock.h>
-#include <linux/nmi.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/irq.h>
@@ -253,7 +250,6 @@ asmlinkage __visible void __softirq_entry __do_softirq(void)
 {
 	unsigned long end = jiffies + MAX_SOFTIRQ_TIME;
 	unsigned long old_flags = current->flags;
-	unsigned long long start_time;
 	int max_restart = MAX_SOFTIRQ_RESTART;
 	struct softirq_action *h;
 	bool in_hardirq;
@@ -261,9 +257,9 @@ asmlinkage __visible void __softirq_entry __do_softirq(void)
 	int softirq_bit;
 
 	/*
-	 * Mask out PF_MEMALLOC s current task context is borrowed for the
-	 * softirq. A softirq handled such as network RX might set PF_MEMALLOC
-	 * again if the socket is related to swap
+	 * Mask out PF_MEMALLOC as the current task context is borrowed for the
+	 * softirq. A softirq handled, such as network RX, might set PF_MEMALLOC
+	 * again if the socket is related to swapping.
 	 */
 	current->flags &= ~PF_MEMALLOC;
 
@@ -293,16 +289,7 @@ restart:
 		kstat_incr_softirqs_this_cpu(vec_nr);
 
 		trace_softirq_entry(vec_nr);
-		dbg_snapshot_irq_var(start_time);
-		dbg_snapshot_irq(DSS_FLAG_SOFTIRQ, h->action, NULL, 0, DSS_FLAG_IN);
-#ifdef CONFIG_SEC_DEBUG_LOCKUP_INFO
-		sl_softirq_entry(softirq_to_name[vec_nr], h->action);
 		h->action(h);
-		sl_softirq_exit();
-#else
-		h->action(h);
-#endif
-		dbg_snapshot_irq(DSS_FLAG_SOFTIRQ, h->action, NULL, start_time, DSS_FLAG_OUT);
 		trace_softirq_exit(vec_nr);
 		if (unlikely(prev_count != preempt_count())) {
 			pr_err("huh, entered softirq %u %s %p with preempt_count %08x, exited with %08x?\n",
@@ -314,7 +301,6 @@ restart:
 		pending >>= softirq_bit;
 	}
 
-	rcu_bh_qs();
 	if (__this_cpu_read(ksoftirqd) == current)
 		rcu_softirq_qs();
 	local_irq_disable();
@@ -517,7 +503,6 @@ static void tasklet_action_common(struct softirq_action *a,
 				  unsigned int softirq_nr)
 {
 	struct tasklet_struct *list;
-	unsigned long long start_time;
 
 	local_irq_disable();
 	list = tl_head->head;
@@ -535,24 +520,7 @@ static void tasklet_action_common(struct softirq_action *a,
 				if (!test_and_clear_bit(TASKLET_STATE_SCHED,
 							&t->state))
 					BUG();
-				dbg_snapshot_irq_var(start_time);
-				dbg_snapshot_irq(DSS_FLAG_SOFTIRQ_TASKLET,
-						t->func, NULL, 0, DSS_FLAG_IN);
-#ifdef CONFIG_SEC_DEBUG_LOCKUP_INFO
-				if(softirq_nr == TASKLET_SOFTIRQ) {
-					sl_softirq_entry(softirq_to_name[TASKLET_SOFTIRQ], t->func);
 				t->func(t->data);
-				sl_softirq_exit();
-				} else{
-					sl_softirq_entry(softirq_to_name[HI_SOFTIRQ], t->func);
-				t->func(t->data);
-				sl_softirq_exit();
-				}
-#else
-				t->func(t->data);
-#endif
-				dbg_snapshot_irq(DSS_FLAG_SOFTIRQ_TASKLET,
-						t->func, NULL, start_time, DSS_FLAG_OUT);
 				tasklet_unlock(t);
 				continue;
 			}

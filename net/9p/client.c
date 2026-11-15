@@ -181,12 +181,6 @@ static int parse_opts(char *opts, struct p9_client *clnt)
 				ret = r;
 				continue;
 			}
-			if (option < 4096) {
-				p9_debug(P9_DEBUG_ERROR,
-					 "msize should be at least 4k\n");
-				ret = -EINVAL;
-				continue;
-			}
 			clnt->msize = option;
 			break;
 		case Opt_trans:
@@ -250,8 +244,6 @@ static int p9_fcall_init(struct p9_client *c, struct p9_fcall *fc,
 	if (!fc->sdata)
 		return -ENOMEM;
 	fc->capacity = alloc_msize;
-	fc->id = 0;
-	fc->tag = P9_NOTAG;
 	return 0;
 }
 
@@ -298,7 +290,6 @@ p9_tag_alloc(struct p9_client *c, int8_t type, unsigned int max_size)
 
 	p9pdu_reset(&req->tc);
 	p9pdu_reset(&req->rc);
-	req->t_err = 0;
 	req->status = REQ_STATUS_ALLOC;
 	init_waitqueue_head(&req->wq);
 	INIT_LIST_HEAD(&req->req_list);
@@ -555,8 +546,6 @@ static int p9_check_errors(struct p9_client *c, struct p9_req_t *req)
 		kfree(ename);
 	} else {
 		err = p9pdu_readf(&req->rc, c->proto_version, "d", &ecode);
-		if (err)
-			goto out_err;
 		err = -ecode;
 
 		p9_debug(P9_DEBUG_9P, "<<< RLERROR (%d)\n", -ecode);
@@ -910,13 +899,16 @@ static struct p9_fid *p9_fid_create(struct p9_client *clnt)
 	struct p9_fid *fid;
 
 	p9_debug(P9_DEBUG_FID, "clnt %p\n", clnt);
-	fid = kzalloc(sizeof(struct p9_fid), GFP_KERNEL);
+	fid = kmalloc(sizeof(struct p9_fid), GFP_KERNEL);
 	if (!fid)
 		return NULL;
 
+	memset(&fid->qid, 0, sizeof(struct p9_qid));
 	fid->mode = -1;
 	fid->uid = current_fsuid();
 	fid->clnt = clnt;
+	fid->rdir = NULL;
+	fid->fid = 0;
 
 	idr_preload(GFP_KERNEL);
 	spin_lock_irq(&clnt->lock);
@@ -991,18 +983,10 @@ static int p9_client_version(struct p9_client *c)
 	else if (!strncmp(version, "9P2000", 6))
 		c->proto_version = p9_proto_legacy;
 	else {
-		p9_debug(P9_DEBUG_ERROR,
-			 "server returned an unknown version: %s\n", version);
 		err = -EREMOTEIO;
 		goto error;
 	}
 
-	if (msize < 4096) {
-		p9_debug(P9_DEBUG_ERROR,
-			 "server returned a msize < 4096: %d\n", msize);
-		err = -EREMOTEIO;
-		goto error;
-	}
 	if (msize < c->msize)
 		c->msize = msize;
 
@@ -1016,10 +1000,8 @@ error:
 struct p9_client *p9_client_create(const char *dev_name, char *options)
 {
 	int err;
-	static atomic_t seqno = ATOMIC_INIT(0);
 	struct p9_client *clnt;
 	char *client_id;
-	char *cache_name;
 
 	err = 0;
 	clnt = kmalloc(sizeof(struct p9_client), GFP_KERNEL);
@@ -1061,34 +1043,19 @@ struct p9_client *p9_client_create(const char *dev_name, char *options)
 	if (clnt->msize > clnt->trans_mod->maxsize)
 		clnt->msize = clnt->trans_mod->maxsize;
 
-	if (clnt->msize < 4096) {
-		p9_debug(P9_DEBUG_ERROR,
-			 "Please specify a msize of at least 4k\n");
-		err = -EINVAL;
-		goto close_trans;
-	}
-
 	err = p9_client_version(clnt);
 	if (err)
 		goto close_trans;
-
-	cache_name = kasprintf(GFP_KERNEL,
-		"9p-fcall-cache-%u", atomic_inc_return(&seqno));
-	if (!cache_name) {
-		err = -ENOMEM;
-		goto close_trans;
-	}
 
 	/* P9_HDRSZ + 4 is the smallest packet header we can have that is
 	 * followed by data accessed from userspace by read
 	 */
 	clnt->fcall_cache =
-		kmem_cache_create_usercopy(cache_name, clnt->msize,
+		kmem_cache_create_usercopy("9p-fcall-cache", clnt->msize,
 					   0, 0, P9_HDRSZ + 4,
 					   clnt->msize - (P9_HDRSZ + 4),
 					   NULL);
 
-	kfree(cache_name);
 	return clnt;
 
 close_trans:
@@ -2099,7 +2066,7 @@ int p9_client_readdir(struct p9_fid *fid, char *data, u32 count, u64 offset)
 	struct kvec kv = {.iov_base = data, .iov_len = count};
 	struct iov_iter to;
 
-	iov_iter_kvec(&to, READ | ITER_KVEC, &kv, 1, count);
+	iov_iter_kvec(&to, READ, &kv, 1, count);
 
 	p9_debug(P9_DEBUG_9P, ">>> TREADDIR fid %d offset %llu count %d\n",
 				fid->fid, (unsigned long long) offset, count);

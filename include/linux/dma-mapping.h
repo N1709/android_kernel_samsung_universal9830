@@ -11,7 +11,6 @@
 #include <linux/scatterlist.h>
 #include <linux/bug.h>
 #include <linux/mem_encrypt.h>
-#include <linux/android_kabi.h>
 
 /**
  * List of possible attributes associated with a DMA mapping. The semantics
@@ -70,58 +69,6 @@
  * at least read-only at lesser-privileged levels).
  */
 #define DMA_ATTR_PRIVILEGED		(1UL << 9)
-
-/*
- * DMA_ATTR_STRONGLY_ORDERED: Specifies that accesses to the mapping must
- * not be buffered, reordered, merged with other accesses, or unaligned.
- * No speculative access may occur in this mapping.
- */
-#define DMA_ATTR_STRONGLY_ORDERED	(1UL << 10)
-/*
- * DMA_ATTR_SKIP_ZEROING: Do not zero mapping.
- */
-#define DMA_ATTR_SKIP_ZEROING		(1UL << 11)
-/*
- * DMA_ATTR_NO_DELAYED_UNMAP: Used by msm specific lazy mapping to indicate
- * that the mapping can be freed on unmap, rather than when the ion_buffer
- * is freed.
- */
-#define DMA_ATTR_NO_DELAYED_UNMAP	(1UL << 12)
-/*
- * DMA_ATTR_EXEC_MAPPING: The mapping has executable permissions.
- */
-#define DMA_ATTR_EXEC_MAPPING		(1UL << 13)
-/*
- * DMA_ATTR_IOMMU_USE_UPSTREAM_HINT: Normally an smmu will override any bus
- * attributes (i.e cacheablilty) provided by the client device. Some hardware
- * may be designed to use the original attributes instead.
- */
-#define DMA_ATTR_IOMMU_USE_UPSTREAM_HINT	(1UL << 14)
-/*
- * When passed to a DMA map call the DMA_ATTR_FORCE_COHERENT DMA
- * attribute can be used to force a buffer to be mapped as IO coherent.
- */
-#define DMA_ATTR_FORCE_COHERENT			(1UL << 15)
-/*
- * When passed to a DMA map call the DMA_ATTR_FORCE_NON_COHERENT DMA
- * attribute can be used to force a buffer to not be mapped as IO
- * coherent.
- */
-#define DMA_ATTR_FORCE_NON_COHERENT		(1UL << 16)
-/*
- * DMA_ATTR_DELAYED_UNMAP: Used by ION, it will ensure that mappings are not
- * removed on unmap but instead are removed when the ion_buffer is freed.
- */
-#define DMA_ATTR_DELAYED_UNMAP		(1UL << 17)
-
-/*
- * DMA_ATTR_IOMMU_USE_LLC_NWA: Overrides the bus attributes to use the System
- * Cache(LLC) with allocation policy as Inner Non-Cacheable, Outer Cacheable:
- * Write-Back, Read-Allocate, No Write-Allocate policy.
- */
-#define DMA_ATTR_IOMMU_USE_LLC_NWA	(1UL << 18)
-
-#define DMA_ERROR_CODE       (~(dma_addr_t)0)
 
 /*
  * A dma_addr_t can hold any valid DMA or bus address for the platform.
@@ -183,23 +130,10 @@ struct dma_map_ops {
 			enum dma_data_direction direction);
 	int (*mapping_error)(struct device *dev, dma_addr_t dma_addr);
 	int (*dma_supported)(struct device *dev, u64 mask);
-	int (*set_dma_mask)(struct device *dev, u64 mask);
-	void *(*remap)(struct device *dev, void *cpu_addr, dma_addr_t handle,
-			size_t size, unsigned long attrs);
-	void (*unremap)(struct device *dev, void *remapped_address,
-			size_t size);
-#ifdef ARCH_HAS_DMA_GET_REQUIRED_MASK
 	u64 (*get_required_mask)(struct device *dev);
-#endif
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 };
 
 extern const struct dma_map_ops dma_direct_ops;
-extern const struct dma_map_ops dma_noncoherent_ops;
 extern const struct dma_map_ops dma_virt_ops;
 
 #define DMA_BIT_MASK(n)	(((n) == 64) ? ~0ULL : ((1ULL<<(n))-1))
@@ -295,6 +229,7 @@ static inline dma_addr_t dma_map_single_attrs(struct device *dev, void *ptr,
 	dma_addr_t addr;
 
 	BUG_ON(!valid_dma_direction(dir));
+	debug_dma_map_single(dev, ptr, size);
 	addr = ops->map_page(dev, virt_to_page(ptr),
 			     offset_in_page(ptr), size,
 			     dir, attrs);
@@ -489,86 +424,6 @@ dma_sync_sg_for_device(struct device *dev, struct scatterlist *sg,
 
 }
 
-/**
- * dma_map_sgtable - Map the given buffer for DMA
- * @dev:	The device for which to perform the DMA operation
- * @sgt:	The sg_table object describing the buffer
- * @dir:	DMA direction
- * @attrs:	Optional DMA attributes for the map operation
- *
- * Maps a buffer described by a scatterlist stored in the given sg_table
- * object for the @dir DMA operation by the @dev device. After success the
- * ownership for the buffer is transferred to the DMA domain.  One has to
- * call dma_sync_sgtable_for_cpu() or dma_unmap_sgtable() to move the
- * ownership of the buffer back to the CPU domain before touching the
- * buffer by the CPU.
- *
- * Returns 0 on success or -EINVAL on error during mapping the buffer.
- */
-static inline int dma_map_sgtable(struct device *dev, struct sg_table *sgt,
-		enum dma_data_direction dir, unsigned long attrs)
-{
-	int nents;
-
-	nents = dma_map_sg_attrs(dev, sgt->sgl, sgt->orig_nents, dir, attrs);
-	if (nents <= 0)
-		return -EINVAL;
-	sgt->nents = nents;
-	return 0;
-}
-
-/**
- * dma_unmap_sgtable - Unmap the given buffer for DMA
- * @dev:	The device for which to perform the DMA operation
- * @sgt:	The sg_table object describing the buffer
- * @dir:	DMA direction
- * @attrs:	Optional DMA attributes for the unmap operation
- *
- * Unmaps a buffer described by a scatterlist stored in the given sg_table
- * object for the @dir DMA operation by the @dev device. After this function
- * the ownership of the buffer is transferred back to the CPU domain.
- */
-static inline void dma_unmap_sgtable(struct device *dev, struct sg_table *sgt,
-		enum dma_data_direction dir, unsigned long attrs)
-{
-	dma_unmap_sg_attrs(dev, sgt->sgl, sgt->orig_nents, dir, attrs);
-}
-
-/**
- * dma_sync_sgtable_for_cpu - Synchronize the given buffer for CPU access
- * @dev:	The device for which to perform the DMA operation
- * @sgt:	The sg_table object describing the buffer
- * @dir:	DMA direction
- *
- * Performs the needed cache synchronization and moves the ownership of the
- * buffer back to the CPU domain, so it is safe to perform any access to it
- * by the CPU. Before doing any further DMA operations, one has to transfer
- * the ownership of the buffer back to the DMA domain by calling the
- * dma_sync_sgtable_for_device().
- */
-static inline void dma_sync_sgtable_for_cpu(struct device *dev,
-		struct sg_table *sgt, enum dma_data_direction dir)
-{
-	dma_sync_sg_for_cpu(dev, sgt->sgl, sgt->orig_nents, dir);
-}
-
-/**
- * dma_sync_sgtable_for_device - Synchronize the given buffer for DMA
- * @dev:	The device for which to perform the DMA operation
- * @sgt:	The sg_table object describing the buffer
- * @dir:	DMA direction
- *
- * Performs the needed cache synchronization and moves the ownership of the
- * buffer back to the DMA domain, so it is safe to perform the DMA operation.
- * Once finished, one has to call dma_sync_sgtable_for_cpu() or
- * dma_unmap_sgtable().
- */
-static inline void dma_sync_sgtable_for_device(struct device *dev,
-		struct sg_table *sgt, enum dma_data_direction dir)
-{
-	dma_sync_sg_for_device(dev, sgt->sgl, sgt->orig_nents, dir);
-}
-
 #define dma_map_single(d, a, s, r) dma_map_single_attrs(d, a, s, r, 0)
 #define dma_unmap_single(d, a, s, r) dma_unmap_single_attrs(d, a, s, r, 0)
 #define dma_map_sg(d, s, n, r) dma_map_sg_attrs(d, s, n, r, 0)
@@ -588,7 +443,8 @@ dma_cache_sync(struct device *dev, void *vaddr, size_t size,
 }
 
 extern int dma_common_mmap(struct device *dev, struct vm_area_struct *vma,
-			   void *cpu_addr, dma_addr_t dma_addr, size_t size);
+		void *cpu_addr, dma_addr_t dma_addr, size_t size,
+		unsigned long attrs);
 
 void *dma_common_contiguous_remap(struct page *page, size_t size,
 			unsigned long vm_flags,
@@ -597,8 +453,7 @@ void *dma_common_contiguous_remap(struct page *page, size_t size,
 void *dma_common_pages_remap(struct page **pages, size_t size,
 			unsigned long vm_flags, pgprot_t prot,
 			const void *caller);
-void dma_common_free_remap(void *cpu_addr, size_t size, unsigned long vm_flags,
-			   bool nowarn);
+void dma_common_free_remap(void *cpu_addr, size_t size, unsigned long vm_flags);
 
 /**
  * dma_mmap_attrs - map a coherent DMA allocation into user space
@@ -621,14 +476,14 @@ dma_mmap_attrs(struct device *dev, struct vm_area_struct *vma, void *cpu_addr,
 	BUG_ON(!ops);
 	if (ops->mmap)
 		return ops->mmap(dev, vma, cpu_addr, dma_addr, size, attrs);
-	return dma_common_mmap(dev, vma, cpu_addr, dma_addr, size);
+	return dma_common_mmap(dev, vma, cpu_addr, dma_addr, size, attrs);
 }
 
 #define dma_mmap_coherent(d, v, c, h, s) dma_mmap_attrs(d, v, c, h, s, 0)
 
 int
-dma_common_get_sgtable(struct device *dev, struct sg_table *sgt,
-		       void *cpu_addr, dma_addr_t dma_addr, size_t size);
+dma_common_get_sgtable(struct device *dev, struct sg_table *sgt, void *cpu_addr,
+		dma_addr_t dma_addr, size_t size, unsigned long attrs);
 
 static inline int
 dma_get_sgtable_attrs(struct device *dev, struct sg_table *sgt, void *cpu_addr,
@@ -640,7 +495,8 @@ dma_get_sgtable_attrs(struct device *dev, struct sg_table *sgt, void *cpu_addr,
 	if (ops->get_sgtable)
 		return ops->get_sgtable(dev, sgt, cpu_addr, dma_addr, size,
 					attrs);
-	return dma_common_get_sgtable(dev, sgt, cpu_addr, dma_addr, size);
+	return dma_common_get_sgtable(dev, sgt, cpu_addr, dma_addr, size,
+			attrs);
 }
 
 #define dma_get_sgtable(d, t, v, h, s) dma_get_sgtable_attrs(d, t, v, h, s, 0)
@@ -702,9 +558,11 @@ static inline void dma_free_attrs(struct device *dev, size_t size,
 }
 
 static inline void *dma_alloc_coherent(struct device *dev, size_t size,
-		dma_addr_t *dma_handle, gfp_t flag)
+		dma_addr_t *dma_handle, gfp_t gfp)
 {
-	return dma_alloc_attrs(dev, size, dma_handle, flag, 0);
+
+	return dma_alloc_attrs(dev, size, dma_handle, gfp,
+			(gfp & __GFP_NOWARN) ? DMA_ATTR_NO_WARN : 0);
 }
 
 static inline void dma_free_coherent(struct device *dev, size_t size,
@@ -743,11 +601,6 @@ static inline int dma_supported(struct device *dev, u64 mask)
 #ifndef HAVE_ARCH_DMA_SET_MASK
 static inline int dma_set_mask(struct device *dev, u64 mask)
 {
-	const struct dma_map_ops *ops = get_dma_ops(dev);
-
-	if (ops->set_dma_mask)
-		return ops->set_dma_mask(dev, mask);
-
 	if (!dev->dma_mask || !dma_supported(dev, mask))
 		return -EIO;
 
@@ -757,35 +610,6 @@ static inline int dma_set_mask(struct device *dev, u64 mask)
 	return 0;
 }
 #endif
-static inline void *dma_remap(struct device *dev, void *cpu_addr,
-		dma_addr_t dma_handle, size_t size, unsigned long attrs)
-{
-	const struct dma_map_ops *ops = get_dma_ops(dev);
-
-	if (!ops->remap) {
-		WARN_ONCE(1, "Remap function not implemented for %pS\n",
-				ops->remap);
-		return NULL;
-	}
-
-	return ops->remap(dev, cpu_addr, dma_handle, size, attrs);
-}
-
-
-static inline void dma_unremap(struct device *dev, void *remapped_addr,
-				size_t size)
-{
-	const struct dma_map_ops *ops = get_dma_ops(dev);
-
-	if (!ops->unremap) {
-		WARN_ONCE(1, "unremap function not implemented for %pS\n",
-				ops->unremap);
-		return;
-	}
-
-	return ops->unremap(dev, remapped_addr, size);
-}
-
 
 static inline u64 dma_get_mask(struct device *dev)
 {
@@ -852,7 +676,8 @@ static inline unsigned int dma_get_max_seg_size(struct device *dev)
 	return SZ_64K;
 }
 
-static inline int dma_set_max_seg_size(struct device *dev, unsigned int size)
+static inline unsigned int dma_set_max_seg_size(struct device *dev,
+						unsigned int size)
 {
 	if (dev->dma_parms) {
 		dev->dma_parms->max_segment_size = size;
@@ -909,10 +734,6 @@ int dma_declare_coherent_memory(struct device *dev, phys_addr_t phys_addr,
 void dma_release_declared_memory(struct device *dev);
 void *dma_mark_declared_memory_occupied(struct device *dev,
 					dma_addr_t device_addr, size_t size);
-dma_addr_t dma_get_device_base(struct device *dev,
-			       struct dma_coherent_mem *mem);
-unsigned long dma_get_size(struct dma_coherent_mem *mem);
-
 #else
 static inline int
 dma_declare_coherent_memory(struct device *dev, phys_addr_t phys_addr,
@@ -932,30 +753,7 @@ dma_mark_declared_memory_occupied(struct device *dev,
 {
 	return ERR_PTR(-EBUSY);
 }
-static inline dma_addr_t
-dma_get_device_base(struct device *dev, struct dma_coherent_mem *mem)
-{
-	return 0;
-}
-
-static inline unsigned long dma_get_size(struct dma_coherent_mem *mem)
-{
-	return 0;
-}
-
 #endif /* CONFIG_HAVE_GENERIC_DMA_COHERENT */
-
-#ifdef CONFIG_HAS_DMA
-int dma_configure(struct device *dev);
-void dma_deconfigure(struct device *dev);
-#else
-static inline int dma_configure(struct device *dev)
-{
-	return 0;
-}
-
-static inline void dma_deconfigure(struct device *dev) {}
-#endif
 
 /*
  * Managed DMA API
@@ -998,8 +796,12 @@ static inline void dmam_release_declared_memory(struct device *dev)
 static inline void *dma_alloc_wc(struct device *dev, size_t size,
 				 dma_addr_t *dma_addr, gfp_t gfp)
 {
-	return dma_alloc_attrs(dev, size, dma_addr, gfp,
-			       DMA_ATTR_WRITE_COMBINE);
+	unsigned long attrs = DMA_ATTR_WRITE_COMBINE;
+
+	if (gfp & __GFP_NOWARN)
+		attrs |= DMA_ATTR_NO_WARN;
+
+	return dma_alloc_attrs(dev, size, dma_addr, gfp, attrs);
 }
 #ifndef dma_alloc_writecombine
 #define dma_alloc_writecombine dma_alloc_wc
@@ -1037,14 +839,10 @@ static inline int dma_mmap_wc(struct device *dev,
 #else
 #define DEFINE_DMA_UNMAP_ADDR(ADDR_NAME)
 #define DEFINE_DMA_UNMAP_LEN(LEN_NAME)
-#define dma_unmap_addr(PTR, ADDR_NAME)           \
-	({ typeof(PTR) __p __maybe_unused = PTR; 0; })
-#define dma_unmap_addr_set(PTR, ADDR_NAME, VAL)  \
-	do { typeof(PTR) __p __maybe_unused = PTR; } while (0)
-#define dma_unmap_len(PTR, LEN_NAME)             \
-	({ typeof(PTR) __p __maybe_unused = PTR; 0; })
-#define dma_unmap_len_set(PTR, LEN_NAME, VAL)    \
-	do { typeof(PTR) __p __maybe_unused = PTR; } while (0)
+#define dma_unmap_addr(PTR, ADDR_NAME)           (0)
+#define dma_unmap_addr_set(PTR, ADDR_NAME, VAL)  do { } while (0)
+#define dma_unmap_len(PTR, LEN_NAME)             (0)
+#define dma_unmap_len_set(PTR, LEN_NAME, VAL)    do { } while (0)
 #endif
 
 #endif

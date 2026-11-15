@@ -416,8 +416,8 @@ static int wil_debugfs_iomem_x32_get(void *data, u64 *val)
 	return 0;
 }
 
-DEFINE_SIMPLE_ATTRIBUTE(fops_iomem_x32, wil_debugfs_iomem_x32_get,
-			wil_debugfs_iomem_x32_set, "0x%08llx\n");
+DEFINE_DEBUGFS_ATTRIBUTE(fops_iomem_x32, wil_debugfs_iomem_x32_get,
+			 wil_debugfs_iomem_x32_set, "0x%08llx\n");
 
 static struct dentry *wil_debugfs_create_iomem_x32(const char *name,
 						   umode_t mode,
@@ -432,7 +432,8 @@ static struct dentry *wil_debugfs_create_iomem_x32(const char *name,
 	data->wil = wil;
 	data->offset = value;
 
-	file = debugfs_create_file(name, mode, parent, data, &fops_iomem_x32);
+	file = debugfs_create_file_unsafe(name, mode, parent, data,
+					  &fops_iomem_x32);
 	if (!IS_ERR_OR_NULL(file))
 		wil->dbg_data.iomem_data_count++;
 
@@ -451,14 +452,15 @@ static int wil_debugfs_ulong_get(void *data, u64 *val)
 	return 0;
 }
 
-DEFINE_SIMPLE_ATTRIBUTE(wil_fops_ulong, wil_debugfs_ulong_get,
-			wil_debugfs_ulong_set, "0x%llx\n");
+DEFINE_DEBUGFS_ATTRIBUTE(wil_fops_ulong, wil_debugfs_ulong_get,
+			 wil_debugfs_ulong_set, "0x%llx\n");
 
 static struct dentry *wil_debugfs_create_ulong(const char *name, umode_t mode,
 					       struct dentry *parent,
 					       ulong *value)
 {
-	return debugfs_create_file(name, mode, parent, value, &wil_fops_ulong);
+	return debugfs_create_file_unsafe(name, mode, parent, value,
+					  &wil_fops_ulong);
 }
 
 /**
@@ -1414,7 +1416,7 @@ static int wil_freq_debugfs_show(struct seq_file *s, void *data)
 {
 	struct wil6210_priv *wil = s->private;
 	struct wireless_dev *wdev = wil->main_ndev->ieee80211_ptr;
-	u16 freq = wdev->chandef.chan ? wdev->chandef.chan->center_freq : 0;
+	u32 freq = wdev->chandef.chan ? wdev->chandef.chan->center_freq : 0;
 
 	seq_printf(s, "Freq = %d\n", freq);
 
@@ -1673,6 +1675,7 @@ __acquires(&p->tid_rx_lock) __releases(&p->tid_rx_lock)
 		char *status = "unknown";
 		u8 aid = 0;
 		u8 mid;
+		bool sta_connected = false;
 
 		switch (p->status) {
 		case wil_sta_unused:
@@ -1687,8 +1690,20 @@ __acquires(&p->tid_rx_lock) __releases(&p->tid_rx_lock)
 			break;
 		}
 		mid = (p->status != wil_sta_unused) ? p->mid : U8_MAX;
-		seq_printf(s, "[%d] %pM %s MID %d AID %d\n", i, p->addr, status,
-			   mid, aid);
+		if (mid < wil->max_vifs) {
+			struct wil6210_vif *vif = wil->vifs[mid];
+
+			if (vif->wdev.iftype == NL80211_IFTYPE_STATION &&
+			    p->status == wil_sta_connected)
+				sta_connected = true;
+		}
+		/* print roam counter only for connected stations */
+		if (sta_connected)
+			seq_printf(s, "[%d] %pM connected (roam counter %d) MID %d AID %d\n",
+				   i, p->addr, p->stats.ft_roams, mid, aid);
+		else
+			seq_printf(s, "[%d] %pM %s MID %d AID %d\n", i,
+				   p->addr, status, mid, aid);
 
 		if (p->status == wil_sta_connected) {
 			spin_lock_bh(&p->tid_rx_lock);

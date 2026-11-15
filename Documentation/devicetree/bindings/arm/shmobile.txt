@@ -7,6 +7,8 @@ SoCs:
     compatible = "renesas,emev2"
   - RZ/A1H (R7S72100)
     compatible = "renesas,r7s72100"
+  - RZ/A2 (R7S9210)
+    compatible = "renesas,r7s9210"
   - SH-Mobile AG5 (R8A73A00/SH73A0)
     compatible = "renesas,sh73a0"
   - R-Mobile APE6 (R8A73A40)
@@ -25,12 +27,8 @@ SoCs:
     compatible = "renesas,r8a77470"
   - RZ/G2M (R8A774A1)
     compatible = "renesas,r8a774a1"
-  - RZ/G2N (R8A774B1)
-    compatible = "renesas,r8a774b1"
   - RZ/G2E (R8A774C0)
     compatible = "renesas,r8a774c0"
-  - RZ/G2H (R8A774E1)
-    compatible = "renesas,r8a774e1"
   - R-Car M1A (R8A77781)
     compatible = "renesas,r8a7778"
   - R-Car H1 (R8A77790)
@@ -93,17 +91,6 @@ Boards:
     compatible = "renesas,h3ulcb", "renesas,r8a7795"
   - Henninger
     compatible = "renesas,henninger", "renesas,r8a7791"
-  - HopeRun expansion board for HiHope RZ/G2 platforms
-    compatible = "hoperun,hihope-rzg2h", "renesas,r8a774e1",
-                 "hoperun,hihope-rzg2m", "renesas,r8a774a1",
-                 "hoperun,hihope-rzg2n", "renesas,r8a774b1",
-                 "hoperun,hihope-rzg2-ex"
-  - HopeRun HiHope RZ/G2H platform
-    compatible = "hoperun,hihope-rzg2h", "renesas,r8a774e1"
-  - HopeRun HiHope RZ/G2M platform
-    compatible = "hoperun,hihope-rzg2m", "renesas,r8a774a1"
-  - HopeRun HiHope RZ/G2N platform
-    compatible = "hoperun,hihope-rzg2n", "renesas,r8a774b1"
   - iWave Systems RZ/G1C Single Board Computer (iW-RainboW-G23S)
     compatible = "iwave,g23s", "renesas,r8a77470"
   - iWave Systems RZ/G1E SODIMM SOM Development Platform (iW-RainboW-G22D)
@@ -126,6 +113,8 @@ Boards:
     compatible = "renesas,lager", "renesas,r8a7790"
   - M3ULCB (R-Car Starter Kit Pro, RTP0RC7796SKBX0010SA09 (M3 ES1.0))
     compatible = "renesas,m3ulcb", "renesas,r8a7796"
+  - M3NULCB (R-Car Starter Kit Pro, RTP0RC77965SKBX010SA00 (M3-N ES1.1))
+    compatible = "renesas,m3nulcb", "renesas,r8a77965"
   - Marzen (R0P7779A00010S)
     compatible = "renesas,marzen", "renesas,r8a7779"
   - Porter (M2-LCDP)
@@ -146,10 +135,6 @@ Boards:
     compatible = "renesas,salvator-xs", "renesas,r8a7796"
   - Salvator-XS (Salvator-X 2nd version, RTP0RC77965SIPB012S)
     compatible = "renesas,salvator-xs", "renesas,r8a77965"
-  - Silicon Linux RZ/G2E 96board platform (CAT874)
-    compatible = "si-linux,cat874", "renesas,r8a774c0"
-  - Silicon Linux sub board for CAT874 (CAT875)
-    compatible = "si-linux,cat875", "si-linux,cat874", "renesas,r8a774c0"
   - SILK (RTP0RC7794LCB00011S)
     compatible = "renesas,silk", "renesas,r8a7794"
   - SK-RZG1E (YR8A77450S000BE)
@@ -166,12 +151,12 @@ Boards:
     compatible = "renesas,wheat", "renesas,r8a7792"
 
 
-Most Renesas ARM SoCs have a Product Register that allows to retrieve SoC
-product and revision information.  If present, a device node for this register
-should be added.
+Most Renesas ARM SoCs have a Product Register or Boundary Scan ID Register that
+allows to retrieve SoC product and revision information.  If present, a device
+node for this register should be added.
 
 Required properties:
-  - compatible: Must be "renesas,prr".
+  - compatible: Must be "renesas,prr" or "renesas,bsid"
   - reg: Base address and length of the register block.
 
 

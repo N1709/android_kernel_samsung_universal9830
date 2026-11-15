@@ -7,11 +7,14 @@
  *          Mika Westerberg <mika.westerberg@linux.intel.com>
  */
 
+#include <linux/acpi.h>
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/gpio/driver.h>
 #include <linux/log2.h>
 #include <linux/platform_device.h>
+#include <linux/property.h>
+
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/pinctrl/pinmux.h>
 #include <linux/pinctrl/pinconf.h>
@@ -49,7 +52,6 @@
 #define PADCFG0_GPIROUTNMI		BIT(17)
 #define PADCFG0_PMODE_SHIFT		10
 #define PADCFG0_PMODE_MASK		(0xf << PADCFG0_PMODE_SHIFT)
-#define PADCFG0_PMODE_GPIO		0
 #define PADCFG0_GPIORXDIS		BIT(9)
 #define PADCFG0_GPIOTXDIS		BIT(8)
 #define PADCFG0_GPIORXSTATE		BIT(1)
@@ -302,7 +304,7 @@ static void intel_pin_dbg_show(struct pinctrl_dev *pctldev, struct seq_file *s,
 	cfg1 = readl(intel_get_padcfg(pctrl, pin, PADCFG1));
 
 	mode = (cfg0 & PADCFG0_PMODE_MASK) >> PADCFG0_PMODE_SHIFT;
-	if (mode == PADCFG0_PMODE_GPIO)
+	if (!mode)
 		seq_puts(s, "GPIO ");
 	else
 		seq_printf(s, "mode %d ", mode);
@@ -423,16 +425,6 @@ static void __intel_gpio_set_direction(void __iomem *padcfg0, bool input)
 	writel(value, padcfg0);
 }
 
-static int __intel_gpio_get_gpio_mode(u32 value)
-{
-	return (value & PADCFG0_PMODE_MASK) >> PADCFG0_PMODE_SHIFT;
-}
-
-static int intel_gpio_get_gpio_mode(void __iomem *padcfg0)
-{
-	return __intel_gpio_get_gpio_mode(readl(padcfg0));
-}
-
 static void intel_gpio_set_gpio_mode(void __iomem *padcfg0)
 {
 	u32 value;
@@ -461,20 +453,7 @@ static int intel_gpio_request_enable(struct pinctrl_dev *pctldev,
 	}
 
 	padcfg0 = intel_get_padcfg(pctrl, pin, PADCFG0);
-
-	/*
-	 * If pin is already configured in GPIO mode, we assume that
-	 * firmware provides correct settings. In such case we avoid
-	 * potential glitches on the pin. Otherwise, for the pin in
-	 * alternative mode, consumer has to supply respective flags.
-	 */
-	if (intel_gpio_get_gpio_mode(padcfg0) == PADCFG0_PMODE_GPIO) {
-		raw_spin_unlock_irqrestore(&pctrl->lock, flags);
-		return 0;
-	}
-
 	intel_gpio_set_gpio_mode(padcfg0);
-
 	/* Disable TX buffer and enable RX (this will be input) */
 	__intel_gpio_set_direction(padcfg0, true);
 
@@ -626,10 +605,6 @@ static int intel_config_set_pull(struct intel_pinctrl *pctrl, unsigned int pin,
 
 		value |= PADCFG1_TERM_UP;
 
-		/* Set default strength value in case none is given */
-		if (arg == 1)
-			arg = 5000;
-
 		switch (arg) {
 		case 20000:
 			value |= PADCFG1_TERM_20K << PADCFG1_TERM_SHIFT;
@@ -651,10 +626,6 @@ static int intel_config_set_pull(struct intel_pinctrl *pctrl, unsigned int pin,
 
 	case PIN_CONFIG_BIAS_PULL_DOWN:
 		value &= ~(PADCFG1_TERM_UP | PADCFG1_TERM_MASK);
-
-		/* Set default strength value in case none is given */
-		if (arg == 1)
-			arg = 5000;
 
 		switch (arg) {
 		case 20000:
@@ -783,7 +754,7 @@ static const struct pinctrl_desc intel_pinctrl_desc = {
  * intel_gpio_to_pin() - Translate from GPIO offset to pin number
  * @pctrl: Pinctrl structure
  * @offset: GPIO offset from gpiolib
- * @commmunity: Community is filled here if not %NULL
+ * @community: Community is filled here if not %NULL
  * @padgrp: Pad group is filled here if not %NULL
  *
  * When coming through gpiolib irqchip, the GPIO offset is not
@@ -1431,17 +1402,54 @@ int intel_pinctrl_probe(struct platform_device *pdev,
 }
 EXPORT_SYMBOL_GPL(intel_pinctrl_probe);
 
-#ifdef CONFIG_PM_SLEEP
-static bool __intel_gpio_is_direct_irq(u32 value)
+int intel_pinctrl_probe_by_hid(struct platform_device *pdev)
 {
-	return (value & PADCFG0_GPIROUTIOXAPIC) && (value & PADCFG0_GPIOTXDIS) &&
-	       (__intel_gpio_get_gpio_mode(value) == PADCFG0_PMODE_GPIO);
-}
+	const struct intel_pinctrl_soc_data *data;
 
+	data = device_get_match_data(&pdev->dev);
+	return intel_pinctrl_probe(pdev, data);
+}
+EXPORT_SYMBOL_GPL(intel_pinctrl_probe_by_hid);
+
+int intel_pinctrl_probe_by_uid(struct platform_device *pdev)
+{
+	const struct intel_pinctrl_soc_data *data = NULL;
+	const struct intel_pinctrl_soc_data **table;
+	struct acpi_device *adev;
+	unsigned int i;
+
+	adev = ACPI_COMPANION(&pdev->dev);
+	if (adev) {
+		const void *match = device_get_match_data(&pdev->dev);
+
+		table = (const struct intel_pinctrl_soc_data **)match;
+		for (i = 0; table[i]; i++) {
+			if (!strcmp(adev->pnp.unique_id, table[i]->uid)) {
+				data = table[i];
+				break;
+			}
+		}
+	} else {
+		const struct platform_device_id *id;
+
+		id = platform_get_device_id(pdev);
+		if (!id)
+			return -ENODEV;
+
+		table = (const struct intel_pinctrl_soc_data **)id->driver_data;
+		data = table[pdev->id];
+	}
+	if (!data)
+		return -ENODEV;
+
+	return intel_pinctrl_probe(pdev, data);
+}
+EXPORT_SYMBOL_GPL(intel_pinctrl_probe_by_uid);
+
+#ifdef CONFIG_PM_SLEEP
 static bool intel_pinctrl_should_save(struct intel_pinctrl *pctrl, unsigned int pin)
 {
 	const struct pin_desc *pd = pin_desc_get(pctrl->pctldev, pin);
-	u32 value;
 
 	if (!pd || !intel_pad_usable(pctrl, pin))
 		return false;
@@ -1454,24 +1462,6 @@ static bool intel_pinctrl_should_save(struct intel_pinctrl *pctrl, unsigned int 
 	 */
 	if (pd->mux_owner || pd->gpio_owner ||
 	    gpiochip_line_is_irq(&pctrl->chip, pin))
-		return true;
-
-	/*
-	 * The firmware on some systems may configure GPIO pins to be
-	 * an interrupt source in so called "direct IRQ" mode. In such
-	 * cases the GPIO controller driver has no idea if those pins
-	 * are being used or not. At the same time, there is a known bug
-	 * in the firmwares that don't restore the pin settings correctly
-	 * after suspend, i.e. by an unknown reason the Rx value becomes
-	 * inverted.
-	 *
-	 * Hence, let's save and restore the pins that are configured
-	 * as GPIOs in the input mode with GPIROUTIOXAPIC bit set.
-	 *
-	 * See https://bugzilla.kernel.org/show_bug.cgi?id=214749.
-	 */
-	value = readl(intel_get_padcfg(pctrl, pin, PADCFG0));
-	if (__intel_gpio_is_direct_irq(value))
 		return true;
 
 	return false;
@@ -1556,12 +1546,7 @@ int intel_pinctrl_resume(struct device *dev)
 		void __iomem *padcfg;
 		u32 val;
 
-		if (!(intel_pinctrl_should_save(pctrl, desc->number) ||
-		      /*
-		       * If the firmware mangled the register contents too much,
-		       * check the saved value for the Direct IRQ mode.
-		       */
-		      __intel_gpio_is_direct_irq(pads[i].padcfg0)))
+		if (!intel_pinctrl_should_save(pctrl, desc->number))
 			continue;
 
 		padcfg = intel_get_padcfg(pctrl, desc->number, PADCFG0);

@@ -1,20 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Thunderbolt Cactus Ridge driver - switch/port utility functions
+ * Thunderbolt driver - switch/port utility functions
  *
  * Copyright (c) 2014 Andreas Noever <andreas.noever@gmail.com>
+ * Copyright (C) 2018, Intel Corporation
  */
 
 #include <linux/delay.h>
 #include <linux/idr.h>
 #include <linux/nvmem-provider.h>
 #include <linux/pm_runtime.h>
-#include <linux/sched/signal.h>
 #include <linux/sizes.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 
 #include "tb.h"
+
+/* Switch authorization from userspace is serialized by this lock */
+static DEFINE_MUTEX(switch_lock);
 
 /* Switch NVM support */
 
@@ -167,7 +170,7 @@ static int nvm_validate_and_write(struct tb_switch *sw)
 
 static int nvm_authenticate_host(struct tb_switch *sw)
 {
-	int ret = 0;
+	int ret;
 
 	/*
 	 * Root switch NVM upgrade requires that we disconnect the
@@ -175,8 +178,6 @@ static int nvm_authenticate_host(struct tb_switch *sw)
 	 * already).
 	 */
 	if (!sw->safe_mode) {
-		u32 status;
-
 		ret = tb_domain_disconnect_all_paths(sw->tb);
 		if (ret)
 			return ret;
@@ -185,16 +186,7 @@ static int nvm_authenticate_host(struct tb_switch *sw)
 		 * everything goes well so getting timeout is expected.
 		 */
 		ret = dma_port_flash_update_auth(sw->dma_port);
-		if (!ret || ret == -ETIMEDOUT)
-			return 0;
-
-		/*
-		 * Any error from update auth operation requires power
-		 * cycling of the host router.
-		 */
-		tb_sw_warn(sw, "failed to authenticate NVM, power cycling\n");
-		if (dma_port_flash_update_auth_status(sw->dma_port, &status) > 0)
-			nvm_set_auth_status(sw, status);
+		return ret == -ETIMEDOUT ? 0 : ret;
 	}
 
 	/*
@@ -202,7 +194,7 @@ static int nvm_authenticate_host(struct tb_switch *sw)
 	 * switch.
 	 */
 	dma_port_power_cycle(sw->dma_port);
-	return ret;
+	return 0;
 }
 
 static int nvm_authenticate_device(struct tb_switch *sw)
@@ -210,16 +202,8 @@ static int nvm_authenticate_device(struct tb_switch *sw)
 	int ret, retries = 10;
 
 	ret = dma_port_flash_update_auth(sw->dma_port);
-	switch (ret) {
-	case 0:
-	case -ETIMEDOUT:
-	case -EACCES:
-	case -EINVAL:
-		/* Power cycle is required */
-		break;
-	default:
+	if (ret && ret != -ETIMEDOUT)
 		return ret;
-	}
 
 	/*
 	 * Poll here for the authentication status. It takes some time
@@ -264,20 +248,14 @@ static int tb_switch_nvm_read(void *priv, unsigned int offset, void *val,
 	return ret;
 }
 
-static int tb_switch_nvm_no_read(void *priv, unsigned int offset, void *val,
-				 size_t bytes)
-{
-	return -EPERM;
-}
-
 static int tb_switch_nvm_write(void *priv, unsigned int offset, void *val,
 			       size_t bytes)
 {
 	struct tb_switch *sw = priv;
 	int ret = 0;
 
-	if (!mutex_trylock(&sw->tb->lock))
-		return restart_syscall();
+	if (mutex_lock_interruptible(&switch_lock))
+		return -ERESTARTSYS;
 
 	/*
 	 * Since writing the NVM image might require some special steps,
@@ -297,7 +275,7 @@ static int tb_switch_nvm_write(void *priv, unsigned int offset, void *val,
 	memcpy(sw->nvm->buf + offset, val, bytes);
 
 unlock:
-	mutex_unlock(&sw->tb->lock);
+	mutex_unlock(&switch_lock);
 
 	return ret;
 }
@@ -315,7 +293,6 @@ static struct nvmem_device *register_nvmem(struct tb_switch *sw, int id,
 		config.read_only = true;
 	} else {
 		config.name = "nvm_non_active";
-		config.reg_read = tb_switch_nvm_no_read;
 		config.reg_write = tb_switch_nvm_write;
 		config.root_only = true;
 	}
@@ -387,7 +364,10 @@ static int tb_switch_nvm_add(struct tb_switch *sw)
 	}
 	nvm->non_active = nvm_dev;
 
+	mutex_lock(&switch_lock);
 	sw->nvm = nvm;
+	mutex_unlock(&switch_lock);
+
 	return 0;
 
 err_nvm_active:
@@ -404,8 +384,10 @@ static void tb_switch_nvm_remove(struct tb_switch *sw)
 {
 	struct tb_switch_nvm *nvm;
 
+	mutex_lock(&switch_lock);
 	nvm = sw->nvm;
 	sw->nvm = NULL;
+	mutex_unlock(&switch_lock);
 
 	if (!nvm)
 		return;
@@ -455,15 +437,15 @@ static const char *tb_port_type(struct tb_regs_port_header *port)
 
 static void tb_dump_port(struct tb *tb, struct tb_regs_port_header *port)
 {
-	tb_info(tb,
-		" Port %d: %x:%x (Revision: %d, TB Version: %d, Type: %s (%#x))\n",
-		port->port_number, port->vendor_id, port->device_id,
-		port->revision, port->thunderbolt_version, tb_port_type(port),
-		port->type);
-	tb_info(tb, "  Max hop id (in/out): %d/%d\n",
-		port->max_in_hop_id, port->max_out_hop_id);
-	tb_info(tb, "  Max counters: %d\n", port->max_counters);
-	tb_info(tb, "  NFC Credits: %#x\n", port->nfc_credits);
+	tb_dbg(tb,
+	       " Port %d: %x:%x (Revision: %d, TB Version: %d, Type: %s (%#x))\n",
+	       port->port_number, port->vendor_id, port->device_id,
+	       port->revision, port->thunderbolt_version, tb_port_type(port),
+	       port->type);
+	tb_dbg(tb, "  Max hop id (in/out): %d/%d\n",
+	       port->max_in_hop_id, port->max_out_hop_id);
+	tb_dbg(tb, "  Max counters: %d\n", port->max_counters);
+	tb_dbg(tb, "  NFC Credits: %#x\n", port->nfc_credits);
 }
 
 /**
@@ -624,20 +606,18 @@ static int tb_init_port(struct tb_port *port)
 
 static void tb_dump_switch(struct tb *tb, struct tb_regs_switch_header *sw)
 {
-	tb_info(tb,
-		" Switch: %x:%x (Revision: %d, TB Version: %d)\n",
-		sw->vendor_id, sw->device_id, sw->revision,
-		sw->thunderbolt_version);
-	tb_info(tb, "  Max Port Number: %d\n", sw->max_port_number);
-	tb_info(tb, "  Config:\n");
-	tb_info(tb,
+	tb_dbg(tb, " Switch: %x:%x (Revision: %d, TB Version: %d)\n",
+	       sw->vendor_id, sw->device_id, sw->revision,
+	       sw->thunderbolt_version);
+	tb_dbg(tb, "  Max Port Number: %d\n", sw->max_port_number);
+	tb_dbg(tb, "  Config:\n");
+	tb_dbg(tb,
 		"   Upstream Port Number: %d Depth: %d Route String: %#llx Enabled: %d, PlugEventsDelay: %dms\n",
-		sw->upstream_port_number, sw->depth,
-		(((u64) sw->route_hi) << 32) | sw->route_lo,
-		sw->enabled, sw->plug_events_delay);
-	tb_info(tb,
-		"   unknown1: %#x unknown4: %#x\n",
-		sw->__unknown1, sw->__unknown4);
+	       sw->upstream_port_number, sw->depth,
+	       (((u64) sw->route_hi) << 32) | sw->route_lo,
+	       sw->enabled, sw->plug_events_delay);
+	tb_dbg(tb, "   unknown1: %#x unknown4: %#x\n",
+	       sw->__unknown1, sw->__unknown4);
 }
 
 /**
@@ -653,7 +633,7 @@ int tb_switch_reset(struct tb *tb, u64 route)
 		header.route_lo = route,
 		header.enabled = true,
 	};
-	tb_info(tb, "resetting switch at %llx\n", route);
+	tb_dbg(tb, "resetting switch at %llx\n", route);
 	res.err = tb_cfg_write(tb->ctl, ((u32 *) &header) + 2, route,
 			0, 2, 2, 2);
 	if (res.err)
@@ -662,6 +642,24 @@ int tb_switch_reset(struct tb *tb, u64 route)
 	if (res.err > 0)
 		return -EIO;
 	return res.err;
+}
+
+struct tb_switch *get_switch_at_route(struct tb_switch *sw, u64 route)
+{
+	u8 next_port = route; /*
+			       * Routes use a stride of 8 bits,
+			       * eventhough a port index has 6 bits at most.
+			       * */
+	if (route == 0)
+		return sw;
+	if (next_port > sw->config.max_port_number)
+		return NULL;
+	if (tb_is_upstream_port(&sw->ports[next_port]))
+		return NULL;
+	if (!sw->ports[next_port].remote)
+		return NULL;
+	return get_switch_at_route(sw->ports[next_port].remote->sw,
+				   route >> TB_ROUTE_SHIFT);
 }
 
 /**
@@ -718,8 +716,8 @@ static int tb_switch_set_authorized(struct tb_switch *sw, unsigned int val)
 {
 	int ret = -EINVAL;
 
-	if (!mutex_trylock(&sw->tb->lock))
-		return restart_syscall();
+	if (mutex_lock_interruptible(&switch_lock))
+		return -ERESTARTSYS;
 
 	if (sw->authorized)
 		goto unlock;
@@ -762,7 +760,7 @@ static int tb_switch_set_authorized(struct tb_switch *sw, unsigned int val)
 	}
 
 unlock:
-	mutex_unlock(&sw->tb->lock);
+	mutex_unlock(&switch_lock);
 	return ret;
 }
 
@@ -819,15 +817,15 @@ static ssize_t key_show(struct device *dev, struct device_attribute *attr,
 	struct tb_switch *sw = tb_to_switch(dev);
 	ssize_t ret;
 
-	if (!mutex_trylock(&sw->tb->lock))
-		return restart_syscall();
+	if (mutex_lock_interruptible(&switch_lock))
+		return -ERESTARTSYS;
 
 	if (sw->key)
 		ret = sprintf(buf, "%*phN\n", TB_SWITCH_KEY_SIZE, sw->key);
 	else
 		ret = sprintf(buf, "\n");
 
-	mutex_unlock(&sw->tb->lock);
+	mutex_unlock(&switch_lock);
 	return ret;
 }
 
@@ -844,8 +842,8 @@ static ssize_t key_store(struct device *dev, struct device_attribute *attr,
 	else if (hex2bin(key, buf, sizeof(key)))
 		return -EINVAL;
 
-	if (!mutex_trylock(&sw->tb->lock))
-		return restart_syscall();
+	if (mutex_lock_interruptible(&switch_lock))
+		return -ERESTARTSYS;
 
 	if (sw->authorized) {
 		ret = -EBUSY;
@@ -860,7 +858,7 @@ static ssize_t key_store(struct device *dev, struct device_attribute *attr,
 		}
 	}
 
-	mutex_unlock(&sw->tb->lock);
+	mutex_unlock(&switch_lock);
 	return ret;
 }
 static DEVICE_ATTR(key, 0600, key_show, key_store);
@@ -906,8 +904,8 @@ static ssize_t nvm_authenticate_store(struct device *dev,
 	bool val;
 	int ret;
 
-	if (!mutex_trylock(&sw->tb->lock))
-		return restart_syscall();
+	if (mutex_lock_interruptible(&switch_lock))
+		return -ERESTARTSYS;
 
 	/* If NVMem devices are not yet added */
 	if (!sw->nvm) {
@@ -945,6 +943,8 @@ static ssize_t nvm_authenticate_store(struct device *dev,
 			 */
 			nvm_authenticate_start(sw);
 			ret = nvm_authenticate_host(sw);
+			if (ret)
+				nvm_authenticate_complete(sw);
 		} else {
 			ret = nvm_authenticate_device(sw);
 		}
@@ -953,7 +953,7 @@ static ssize_t nvm_authenticate_store(struct device *dev,
 	}
 
 exit_unlock:
-	mutex_unlock(&sw->tb->lock);
+	mutex_unlock(&switch_lock);
 
 	if (ret)
 		return ret;
@@ -967,8 +967,8 @@ static ssize_t nvm_version_show(struct device *dev,
 	struct tb_switch *sw = tb_to_switch(dev);
 	int ret;
 
-	if (!mutex_trylock(&sw->tb->lock))
-		return restart_syscall();
+	if (mutex_lock_interruptible(&switch_lock))
+		return -ERESTARTSYS;
 
 	if (sw->safe_mode)
 		ret = -ENODATA;
@@ -977,7 +977,7 @@ static ssize_t nvm_version_show(struct device *dev,
 	else
 		ret = sprintf(buf, "%x.%x\n", sw->nvm->major, sw->nvm->minor);
 
-	mutex_unlock(&sw->tb->lock);
+	mutex_unlock(&switch_lock);
 
 	return ret;
 }
@@ -1170,7 +1170,7 @@ struct tb_switch *tb_switch_alloc(struct tb *tb, struct device *parent,
 	if (tb_cfg_read(tb->ctl, &sw->config, route, 0, TB_CFG_SWITCH, 0, 5))
 		goto err_free_sw_ports;
 
-	tb_info(tb, "current switch config:\n");
+	tb_dbg(tb, "current switch config:\n");
 	tb_dump_switch(tb, &sw->config);
 
 	/* configure switch */
@@ -1277,9 +1277,8 @@ int tb_switch_configure(struct tb_switch *sw)
 	int ret;
 
 	route = tb_route(sw);
-	tb_info(tb,
-		"initializing Switch at %#llx (depth: %d, up port: %d)\n",
-		route, tb_route_length(route), sw->config.upstream_port_number);
+	tb_dbg(tb, "initializing Switch at %#llx (depth: %d, up port: %d)\n",
+	       route, tb_route_length(route), sw->config.upstream_port_number);
 
 	if (sw->config.vendor_id != PCI_VENDOR_ID_INTEL)
 		tb_sw_warn(sw, "unknown switch vendor id %#x\n",
@@ -1295,14 +1294,13 @@ int tb_switch_configure(struct tb_switch *sw)
 	return tb_plug_events_active(sw, true);
 }
 
-static int tb_switch_set_uuid(struct tb_switch *sw)
+static void tb_switch_set_uuid(struct tb_switch *sw)
 {
 	u32 uuid[4];
-	int cap, ret;
+	int cap;
 
-	ret = 0;
 	if (sw->uuid)
-		return ret;
+		return;
 
 	/*
 	 * The newer controllers include fused UUID as part of link
@@ -1310,9 +1308,7 @@ static int tb_switch_set_uuid(struct tb_switch *sw)
 	 */
 	cap = tb_switch_find_vse_cap(sw, TB_VSE_CAP_LINK_CONTROLLER);
 	if (cap > 0) {
-		ret = tb_sw_read(sw, uuid, TB_CFG_SWITCH, cap + 3, 4);
-		if (ret)
-			return ret;
+		tb_sw_read(sw, uuid, TB_CFG_SWITCH, cap + 3, 4);
 	} else {
 		/*
 		 * ICM generates UUID based on UID and fills the upper
@@ -1327,9 +1323,6 @@ static int tb_switch_set_uuid(struct tb_switch *sw)
 	}
 
 	sw->uuid = kmemdup(uuid, sizeof(uuid), GFP_KERNEL);
-	if (!sw->uuid)
-		ret = -ENOMEM;
-	return ret;
 }
 
 static int tb_switch_add_dma_port(struct tb_switch *sw)
@@ -1338,16 +1331,13 @@ static int tb_switch_add_dma_port(struct tb_switch *sw)
 	int ret;
 
 	switch (sw->generation) {
+	case 3:
+		break;
+
 	case 2:
 		/* Only root switch can be upgraded */
 		if (tb_route(sw))
 			return 0;
-
-		/* fallthrough */
-	case 3:
-		ret = tb_switch_set_uuid(sw);
-		if (ret)
-			return ret;
 		break;
 
 	default:
@@ -1368,19 +1358,6 @@ static int tb_switch_add_dma_port(struct tb_switch *sw)
 		return 0;
 
 	/*
-	 * If there is status already set then authentication failed
-	 * when the dma_port_flash_update_auth() returned. Power cycling
-	 * is not needed (it was done already) so only thing we do here
-	 * is to unblock runtime PM of the root port.
-	 */
-	nvm_get_auth_status(sw, &status);
-	if (status) {
-		if (!tb_route(sw))
-			nvm_authenticate_complete(sw);
-		return 0;
-	}
-
-	/*
 	 * Check status of the previous flash authentication. If there
 	 * is one we need to power cycle the switch in any case to make
 	 * it functional again.
@@ -1395,6 +1372,7 @@ static int tb_switch_add_dma_port(struct tb_switch *sw)
 
 	if (status) {
 		tb_sw_info(sw, "switch flash authentication failed\n");
+		tb_switch_set_uuid(sw);
 		nvm_set_auth_status(sw, status);
 	}
 
@@ -1442,15 +1420,13 @@ int tb_switch_add(struct tb_switch *sw)
 			tb_sw_warn(sw, "tb_eeprom_read_rom failed\n");
 			return ret;
 		}
-		tb_sw_info(sw, "uid: %#llx\n", sw->uid);
+		tb_sw_dbg(sw, "uid: %#llx\n", sw->uid);
 
-		ret = tb_switch_set_uuid(sw);
-		if (ret)
-			return ret;
+		tb_switch_set_uuid(sw);
 
 		for (i = 0; i <= sw->config.max_port_number; i++) {
 			if (sw->ports[i].disabled) {
-				tb_port_info(&sw->ports[i], "disabled by eeprom\n");
+				tb_port_dbg(&sw->ports[i], "disabled by eeprom\n");
 				continue;
 			}
 			ret = tb_init_port(&sw->ports[i]);
@@ -1462,6 +1438,14 @@ int tb_switch_add(struct tb_switch *sw)
 	ret = device_add(&sw->dev);
 	if (ret)
 		return ret;
+
+	if (tb_route(sw)) {
+		dev_info(&sw->dev, "new device found, vendor=%#x device=%#x\n",
+			 sw->vendor, sw->device);
+		if (sw->vendor_name && sw->device_name)
+			dev_info(&sw->dev, "%s %s\n", sw->vendor_name,
+				 sw->device_name);
+	}
 
 	ret = tb_switch_nvm_add(sw);
 	if (ret) {
@@ -1514,6 +1498,9 @@ void tb_switch_remove(struct tb_switch *sw)
 		tb_plug_events_active(sw, false);
 
 	tb_switch_nvm_remove(sw);
+
+	if (tb_route(sw))
+		dev_info(&sw->dev, "device disconnected\n");
 	device_unregister(&sw->dev);
 }
 
@@ -1541,7 +1528,7 @@ void tb_sw_set_unplugged(struct tb_switch *sw)
 int tb_switch_resume(struct tb_switch *sw)
 {
 	int i, err;
-	tb_sw_info(sw, "resuming switch\n");
+	tb_sw_dbg(sw, "resuming switch\n");
 
 	/*
 	 * Check for UID of the connected switches except for root
