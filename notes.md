@@ -150,6 +150,14 @@ therefore restored from the vendor tree (`3027a7714^1`).  The v4.20
 top-level `Makefile`, `scripts/`, and the already-synced 4.20 code stay
 as they are.
 
+Two 4.19 symbols that the vendor Kconfig files still test were removed
+in 4.20: `HAVE_MEMBLOCK` and `NO_BOOTMEM`.  Both are selected again
+from `arch/arm64/Kconfig`; without them `CONFIG_ION` and
+`CONFIG_PSTORE_RAM` stay disabled and the CMA select from `HPA` warns.
+Memory hotplug is not restored: v4.20 arm64 has no `arch_add_memory()`,
+so `CONFIG_MEMORY_HOTPLUG`, `CONFIG_MEMORY_HOTREMOVE` and
+`CONFIG_EXYNOS_PASR` stay off until the arch code is reconciled.
+
 ## Initial state of the v4.20 merge
 
 `git merge --no-commit --no-ff v4.20` → **1239 conflicted files**.

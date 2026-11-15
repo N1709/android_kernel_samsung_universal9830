@@ -139,7 +139,13 @@ config ARM64
 	select HAVE_GENERIC_DMA_COHERENT
 	select HAVE_HW_BREAKPOINT if PERF_EVENTS
 	select HAVE_IRQ_TIME_ACCOUNTING
+	# The vendor Kconfig files still test these 4.19 symbols.  v4.20
+	# always uses memblock and no longer has bootmem, so both are
+	# constant for the 4.20 code, but ION, pstore/ram and the Samsung
+	# debug code keep their vendor dependencies.
+	select HAVE_MEMBLOCK
 	select HAVE_MEMBLOCK_NODE_MAP if NUMA
+	select NO_BOOTMEM
 	select HAVE_NMI
 	select HAVE_PATA_PLATFORM
 	select HAVE_PERF_EVENTS
