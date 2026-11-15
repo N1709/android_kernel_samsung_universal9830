@@ -37,6 +37,7 @@
 #include <linux/mm_types.h>
 #include <linux/printk.h>
 #include <linux/debug-snapshot.h>
+#include <linux/sec_debug.h>
 
 #include <asm/atomic.h>
 #include <asm/bug.h>

@@ -14,7 +14,6 @@
 #define pr_fmt(fmt) "HPA: " fmt
 
 #include <linux/list.h>
-#include <linux/bootmem.h>
 #include <linux/memblock.h>
 #include <linux/mm.h>
 #include <linux/mm_types.h>
