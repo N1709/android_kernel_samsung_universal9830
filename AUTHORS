@@ -1,0 +1,15 @@
+Maintainer
+==========
+
+kentaro aldanatien ramadhan
+GitHub: @N1709
+
+  Maintains this tree: Linux 4.20 merge, Exynos 990 (universal9830)
+  board support, and Android 17 / LineageOS 24.0 bring-up.
+
+Upstream
+========
+
+This tree embeds the complete upstream Linux history.  The authors of
+individual commits are recorded in git itself; run `git shortlog -sne`
+for the full list.
