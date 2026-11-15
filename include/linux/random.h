@@ -138,4 +138,6 @@ int random_online_cpu(unsigned int cpu);
 extern const struct file_operations random_fops, urandom_fops;
 #endif
 
+unsigned long randomize_page(unsigned long start, unsigned long range);
+
 #endif /* _LINUX_RANDOM_H */
