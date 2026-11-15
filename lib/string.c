@@ -235,6 +235,32 @@ ssize_t strscpy(char *dest, const char *src, size_t count)
 	return -E2BIG;
 }
 EXPORT_SYMBOL(strscpy);
+
+/**
+ * strscpy_pad - Copy a C-string into a sized buffer and pad with zeroes
+ * @dest: Where to copy the string to
+ * @src: Where to copy the string from
+ * @count: Size of destination buffer
+ *
+ * Copy the string, or as much of it as fits, into the destination buffer,
+ * and zero the rest of the buffer.
+ *
+ * Return: The number of characters copied (not including the trailing NUL),
+ * or -E2BIG if the destination buffer was too small.
+ */
+ssize_t strscpy_pad(char *dest, const char *src, size_t count)
+{
+	ssize_t written;
+
+	written = strscpy(dest, src, count);
+	if (written < 0 || written == count - 1)
+		return written;
+
+	memset(dest + written + 1, 0, count - written - 1);
+
+	return written;
+}
+EXPORT_SYMBOL(strscpy_pad);
 #endif
 
 #ifndef __HAVE_ARCH_STRCAT

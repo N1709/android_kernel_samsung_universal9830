@@ -2566,6 +2566,25 @@ int jbd2_journal_inode_add_wait(handle_t *handle, struct jbd2_inode *jinode)
 }
 
 /*
+ * Compatibility wrappers for the 4.19 ext4 code.  Upstream 4.20 replaced
+ * the ranged helpers with the add_write/add_wait pair above.
+ */
+int jbd2_journal_inode_ranged_write(handle_t *handle,
+		struct jbd2_inode *jinode, loff_t start_byte, loff_t length)
+{
+	return jbd2_journal_file_inode(handle, jinode,
+				       JI_WRITE_DATA | JI_WAIT_DATA);
+}
+EXPORT_SYMBOL(jbd2_journal_inode_ranged_write);
+
+int jbd2_journal_inode_ranged_wait(handle_t *handle,
+		struct jbd2_inode *jinode, loff_t start_byte, loff_t length)
+{
+	return jbd2_journal_file_inode(handle, jinode, JI_WAIT_DATA);
+}
+EXPORT_SYMBOL(jbd2_journal_inode_ranged_wait);
+
+/*
  * File truncate and transaction commit interact with each other in a
  * non-trivial way.  If a transaction writing data block A is
  * committing, we cannot discard the data by truncate until we have
