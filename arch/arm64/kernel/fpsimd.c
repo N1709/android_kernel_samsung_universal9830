@@ -865,12 +865,26 @@ asmlinkage void do_fpsimd_exc(unsigned int esr, struct pt_regs *regs)
 void fpsimd_thread_switch(struct task_struct *next)
 {
 	bool wrong_task, wrong_cpu;
+	struct fpsimd_kernel_state *cur_kst
+			= &current->thread.fpsimd_kernel_state;
+	struct fpsimd_kernel_state *nxt_kst
+			= &next->thread.fpsimd_kernel_state;
 
 	if (!system_supports_fpsimd())
 		return;
 
 	/* Save unsaved fpsimd state, if any: */
 	fpsimd_save();
+
+	if (atomic_read(&cur_kst->depth))
+		fpsimd_save_state((struct user_fpsimd_state *)cur_kst);
+
+	if (atomic_read(&nxt_kst->depth)) {
+		fpsimd_load_state((struct user_fpsimd_state *)nxt_kst);
+		this_cpu_write(fpsimd_last_state.st,
+			       (struct user_fpsimd_state *)nxt_kst);
+		nxt_kst->cpu = smp_processor_id();
+	}
 
 	/*
 	 * Fix up TIF_FOREIGN_FPSTATE to correctly describe next's
@@ -883,6 +897,51 @@ void fpsimd_thread_switch(struct task_struct *next)
 
 	update_tsk_thread_flag(next, TIF_FOREIGN_FPSTATE,
 			       wrong_task || wrong_cpu);
+}
+
+void fpsimd_set_task_using(struct task_struct *t)
+{
+	atomic_set(&t->thread.fpsimd_kernel_state.depth, 1);
+}
+
+void fpsimd_clr_task_using(struct task_struct *t)
+{
+	atomic_set(&t->thread.fpsimd_kernel_state.depth, 0);
+}
+
+void fpsimd_get(void)
+{
+	if (in_interrupt())
+		return;
+
+	if (atomic_inc_return(&current->thread.fpsimd_kernel_state.depth) == 1) {
+		preempt_disable();
+		if (current->mm) {
+			fpsimd_save();
+			fpsimd_flush_task_state(current);
+		}
+		fpsimd_flush_cpu_state();
+		preempt_enable();
+	}
+}
+
+void fpsimd_put(void)
+{
+	if (in_interrupt())
+		return;
+
+	BUG_ON(atomic_dec_return(
+		&current->thread.fpsimd_kernel_state.depth) < 0);
+
+	if (atomic_read(&current->thread.fpsimd_kernel_state.depth) == 0) {
+		preempt_disable();
+		if (current->mm && test_thread_flag(TIF_FOREIGN_FPSTATE)) {
+			task_fpsimd_load();
+			fpsimd_bind_task_to_cpu();
+			clear_thread_flag(TIF_FOREIGN_FPSTATE);
+		}
+		preempt_enable();
+	}
 }
 
 void fpsimd_flush_thread(void)

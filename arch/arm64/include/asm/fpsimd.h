@@ -154,6 +154,12 @@ static inline void sve_setup(void) { }
 extern void __efi_fpsimd_begin(void);
 extern void __efi_fpsimd_end(void);
 
+/* Samsung in-kernel FP/SIMD usage tracking */
+void fpsimd_set_task_using(struct task_struct *t);
+void fpsimd_clr_task_using(struct task_struct *t);
+void fpsimd_get(void);
+void fpsimd_put(void);
+
 #endif
 
 #endif

@@ -84,6 +84,19 @@ struct user_fpsimd_state {
 	__u32		__reserved[2];
 };
 
+struct fpsimd_kernel_state {
+	__uint128_t vregs[32];
+	__u32 fpsr;
+	__u32 fpcr;
+	unsigned int cpu;
+	/*
+	 * Depth of FP/SIMD register use in kernel mode.  The state is saved
+	 * the first time the registers are used and restored before the task
+	 * uses them again.
+	 */
+	atomic_t depth;
+};
+
 struct user_hwdebug_state {
 	__u32		dbg_info;
 	__u32		pad;
