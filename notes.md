@@ -7,13 +7,14 @@ Working document. Updated as the merge progresses.
 | Stage | Status |
 |---|---|
 | v4.20 merge | done — `3027a77146cf`, 1239 conflicts resolved |
-| v4.20 normalization | `a838f89fb` covered 9838 files; second pass for 309 missed generic files in progress |
+| v4.20 normalization | `a838f89fb` covered 9838 files; `466c12f3e` added the 307 missed generic files |
 | v4.20 Kconfig/header seams | `efd91f859` |
 | v4.20 vDSO config | `a448d5c26` — `source "lib/vdso/Kconfig"` in `lib/Kconfig` |
 | Android-critical headers | `e450173fb` — Lineage fscrypt/f2fs headers kept |
+| FBE v2 filesystem stack | in progress — Lineage `fs/crypto`, `fs/verity`, `fs/ext4`, `fs/f2fs`; 4.19 compat shims added for the core APIs 4.20 removed |
 | Target ROM | Android 17 / LineageOS 24.0, all Exynos 990 (universal9830) devices |
 | Hybridswap | not present in this tree; required by the ROM, source pending |
-| v4.20 build | full build paused for the second normalization pass |
+| v4.20 build | cluster compile test for ext4/f2fs/crypto/trace, then full `-j2` build |
 | v4.20 boot test | pending build |
 | v5.0 merge | on hold until v4.20 builds and boots |
 | Branch | `K4.20` (GitHub default); `lineage-24.0` removed |
@@ -70,6 +71,45 @@ git merge-base HEAD v4.19.325     # harus a67e7cdde7cc...
   - [ ] **boot test — user**
 - [ ] 5. `git merge v5.0` → resolve → commit → build passes (**on hold**)
 - [ ] 6. STOP (user runs the boot test)
+
+## FBE v2 seam (Android 17)
+
+Android 17 needs fscrypt v2 (keyring, HKDF, v2 policies, casefold) and
+fs-verity.  Upstream v4.20 only has fscrypt v1, so the whole consumer
+stack stays on the Lineage side:
+
+```
+fs/crypto/**            fs/verity/**            fs/ext4/**
+fs/f2fs/**              include/linux/fscrypt.h include/linux/fsverity.h
+include/uapi/linux/fscrypt.h
+```
+
+v4.20 `fs/ext4` cannot be reused: it still calls the v1 page encryption
+API, while the Lineage fscrypt exports the v2 API.  Keeping the Lineage
+ext4 therefore needs a few small 4.20 compatibility shims for core APIs
+that v4.20 removed:
+
+| Shim | File |
+|---|---|
+| `jbd2_journal_inode_ranged_write/wait` | `include/linux/jbd2.h`, `fs/jbd2/transaction.c` |
+| `sb_breadahead_unmovable()` | `include/linux/buffer_head.h` |
+| 4.19 mb_cache API | `fs/mbcache.c`, `include/linux/mbcache.h` (only ext4 uses it; ext2 is off) |
+| `DCACHE_ENCRYPTED_NAME` | `include/linux/dcache.h` (same bit as the unused `DCACHE_ENCRYPTED_WITH_KEY`) |
+| `generic_set_encrypted_ci_d_ops()` | `fs/libfs.c` |
+| `vfs_ioc_setflags_prepare()`, `vfs_ioc_fssetxattr_check()` | `fs/inode.c` |
+| `simple_fill_fsxattr()` | `include/linux/fs.h` |
+| `s_master_keys` in `struct super_block` | `include/linux/fs.h` |
+| `REQ_OP_ZONE_REPORT` (trace string only) | `include/linux/blk_types.h` |
+| `lookup_user_key()` declaration | `include/linux/key.h` |
+| `strscpy_pad()` | `lib/string.c`, `include/linux/string.h` |
+| `__vmalloc()` 2-argument call sites | `fs/ext4/super.c` |
+| `FS_VERITY_FL`, `FS_CASEFOLD_FL`, `STATX_ATTR_VERITY` | `include/uapi/linux/fs.h`, `include/uapi/linux/stat.h` |
+| f2fs/ext4 trace events | `include/trace/events/f2fs.h`, `include/trace/events/ext4.h` |
+
+`CONFIG_FS_VERITY` and `CONFIG_EXT4_FS_VERITY` are unset in the current
+config, so `fs/verity` and `fs/ext4/verity.c` are not built.  The
+`S_VERITY`/`IS_VERITY` definitions stay in `fs.h` because f2fs headers
+still reference them.
 
 ## Initial state of the v4.20 merge
 
