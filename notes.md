@@ -316,25 +316,36 @@ not affect boot.
 git clone -b lineage-24.0 \
   https://github.com/N1709/android_kernel_samsung_universal9830.git kernel-5.0
 cd kernel-5.0
-git log --oneline -2        # must contain 80c7ad927 (or newer)
 
 # 2. dependencies (Ubuntu/Debian)
 sudo apt install -y clang lld llvm gcc-aarch64-linux-gnu \
   binutils-aarch64-linux-gnu libssl-dev bc bison flex libelf-dev \
   libncurses-dev kmod cpio rsync zstd python3 make
 
-# 3. CC MUST be exported (Kconfig reads CC from the environment, not from make args)
-export CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm \
-       OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
-       CROSS_COMPILE=aarch64-linux-gnu-
-
-# 4. config: base + S20 Ultra fragment (z3s)
-make O=out ARCH=arm64 exynos9830_defconfig
-make O=out ARCH=arm64 z3s.config
-
-# 5. build
-make O=out ARCH=arm64 -j$(nproc)
+# 3. build (config + Image.gz + dtbs, logs to out/build.log)
+./build.sh              # add -j N to limit parallelism, -c for a clean build
 ```
+
+`arch/arm64/configs/*.config` fragments are merged by `build.sh`; use `-d x1s`
+(or `y2s`, `x1slte`, ...) for other models, `-n` to skip the device trees.
+
+Do not export the toolchain instead of passing it: the kernel `Makefile` uses
+plain assignments (`CC = $(CROSS_COMPILE)gcc`, `LD = ...`), and those always win
+over the environment. The toolchain has to be on the `make` command line:
+
+```bash
+export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+make O=out ARCH=arm64 \
+  CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm \
+  OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
+  exynos9830_defconfig
+make O=out ARCH=arm64 CC=clang LD=ld.lld ... z3s.config
+make O=out ARCH=arm64 CC=clang LD=ld.lld ... -j$(nproc)
+```
+
+Cross binutils are mandatory: clang is used with `-no-integrated-as`, so
+`aarch64-linux-gnu-as` must be installed. On Arch Linux the AUR package
+`aarch64-linux-gnu-gcc` provides them.
 
 Output:
 
@@ -347,6 +358,14 @@ out/arch/arm64/boot/dts/samsung/exynos990-z3s*.dtb
 Notes:
 - Do not use `build_kernel.sh` — it refers to `exynos9830-x1slte_defconfig`,
   which does not exist in this tree.
+- Early builds on both the laptop and the phone silently used `gcc`: `CC` was
+  exported, but `Makefile:379` assigns `CC = $(CROSS_COMPILE)gcc`, so gcc was
+  used while the log looked normal. Fixed by passing the toolchain on the make
+  command line (`4c371f972`). If a log shows `cc1: some warnings being treated
+  as errors`, gcc is still in use.
+- `Makefile` also had a broken clang prefix: `--prefix=$(dir $(which $(LD)))`
+  resolves to `/usr/bin/`, so clang assembled with the host `as`. It now uses
+  `--prefix=$(dir $(which $(CROSS_COMPILE)as))$(CROSS_COMPILE)`.
 - The defconfig was originally generated with Android clang 14.0.6 + LLD. If
   the host clang (18/19+) produces odd errors, switch to the AOSP clang 14
   prebuilt (`clang-r450784d`) and point `CC`/`LD` at it.
@@ -365,6 +384,15 @@ Notes:
   `mm/util.c`, `include/linux/random.h`, `include/linux/memblock.h`,
   `arch/arm64/mm/fault.c`, `include/linux/cryptohash.h`.
 - Pushed `d25ce9a98..962ddc46b` to `origin/lineage-24.0`.
+- Laptop build errors fixed in `32e549c22` (mmap_lock include, `make_task_dead`,
+  `struct sched_param`, `probe_kernel_read/write`, vdso `math64.h`, perf-BPF
+  `call_get_stack`, duplicate `VM_FAULT_*_HINDEX`).
+- That commit accidentally included the build directory; `out/` is now
+  untracked and ignored. The commit was amended to `634c8c9cb` and
+  force-pushed, so existing clones must `git fetch && git reset --hard
+  origin/lineage-24.0`.
+- `4c371f972` makes the clang toolchain effective (`printk_safe_init`,
+  `CLANG_PREFIX`, `build.sh` command-line variables).
 - v5.0 merge not started yet (waiting for the v4.20 build and boot test).
 - v5.0 blocker: the local clone is still shallow and has no upstream tags —
   re-run the fetch from "Current status" first.
