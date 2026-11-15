@@ -16,8 +16,8 @@
 #   sudo pacman -S --needed clang lld llvm bc bison flex openssl libelf \
 #     ncurses kmod cpio rsync zstd python make git
 #
-# Cross binutils are optional when the LLVM tools above are used. If your
-# tree/scripts insist on aarch64-linux-gnu-* , install (AUR):
+# Cross binutils are required: clang runs with -no-integrated-as, so it
+# needs aarch64-linux-gnu-as/objcopy/ld next to it (AUR):
 #   yay -S --needed aarch64-linux-gnu-gcc
 #
 set -euo pipefail
@@ -74,19 +74,28 @@ if [ "${#missing[@]}" -ne 0 ]; then
 	exit 1
 fi
 
-if ! need aarch64-linux-gnu-as && ! need aarch64-linux-gnu-objcopy; then
-	echo "warning: no aarch64-linux-gnu binutils found; using LLVM tools only" >&2
+if ! need "${CROSS_COMPILE:-aarch64-linux-gnu-}as"; then
+	echo "error: ${CROSS_COMPILE:-aarch64-linux-gnu-}as not found" >&2
+	echo "clang runs with -no-integrated-as, so cross binutils are required." >&2
+	echo "Arch Linux (AUR):" >&2
+	echo "  yay -S --needed aarch64-linux-gnu-gcc" >&2
+	exit 1
 fi
 
 export ARCH=arm64
-export CC=clang
-export LD=ld.lld
-export AR=llvm-ar
-export NM=llvm-nm
-export OBJCOPY=llvm-objcopy
-export OBJDUMP=llvm-objdump
-export STRIP=llvm-strip
 export CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
+
+# The kernel Makefile assigns CC/LD/... with plain '=', which wins over the
+# environment, so these must be passed on the make command line.
+TCVARS=(
+	CC=clang
+	LD=ld.lld
+	AR=llvm-ar
+	NM=llvm-nm
+	OBJCOPY=llvm-objcopy
+	OBJDUMP=llvm-objdump
+	STRIP=llvm-strip
+)
 
 if [ "$CLEAN" -eq 1 ]; then
 	echo "==> clean: removing out/"
@@ -97,16 +106,16 @@ mkdir -p out
 LOG="out/build.log"
 
 echo "==> defconfig: exynos9830_defconfig"
-make O=out ARCH=arm64 exynos9830_defconfig
+make O=out ARCH=arm64 "${TCVARS[@]}" exynos9830_defconfig
 
 echo "==> fragment: ${DEVICE}.config"
-make O=out ARCH=arm64 "${DEVICE}.config"
+make O=out ARCH=arm64 "${TCVARS[@]}" "${DEVICE}.config"
 
 targets=(Image.gz)
 [ "$DO_DTBS" -eq 1 ] && targets+=(dtbs)
 
 echo "==> build: ${targets[*]} with -j${JOBS} (log: ${LOG})"
-if ! make O=out ARCH=arm64 -j"${JOBS}" "${targets[@]}" 2>&1 | tee "$LOG"; then
+if ! make O=out ARCH=arm64 "${TCVARS[@]}" -j"${JOBS}" "${targets[@]}" 2>&1 | tee "$LOG"; then
 	echo
 	echo "build failed; first errors:" >&2
 	grep -E 'error:|fatal error|Error [0-9]' "$LOG" | head -40 >&2 || true
