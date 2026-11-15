@@ -12,7 +12,6 @@
 #define __MM_INTERNAL_H
 
 #include <linux/fs.h>
-#include <linux/file.h>
 #include <linux/mm.h>
 #include <linux/pagemap.h>
 #include <linux/tracepoint-defs.h>
@@ -40,26 +39,6 @@
 void page_writeback_init(void);
 
 vm_fault_t do_swap_page(struct vm_fault *vmf);
-
-#ifdef CONFIG_SPECULATIVE_PAGE_FAULT
-extern struct vm_area_struct *get_vma(struct mm_struct *mm,
-				      unsigned long addr);
-extern void put_vma(struct vm_area_struct *vma);
-
-static inline bool vma_has_changed(struct vm_fault *vmf)
-{
-	int ret = RB_EMPTY_NODE(&vmf->vma->vm_rb);
-	unsigned int seq = READ_ONCE(vmf->vma->vm_sequence.sequence);
-
-	/*
-	 * Matches both the wmb in write_seqlock_{begin,end}() and
-	 * the wmb in vma_rb_erase().
-	 */
-	smp_rmb();
-
-	return ret || seq != vmf->sequence;
-}
-#endif /* CONFIG_SPECULATIVE_PAGE_FAULT */
 
 void free_pgtables(struct mmu_gather *tlb, struct vm_area_struct *start_vma,
 		unsigned long floor, unsigned long ceiling);
@@ -352,73 +331,27 @@ static inline void mlock_migrate_page(struct page *newpage, struct page *page)
 extern pmd_t maybe_pmd_mkwrite(pmd_t pmd, struct vm_area_struct *vma);
 
 /*
- * At what user virtual address is page expected in vma?
- * Returns -EFAULT if all of the page is outside the range of vma.
- * If page is a compound head, the entire compound page is considered.
+ * At what user virtual address is page expected in @vma?
  */
+static inline unsigned long
+__vma_address(struct page *page, struct vm_area_struct *vma)
+{
+	pgoff_t pgoff = page_to_pgoff(page);
+	return vma->vm_start + ((pgoff - vma->vm_pgoff) << PAGE_SHIFT);
+}
+
 static inline unsigned long
 vma_address(struct page *page, struct vm_area_struct *vma)
 {
-	pgoff_t pgoff;
-	unsigned long address;
+	unsigned long start, end;
 
-	VM_BUG_ON_PAGE(PageKsm(page), page);	/* KSM page->index unusable */
-	pgoff = page_to_pgoff(page);
-	if (pgoff >= vma->vm_pgoff) {
-		address = vma->vm_start +
-			((pgoff - vma->vm_pgoff) << PAGE_SHIFT);
-		/* Check for address beyond vma (or wrapped through 0?) */
-		if (address < vma->vm_start || address >= vma->vm_end)
-			address = -EFAULT;
-	} else if (PageHead(page) &&
-		   pgoff + (1UL << compound_order(page)) - 1 >= vma->vm_pgoff) {
-		/* Test above avoids possibility of wrap to 0 on 32-bit */
-		address = vma->vm_start;
-	} else {
-		address = -EFAULT;
-	}
-	return address;
-}
+	start = __vma_address(page, vma);
+	end = start + PAGE_SIZE * (hpage_nr_pages(page) - 1);
 
-/*
- * Then at what user virtual address will none of the page be found in vma?
- * Assumes that vma_address() already returned a good starting address.
- * If page is a compound head, the entire compound page is considered.
- */
-static inline unsigned long
-vma_address_end(struct page *page, struct vm_area_struct *vma)
-{
-	pgoff_t pgoff;
-	unsigned long address;
+	/* page should be within @vma mapping range */
+	VM_BUG_ON_VMA(end < vma->vm_start || start >= vma->vm_end, vma);
 
-	VM_BUG_ON_PAGE(PageKsm(page), page);	/* KSM page->index unusable */
-	pgoff = page_to_pgoff(page) + (1UL << compound_order(page));
-	address = vma->vm_start + ((pgoff - vma->vm_pgoff) << PAGE_SHIFT);
-	/* Check for address beyond vma (or wrapped through 0?) */
-	if (address < vma->vm_start || address > vma->vm_end)
-		address = vma->vm_end;
-	return address;
-}
-
-static inline struct file *maybe_unlock_mmap_for_io(struct vm_fault *vmf,
-						    struct file *fpin)
-{
-	int flags = vmf->flags;
-
-	if (fpin)
-		return fpin;
-
-	/*
-	 * FAULT_FLAG_RETRY_NOWAIT means we don't want to wait on page locks or
-	 * anything, so we only pin the file and drop the mmap_sem if only
-	 * FAULT_FLAG_ALLOW_RETRY is set, while this is the first attempt.
-	 */
-	if (fault_flag_allow_retry_first(flags) &&
-	    !(flags & FAULT_FLAG_RETRY_NOWAIT)) {
-		fpin = get_file(vmf->vma->vm_file);
-		mmap_read_unlock(vmf->vma->vm_mm);
-	}
-	return fpin;
+	return max(start, vma->vm_start);
 }
 
 #else /* !CONFIG_MMU */
@@ -511,16 +444,6 @@ static inline void mminit_validate_memmodel_limits(unsigned long *start_pfn,
 #define NODE_RECLAIM_SOME	0
 #define NODE_RECLAIM_SUCCESS	1
 
-#ifdef CONFIG_NUMA
-extern int node_reclaim(struct pglist_data *, gfp_t, unsigned int);
-#else
-static inline int node_reclaim(struct pglist_data *pgdat, gfp_t mask,
-				unsigned int order)
-{
-	return NODE_RECLAIM_NOSCAN;
-}
-#endif
-
 extern int hwpoison_filter(struct page *p);
 
 extern u32 hwpoison_filter_dev_major;
@@ -536,8 +459,7 @@ extern unsigned long  __must_check vm_mmap_pgoff(struct file *, unsigned long,
 
 extern void set_pageblock_order(void);
 unsigned long reclaim_clean_pages_from_list(struct zone *zone,
-					    struct list_head *page_list,
-					    int ttu_flags);
+					    struct list_head *page_list);
 /* The ALLOC_WMARK bits are used as an index to zone->watermark */
 #define ALLOC_WMARK_MIN		WMARK_MIN
 #define ALLOC_WMARK_LOW		WMARK_LOW
@@ -593,29 +515,6 @@ extern const struct trace_print_flags pageflag_names[];
 extern const struct trace_print_flags vmaflag_names[];
 extern const struct trace_print_flags gfpflag_names[];
 
-#if defined(CONFIG_PAGE_STEAL)
-int migrate_anon_page(struct page *page, struct page *newpage);
-int reclaim_pages_range(unsigned long start_pfn, unsigned long count,
-			int mode, int reason);
-int steal_pages(unsigned long pfn, unsigned int order);
-#else
-static inline int migrate_anon_page(struct page *page, struct page *newpage)
-{
-	return -EBUSY;
-}
-
-static inline int reclaim_pages_range(unsigned long start_pfn,
-				      unsigned long count, int mode,
-				      int reason)
-{
-	return -EBUSY;
-}
-static inline int steal_pages(unsigned long pfn, unsigned int order)
-{
-	return -EBUSY;
-}
-#endif
-
 static inline bool is_migrate_highatomic(enum migratetype migratetype)
 {
 	return migratetype == MIGRATE_HIGHATOMIC;
@@ -628,35 +527,4 @@ static inline bool is_migrate_highatomic_page(struct page *page)
 
 void setup_zone_pageset(struct zone *zone);
 extern struct page *alloc_new_node_page(struct page *page, unsigned long node);
-
-/*
- * A cached value of the page's pageblock's migratetype, used when the page is
- * put on a pcplist. Used to avoid the pageblock migratetype lookup when
- * freeing from pcplists in most cases, at the cost of possibly becoming stale.
- * Also the migratetype set in the page does not necessarily match the pcplist
- * index, e.g. page might have MIGRATE_CMA set but be on a pcplist with any
- * other index - this ensures that it will be put on the correct CMA freelist.
- */
-static inline int get_pcppage_migratetype(struct page *page)
-{
-	return page->index;
-}
-
-static inline void set_pcppage_migratetype(struct page *page, int migratetype)
-{
-	page->index = migratetype;
-}
-
-#ifdef CONFIG_HUGEPAGE_POOL
-#include <linux/hugepage_pool.h>
-static inline struct page *alloc_from_hugepage_pool(gfp_t gfp_mask,
-		struct vm_area_struct *vma, unsigned long addr, int order) {
-	return alloc_zeroed_hugepage(gfp_mask, order, false, HPAGE_ANON);
-}
-extern void ___free_pages_ok(struct page *page, unsigned int order,
-			     bool skip_hugepage_pool);
-extern void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags,
-						unsigned int alloc_flags);
-void compact_node_async(void);
-#endif
 #endif	/* __MM_INTERNAL_H */

@@ -115,10 +115,9 @@ static void *trigger_next(struct seq_file *m, void *t, loff_t *pos)
 {
 	struct trace_event_file *event_file = event_file_data(m->private);
 
-	if (t == SHOW_AVAILABLE_TRIGGERS) {
-		(*pos)++;
+	if (t == SHOW_AVAILABLE_TRIGGERS)
 		return NULL;
-	}
+
 	return seq_list_next(t, &event_file->triggers, pos);
 }
 
@@ -211,17 +210,11 @@ static int event_trigger_regex_open(struct inode *inode, struct file *file)
 
 static int trigger_process_regex(struct trace_event_file *file, char *buff)
 {
-	char *command, *next;
+	char *command, *next = buff;
 	struct event_command *p;
 	int ret = -EINVAL;
 
-	next = buff = skip_spaces(buff);
 	command = strsep(&next, ": \t");
-	if (next) {
-		next = skip_spaces(next);
-		if (!*next)
-			next = NULL;
-	}
 	command = (command[0] != '!') ? command : command + 1;
 
 	mutex_lock(&trigger_cmd_mutex);
@@ -502,9 +495,7 @@ void update_cond_flag(struct trace_event_file *file)
 	struct event_trigger_data *data;
 	bool set_cond = false;
 
-	lockdep_assert_held(&event_mutex);
-
-	list_for_each_entry(data, &file->triggers, list) {
+	list_for_each_entry_rcu(data, &file->triggers, list) {
 		if (data->filter || event_command_post_trigger(data->cmd_ops) ||
 		    event_command_needs_rec(data->cmd_ops)) {
 			set_cond = true;
@@ -539,9 +530,7 @@ static int register_trigger(char *glob, struct event_trigger_ops *ops,
 	struct event_trigger_data *test;
 	int ret = 0;
 
-	lockdep_assert_held(&event_mutex);
-
-	list_for_each_entry(test, &file->triggers, list) {
+	list_for_each_entry_rcu(test, &file->triggers, list) {
 		if (test->cmd_ops->trigger_type == data->cmd_ops->trigger_type) {
 			ret = -EEXIST;
 			goto out;
@@ -586,9 +575,7 @@ static void unregister_trigger(char *glob, struct event_trigger_ops *ops,
 	struct event_trigger_data *data;
 	bool unregistered = false;
 
-	lockdep_assert_held(&event_mutex);
-
-	list_for_each_entry(data, &file->triggers, list) {
+	list_for_each_entry_rcu(data, &file->triggers, list) {
 		if (data->cmd_ops->trigger_type == test->cmd_ops->trigger_type) {
 			unregistered = true;
 			list_del_rcu(&data->list);
@@ -630,14 +617,8 @@ event_trigger_callback(struct event_command *cmd_ops,
 	int ret;
 
 	/* separate the trigger from the filter (t:n [if filter]) */
-	if (param && isdigit(param[0])) {
+	if (param && isdigit(param[0]))
 		trigger = strsep(&param, " \t");
-		if (param) {
-			param = skip_spaces(param);
-			if (!*param)
-				param = NULL;
-		}
-	}
 
 	trigger_ops = cmd_ops->get_trigger_ops(cmd, trigger);
 
@@ -933,16 +914,6 @@ static void
 traceon_trigger(struct event_trigger_data *data, void *rec,
 		struct ring_buffer_event *event)
 {
-	struct trace_event_file *file = data->private_data;
-
-	if (file) {
-		if (tracer_tracing_is_on(file->tr))
-			return;
-
-		tracer_tracing_on(file->tr);
-		return;
-	}
-
 	if (tracing_is_on())
 		return;
 
@@ -953,15 +924,8 @@ static void
 traceon_count_trigger(struct event_trigger_data *data, void *rec,
 		      struct ring_buffer_event *event)
 {
-	struct trace_event_file *file = data->private_data;
-
-	if (file) {
-		if (tracer_tracing_is_on(file->tr))
-			return;
-	} else {
-		if (tracing_is_on())
-			return;
-	}
+	if (tracing_is_on())
+		return;
 
 	if (!data->count)
 		return;
@@ -969,26 +933,13 @@ traceon_count_trigger(struct event_trigger_data *data, void *rec,
 	if (data->count != -1)
 		(data->count)--;
 
-	if (file)
-		tracer_tracing_on(file->tr);
-	else
-		tracing_on();
+	tracing_on();
 }
 
 static void
 traceoff_trigger(struct event_trigger_data *data, void *rec,
 		 struct ring_buffer_event *event)
 {
-	struct trace_event_file *file = data->private_data;
-
-	if (file) {
-		if (!tracer_tracing_is_on(file->tr))
-			return;
-
-		tracer_tracing_off(file->tr);
-		return;
-	}
-
 	if (!tracing_is_on())
 		return;
 
@@ -999,15 +950,8 @@ static void
 traceoff_count_trigger(struct event_trigger_data *data, void *rec,
 		       struct ring_buffer_event *event)
 {
-	struct trace_event_file *file = data->private_data;
-
-	if (file) {
-		if (!tracer_tracing_is_on(file->tr))
-			return;
-	} else {
-		if (!tracing_is_on())
-			return;
-	}
+	if (!tracing_is_on())
+		return;
 
 	if (!data->count)
 		return;
@@ -1015,10 +959,7 @@ traceoff_count_trigger(struct event_trigger_data *data, void *rec,
 	if (data->count != -1)
 		(data->count)--;
 
-	if (file)
-		tracer_tracing_off(file->tr);
-	else
-		tracing_off();
+	tracing_off();
 }
 
 static int
@@ -1133,10 +1074,14 @@ register_snapshot_trigger(char *glob, struct event_trigger_ops *ops,
 			  struct event_trigger_data *data,
 			  struct trace_event_file *file)
 {
-	if (tracing_alloc_snapshot_instance(file->tr) != 0)
-		return 0;
+	int ret = register_trigger(glob, ops, data, file);
 
-	return register_trigger(glob, ops, data, file);
+	if (ret > 0 && tracing_alloc_snapshot_instance(file->tr) != 0) {
+		unregister_trigger(glob, ops, data, file);
+		ret = 0;
+	}
+
+	return ret;
 }
 
 static int
@@ -1212,14 +1157,7 @@ static void
 stacktrace_trigger(struct event_trigger_data *data, void *rec,
 		   struct ring_buffer_event *event)
 {
-	struct trace_event_file *file = data->private_data;
-	unsigned long flags;
-
-	if (file) {
-		local_save_flags(flags);
-		__trace_stack(file->tr, flags, STACK_SKIP, preempt_count());
-	} else
-		trace_dump_stack(STACK_SKIP);
+	trace_dump_stack(STACK_SKIP);
 }
 
 static void
@@ -1420,11 +1358,6 @@ int event_enable_trigger_func(struct event_command *cmd_ops,
 	trigger = strsep(&param, " \t");
 	if (!trigger)
 		return -EINVAL;
-	if (param) {
-		param = skip_spaces(param);
-		if (!*param)
-			param = NULL;
-	}
 
 	system = strsep(&trigger, ":");
 	if (!trigger)
@@ -1557,9 +1490,7 @@ int event_enable_register_trigger(char *glob,
 	struct event_trigger_data *test;
 	int ret = 0;
 
-	lockdep_assert_held(&event_mutex);
-
-	list_for_each_entry(test, &file->triggers, list) {
+	list_for_each_entry_rcu(test, &file->triggers, list) {
 		test_enable_data = test->private_data;
 		if (test_enable_data &&
 		    (test->cmd_ops->trigger_type ==
@@ -1599,9 +1530,7 @@ void event_enable_unregister_trigger(char *glob,
 	struct event_trigger_data *data;
 	bool unregistered = false;
 
-	lockdep_assert_held(&event_mutex);
-
-	list_for_each_entry(data, &file->triggers, list) {
+	list_for_each_entry_rcu(data, &file->triggers, list) {
 		enable_data = data->private_data;
 		if (enable_data &&
 		    (data->cmd_ops->trigger_type ==

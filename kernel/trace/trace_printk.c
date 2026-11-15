@@ -18,28 +18,6 @@
 
 #include "trace.h"
 
-static noinline void tracing_mark_write(int type, const char *str)
-{
-	if (!tracing_is_on())
-		return;
-
-	switch (type) {
-	case TRACING_MARK_TYPE_BEGIN:
-		trace_printk("B|%d|%s\n", current->tgid, str);
-		break;
-	case TRACING_MARK_TYPE_END:
-		trace_printk("E|%d|%s\n", current->tgid, str);
-		break;
-	default:
-		break;
-	}
-}
-
-void tracing_mark_write_helper(int type, const char *str)
-{
-	tracing_mark_write(type, str);
-}
-
 #ifdef CONFIG_MODULES
 
 /*
@@ -117,7 +95,7 @@ static int module_trace_bprintk_format_notify(struct notifier_block *self,
 		if (val == MODULE_STATE_COMING)
 			hold_module_trace_bprintk_format(start, end);
 	}
-	return NOTIFY_OK;
+	return 0;
 }
 
 /*
@@ -195,7 +173,7 @@ __init static int
 module_trace_bprintk_format_notify(struct notifier_block *self,
 		unsigned long val, void *data)
 {
-	return NOTIFY_OK;
+	return 0;
 }
 static inline const char **
 find_next_mod_format(int start_index, void *v, const char **fmt, loff_t *pos)
@@ -327,7 +305,7 @@ static int t_show(struct seq_file *m, void *v)
 	if (!*fmt)
 		return 0;
 
-	seq_printf(m, "0x%lx : \"", 0L);
+	seq_printf(m, "0x%lx : \"", *(unsigned long *)fmt);
 
 	/*
 	 * Tabs and new lines need to be converted.

@@ -122,7 +122,7 @@ static enum vmpressure_levels vmpressure_level(unsigned long pressure)
 }
 
 static enum vmpressure_levels vmpressure_calc_level(unsigned long scanned,
-						    unsigned long reclaimed, struct vmpressure *vmpr)
+						    unsigned long reclaimed)
 {
 	unsigned long scale = scanned + reclaimed;
 	unsigned long pressure = 0;
@@ -144,7 +144,6 @@ static enum vmpressure_levels vmpressure_calc_level(unsigned long scanned,
 	pressure = scale - (reclaimed * scale / scanned);
 	pressure = pressure * 100 / scale;
 
-	vmpr->pressure = pressure;
 out:
 	pr_debug("%s: %3lu  (s: %lu  r: %lu)\n", __func__, pressure,
 		 scanned, reclaimed);
@@ -211,7 +210,7 @@ static void vmpressure_work_fn(struct work_struct *work)
 	vmpr->tree_reclaimed = 0;
 	spin_unlock(&vmpr->sr_lock);
 
-	level = vmpressure_calc_level(scanned, reclaimed, vmpr);
+	level = vmpressure_calc_level(scanned, reclaimed);
 
 	do {
 		if (vmpressure_event(vmpr, level, ancestor, signalled))
@@ -297,7 +296,7 @@ void vmpressure(gfp_t gfp, struct mem_cgroup *memcg, bool tree,
 		vmpr->scanned = vmpr->reclaimed = 0;
 		spin_unlock(&vmpr->sr_lock);
 
-		level = vmpressure_calc_level(scanned, reclaimed, vmpr);
+		level = vmpressure_calc_level(scanned, reclaimed);
 
 		if (level > VMPRESSURE_LOW) {
 			/*
@@ -359,9 +358,6 @@ void vmpressure_prio(gfp_t gfp, struct mem_cgroup *memcg, int prio)
  * "hierarchy" or "local").
  *
  * To be used as memcg event method.
- *
- * Return: 0 on success, -ENOMEM on memory failure or -EINVAL if @args could
- * not be parsed.
  */
 int vmpressure_register_event(struct mem_cgroup *memcg,
 			      struct eventfd_ctx *eventfd, const char *args)
@@ -369,7 +365,7 @@ int vmpressure_register_event(struct mem_cgroup *memcg,
 	struct vmpressure *vmpr = memcg_to_vmpressure(memcg);
 	struct vmpressure_event *ev;
 	enum vmpressure_modes mode = VMPRESSURE_NO_PASSTHROUGH;
-	enum vmpressure_levels level;
+	enum vmpressure_levels level = -1;
 	char *spec, *spec_orig;
 	char *token;
 	int ret = 0;
@@ -382,18 +378,20 @@ int vmpressure_register_event(struct mem_cgroup *memcg,
 
 	/* Find required level */
 	token = strsep(&spec, ",");
-	ret = match_string(vmpressure_str_levels, VMPRESSURE_NUM_LEVELS, token);
-	if (ret < 0)
+	level = match_string(vmpressure_str_levels, VMPRESSURE_NUM_LEVELS, token);
+	if (level < 0) {
+		ret = level;
 		goto out;
-	level = ret;
+	}
 
 	/* Find optional mode */
 	token = strsep(&spec, ",");
 	if (token) {
-		ret = match_string(vmpressure_str_modes, VMPRESSURE_NUM_MODES, token);
-		if (ret < 0)
+		mode = match_string(vmpressure_str_modes, VMPRESSURE_NUM_MODES, token);
+		if (mode < 0) {
+			ret = mode;
 			goto out;
-		mode = ret;
+		}
 	}
 
 	ev = kzalloc(sizeof(*ev), GFP_KERNEL);
@@ -409,7 +407,6 @@ int vmpressure_register_event(struct mem_cgroup *memcg,
 	mutex_lock(&vmpr->events_lock);
 	list_add(&ev->node, &vmpr->events);
 	mutex_unlock(&vmpr->events_lock);
-	ret = 0;
 out:
 	kfree(spec_orig);
 	return ret;

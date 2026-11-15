@@ -34,13 +34,10 @@
 #include <linux/hugetlb.h>
 #include <linux/memblock.h>
 #include <linux/compaction.h>
-#include <linux/rmap.h>
 
 #include <asm/tlbflush.h>
 
 #include "internal.h"
-
-#include <soc/samsung/exynos-debug.h>
 
 /*
  * online_page_callback contains pointer to current page onlining function.
@@ -85,25 +82,6 @@ static int __init setup_memhp_default_state(char *str)
 	return 1;
 }
 __setup("memhp_default_state=", setup_memhp_default_state);
-
-static atomic_t mem_offline_stop_request;
-static ktime_t t_memstop_req;
-
-static inline bool mem_stop_is_requested(void)
-{
-	return atomic_read(&mem_offline_stop_request) > 0;
-}
-
-static inline void mem_stop_progress_init(void)
-{
-	atomic_set(&mem_offline_stop_request, 0);
-}
-
-void mem_stop_offline(void)
-{
-	if (atomic_inc_return(&mem_offline_stop_request) == 1)
-		t_memstop_req = ktime_get();
-}
 
 void mem_hotplug_begin(void)
 {
@@ -341,8 +319,12 @@ static unsigned long find_smallest_section_pfn(int nid, struct zone *zone,
 				     unsigned long start_pfn,
 				     unsigned long end_pfn)
 {
+	struct mem_section *ms;
+
 	for (; start_pfn < end_pfn; start_pfn += PAGES_PER_SECTION) {
-		if (unlikely(!pfn_to_online_page(start_pfn)))
+		ms = __pfn_to_section(start_pfn);
+
+		if (unlikely(!valid_section(ms)))
 			continue;
 
 		if (unlikely(pfn_to_nid(start_pfn) != nid))
@@ -362,12 +344,15 @@ static unsigned long find_biggest_section_pfn(int nid, struct zone *zone,
 				    unsigned long start_pfn,
 				    unsigned long end_pfn)
 {
+	struct mem_section *ms;
 	unsigned long pfn;
 
 	/* pfn is the end pfn of a memory section. */
 	pfn = end_pfn - 1;
 	for (; pfn >= start_pfn; pfn -= PAGES_PER_SECTION) {
-		if (unlikely(!pfn_to_online_page(pfn)))
+		ms = __pfn_to_section(pfn);
+
+		if (unlikely(!valid_section(ms)))
 			continue;
 
 		if (unlikely(pfn_to_nid(pfn) != nid))
@@ -389,6 +374,7 @@ static void shrink_zone_span(struct zone *zone, unsigned long start_pfn,
 	unsigned long z = zone_end_pfn(zone); /* zone_end_pfn namespace clash */
 	unsigned long zone_end_pfn = z;
 	unsigned long pfn;
+	struct mem_section *ms;
 	int nid = zone_to_nid(zone);
 
 	zone_span_writelock(zone);
@@ -426,7 +412,9 @@ static void shrink_zone_span(struct zone *zone, unsigned long start_pfn,
 	 */
 	pfn = zone_start_pfn;
 	for (; pfn < zone_end_pfn; pfn += PAGES_PER_SECTION) {
-		if (unlikely(!pfn_to_online_page(pfn)))
+		ms = __pfn_to_section(pfn);
+
+		if (unlikely(!valid_section(ms)))
 			continue;
 
 		if (page_zone(pfn_to_page(pfn)) != zone)
@@ -447,33 +435,70 @@ static void shrink_zone_span(struct zone *zone, unsigned long start_pfn,
 	zone_span_writeunlock(zone);
 }
 
-static void update_pgdat_span(struct pglist_data *pgdat)
+static void shrink_pgdat_span(struct pglist_data *pgdat,
+			      unsigned long start_pfn, unsigned long end_pfn)
 {
-	unsigned long node_start_pfn = 0, node_end_pfn = 0;
-	struct zone *zone;
+	unsigned long pgdat_start_pfn = pgdat->node_start_pfn;
+	unsigned long p = pgdat_end_pfn(pgdat); /* pgdat_end_pfn namespace clash */
+	unsigned long pgdat_end_pfn = p;
+	unsigned long pfn;
+	struct mem_section *ms;
+	int nid = pgdat->node_id;
 
-	for (zone = pgdat->node_zones;
-	     zone < pgdat->node_zones + MAX_NR_ZONES; zone++) {
-		unsigned long zone_end_pfn = zone->zone_start_pfn +
-					     zone->spanned_pages;
-
-		/* No need to lock the zones, they can't change. */
-		if (!zone->spanned_pages)
-			continue;
-		if (!node_end_pfn) {
-			node_start_pfn = zone->zone_start_pfn;
-			node_end_pfn = zone_end_pfn;
-			continue;
+	if (pgdat_start_pfn == start_pfn) {
+		/*
+		 * If the section is smallest section in the pgdat, it need
+		 * shrink pgdat->node_start_pfn and pgdat->node_spanned_pages.
+		 * In this case, we find second smallest valid mem_section
+		 * for shrinking zone.
+		 */
+		pfn = find_smallest_section_pfn(nid, NULL, end_pfn,
+						pgdat_end_pfn);
+		if (pfn) {
+			pgdat->node_start_pfn = pfn;
+			pgdat->node_spanned_pages = pgdat_end_pfn - pfn;
 		}
-
-		if (zone_end_pfn > node_end_pfn)
-			node_end_pfn = zone_end_pfn;
-		if (zone->zone_start_pfn < node_start_pfn)
-			node_start_pfn = zone->zone_start_pfn;
+	} else if (pgdat_end_pfn == end_pfn) {
+		/*
+		 * If the section is biggest section in the pgdat, it need
+		 * shrink pgdat->node_spanned_pages.
+		 * In this case, we find second biggest valid mem_section for
+		 * shrinking zone.
+		 */
+		pfn = find_biggest_section_pfn(nid, NULL, pgdat_start_pfn,
+					       start_pfn);
+		if (pfn)
+			pgdat->node_spanned_pages = pfn - pgdat_start_pfn + 1;
 	}
 
-	pgdat->node_start_pfn = node_start_pfn;
-	pgdat->node_spanned_pages = node_end_pfn - node_start_pfn;
+	/*
+	 * If the section is not biggest or smallest mem_section in the pgdat,
+	 * it only creates a hole in the pgdat. So in this case, we need not
+	 * change the pgdat.
+	 * But perhaps, the pgdat has only hole data. Thus it check the pgdat
+	 * has only hole or not.
+	 */
+	pfn = pgdat_start_pfn;
+	for (; pfn < pgdat_end_pfn; pfn += PAGES_PER_SECTION) {
+		ms = __pfn_to_section(pfn);
+
+		if (unlikely(!valid_section(ms)))
+			continue;
+
+		if (pfn_to_nid(pfn) != nid)
+			continue;
+
+		 /* If the section is current section, it continues the loop */
+		if (start_pfn == pfn)
+			continue;
+
+		/* If we find valid section, we have nothing to do */
+		return;
+	}
+
+	/* The pgdat has no valid section */
+	pgdat->node_start_pfn = 0;
+	pgdat->node_spanned_pages = 0;
 }
 
 static void __remove_zone(struct zone *zone, unsigned long start_pfn)
@@ -482,19 +507,9 @@ static void __remove_zone(struct zone *zone, unsigned long start_pfn)
 	int nr_pages = PAGES_PER_SECTION;
 	unsigned long flags;
 
-#ifdef CONFIG_ZONE_DEVICE
-	/*
-	 * Zone shrinking code cannot properly deal with ZONE_DEVICE. So
-	 * we will not try to shrink the zones - which is okay as
-	 * set_zone_contiguous() cannot deal with ZONE_DEVICE either way.
-	 */
-	if (zone_idx(zone) == ZONE_DEVICE)
-		return;
-#endif
-
 	pgdat_resize_lock(zone->zone_pgdat, &flags);
 	shrink_zone_span(zone, start_pfn, start_pfn + nr_pages);
-	update_pgdat_span(pgdat);
+	shrink_pgdat_span(pgdat, start_pfn, start_pfn + nr_pages);
 	pgdat_resize_unlock(zone->zone_pgdat, &flags);
 }
 
@@ -748,7 +763,7 @@ void __ref move_pfn_range_to_zone(struct zone *zone, unsigned long start_pfn,
 	 * are reserved so nobody should be touching them so we should be safe
 	 */
 	memmap_init_zone(nr_pages, nid, zone_idx(zone), start_pfn,
-			 MEMINIT_HOTPLUG, altmap);
+			MEMMAP_HOTPLUG, altmap);
 
 	set_zone_contiguous(zone);
 }
@@ -798,8 +813,8 @@ static inline struct zone *default_zone_for_pfn(int nid, unsigned long start_pfn
 	return movable_node_enabled ? movable_zone : kernel_zone;
 }
 
-struct zone *zone_for_pfn_range(int online_type, int nid,
-		unsigned long start_pfn, unsigned long nr_pages)
+struct zone * zone_for_pfn_range(int online_type, int nid, unsigned start_pfn,
+		unsigned long nr_pages)
 {
 	if (online_type == MMOP_ONLINE_KERNEL)
 		return default_kernel_zone_for_pfn(nid, start_pfn, nr_pages);
@@ -843,7 +858,6 @@ int __ref online_pages(unsigned long pfn, unsigned long nr_pages, int online_typ
 	 */
 	mem = find_memory_block(__pfn_to_section(pfn));
 	nid = mem->nid;
-	put_device(&mem->dev);
 
 	/* associate pfn range with the zone */
 	zone = move_pfn_range(online_type, nid, pfn, nr_pages);
@@ -1174,13 +1188,11 @@ static inline int pageblock_free(struct page *page)
 	return PageBuddy(page) && page_order(page) >= pageblock_order;
 }
 
-/* Return the pfn of the start of the next active pageblock after a given pfn */
-static unsigned long next_active_pageblock(unsigned long pfn)
+/* Return the start of the next active pageblock after a given page */
+static struct page *next_active_pageblock(struct page *page)
 {
-	struct page *page = pfn_to_page(pfn);
-
 	/* Ensure the starting page is pageblock-aligned */
-	BUG_ON(pfn & (pageblock_nr_pages - 1));
+	BUG_ON(page_to_pfn(page) & (pageblock_nr_pages - 1));
 
 	/* If the entire pageblock is free, move to the end of free page */
 	if (pageblock_free(page)) {
@@ -1188,16 +1200,16 @@ static unsigned long next_active_pageblock(unsigned long pfn)
 		/* be careful. we don't have locks, page_order can be changed.*/
 		order = page_order(page);
 		if ((order < MAX_ORDER) && (order >= pageblock_order))
-			return pfn + (1 << order);
+			return page + (1 << order);
 	}
 
-	return pfn + pageblock_nr_pages;
+	return page + pageblock_nr_pages;
 }
 
-static bool is_pageblock_removable_nolock(unsigned long pfn)
+static bool is_pageblock_removable_nolock(struct page *page)
 {
-	struct page *page = pfn_to_page(pfn);
 	struct zone *zone;
+	unsigned long pfn;
 
 	/*
 	 * We have to be careful here because we are iterating over memory
@@ -1220,14 +1232,12 @@ static bool is_pageblock_removable_nolock(unsigned long pfn)
 /* Checks if this range of memory is likely to be hot-removable. */
 bool is_mem_section_removable(unsigned long start_pfn, unsigned long nr_pages)
 {
-	unsigned long end_pfn, pfn;
-
-	end_pfn = min(start_pfn + nr_pages,
-			zone_end_pfn(page_zone(pfn_to_page(start_pfn))));
+	struct page *page = pfn_to_page(start_pfn);
+	struct page *end_page = page + nr_pages;
 
 	/* Check the starting page of each pageblock within the range */
-	for (pfn = start_pfn; pfn < end_pfn; pfn = next_active_pageblock(pfn)) {
-		if (!is_pageblock_removable_nolock(pfn))
+	for (; page < end_page; page = next_active_pageblock(page)) {
+		if (!is_pageblock_removable_nolock(page))
 			return false;
 		cond_resched();
 	}
@@ -1263,9 +1273,6 @@ int test_pages_in_a_zone(unsigned long start_pfn, unsigned long end_pfn,
 				i++;
 			if (i == MAX_ORDER_NR_PAGES || pfn + i >= end_pfn)
 				continue;
-			/* Check if we got outside of the zone */
-			if (zone && !zone_spans_pfn(zone, pfn + i))
-				return 0;
 			page = pfn_to_page(pfn + i);
 			if (zone && page_zone(page) != zone)
 				return 0;
@@ -1294,29 +1301,121 @@ int test_pages_in_a_zone(unsigned long start_pfn, unsigned long end_pfn,
 static unsigned long scan_movable_pages(unsigned long start, unsigned long end)
 {
 	unsigned long pfn;
-
+	struct page *page;
 	for (pfn = start; pfn < end; pfn++) {
-		struct page *page, *head;
-		unsigned long skip;
+		if (pfn_valid(pfn)) {
+			page = pfn_to_page(pfn);
+			if (PageLRU(page))
+				return pfn;
+			if (__PageMovable(page))
+				return pfn;
+			if (PageHuge(page)) {
+				if (hugepage_migration_supported(page_hstate(page)) &&
+				    page_huge_active(page))
+					return pfn;
+				else
+					pfn = round_up(pfn + 1,
+						1 << compound_order(page)) - 1;
+			}
+		}
+	}
+	return 0;
+}
 
+static struct page *new_node_page(struct page *page, unsigned long private)
+{
+	int nid = page_to_nid(page);
+	nodemask_t nmask = node_states[N_MEMORY];
+
+	/*
+	 * try to allocate from a different node but reuse this node if there
+	 * are no other online nodes to be used (e.g. we are offlining a part
+	 * of the only existing node)
+	 */
+	node_clear(nid, nmask);
+	if (nodes_empty(nmask))
+		node_set(nid, nmask);
+
+	return new_page_nodemask(page, nid, &nmask);
+}
+
+#define NR_OFFLINE_AT_ONCE_PAGES	(256)
+static int
+do_migrate_range(unsigned long start_pfn, unsigned long end_pfn)
+{
+	unsigned long pfn;
+	struct page *page;
+	int move_pages = NR_OFFLINE_AT_ONCE_PAGES;
+	int not_managed = 0;
+	int ret = 0;
+	LIST_HEAD(source);
+
+	for (pfn = start_pfn; pfn < end_pfn && move_pages > 0; pfn++) {
 		if (!pfn_valid(pfn))
 			continue;
 		page = pfn_to_page(pfn);
-		if (PageLRU(page))
-			return pfn;
-		if (__PageMovable(page))
-			return pfn;
 
-		if (!PageHuge(page))
+		if (PageHuge(page)) {
+			struct page *head = compound_head(page);
+			pfn = page_to_pfn(head) + (1<<compound_order(head)) - 1;
+			if (compound_order(head) > PFN_SECTION_SHIFT) {
+				ret = -EBUSY;
+				break;
+			}
+			if (isolate_huge_page(page, &source))
+				move_pages -= 1 << compound_order(head);
 			continue;
-		head = compound_head(page);
-		if (hugepage_migration_supported(page_hstate(head)) &&
-		    page_huge_active(head))
-			return pfn;
-		skip = (1 << compound_order(head)) - (page - head);
-		pfn += skip - 1;
+		} else if (PageTransHuge(page))
+			pfn = page_to_pfn(compound_head(page))
+				+ hpage_nr_pages(page) - 1;
+
+		if (!get_page_unless_zero(page))
+			continue;
+		/*
+		 * We can skip free pages. And we can deal with pages on
+		 * LRU and non-lru movable pages.
+		 */
+		if (PageLRU(page))
+			ret = isolate_lru_page(page);
+		else
+			ret = isolate_movable_page(page, ISOLATE_UNEVICTABLE);
+		if (!ret) { /* Success */
+			put_page(page);
+			list_add_tail(&page->lru, &source);
+			move_pages--;
+			if (!__PageMovable(page))
+				inc_node_page_state(page, NR_ISOLATED_ANON +
+						    page_is_file_cache(page));
+
+		} else {
+#ifdef CONFIG_DEBUG_VM
+			pr_alert("failed to isolate pfn %lx\n", pfn);
+			dump_page(page, "isolation failed");
+#endif
+			put_page(page);
+			/* Because we don't have big zone->lock. we should
+			   check this again here. */
+			if (page_count(page)) {
+				not_managed++;
+				ret = -EBUSY;
+				break;
+			}
+		}
 	}
-	return 0;
+	if (!list_empty(&source)) {
+		if (not_managed) {
+			putback_movable_pages(&source);
+			goto out;
+		}
+
+		/* Allocate a new page from the nearest neighbor node */
+		ret = migrate_pages(&source, new_node_page, NULL, 0,
+					MIGRATE_SYNC, MR_MEMORY_HOTPLUG);
+		if (ret)
+			putback_movable_pages(&source);
+	}
+out:
+	return ret;
 }
 
 /*
@@ -1444,165 +1543,6 @@ static void node_states_clear_node(int node, struct memory_notify *arg)
 		node_clear_state(node, N_MEMORY);
 }
 
-struct partial_work {
-	struct work_struct work;
-
-	int cpu;
-	int result;
-	unsigned long start_pfn;
-	unsigned long end_pfn;
-	struct zone *zone;
-	struct kref *kref;
-	struct completion *completion;
-};
-
-struct partial_job {
-	struct kref ref;
-	struct completion completion;
-};
-
-#define MEM_HP_REFRESH_TIME		(9 * HZ)
-static void hotplug_watchdog_handler(struct timer_list *timer)
-{
-	s3c2410wdt_keepalive_common();
-	mod_timer(timer, jiffies + MEM_HP_REFRESH_TIME);
-}
-
-static void finish_partial_work(struct kref *kref)
-{
-	struct partial_job *pjob = container_of(kref, struct partial_job, ref);
-
-	complete_all(&pjob->completion);
-}
-
-#define OFFLINE_RETRY_COUNT 5
-
-static void __offline_partial_pages(struct work_struct *work)
-{
-	struct partial_work *pwork = container_of(work, struct partial_work, work);
-	unsigned long start_pfn, end_pfn, pfn;
-	int max_retry = OFFLINE_RETRY_COUNT;
-	struct zone *zone;
-
-	pfn = start_pfn = pwork->start_pfn;
-	end_pfn = pwork->end_pfn;
-	zone = pwork->zone;
-
-repeat:
-	/* start memory hot removal */
-	if (mem_stop_is_requested()) {
-		pwork->result = -EINTR;
-		goto finish_offline;
-	}
-
-	cond_resched();
-	lru_add_drain_all();
-	drain_all_pages(zone);
-
-	pfn = scan_movable_pages(start_pfn, end_pfn);
-	if (pfn) { /* We have movable pages */
-		int ret;
-
-		pfn = ALIGN_DOWN(pfn, pageblock_nr_pages);
-		ret = reclaim_pages_range(pfn, end_pfn - pfn,
-					  MIGRATE_SYNC, MR_MEMORY_HOTPLUG);
-		if (ret && --max_retry == 0) {
-			pwork->result = ret;
-			goto finish_offline;
-		} else if (!ret)
-			max_retry = OFFLINE_RETRY_COUNT;
-
-		goto repeat;
-	}
-
-	pwork->result = 0;
-
-finish_offline:
-	kref_put(pwork->kref, finish_partial_work);
-}
-
-#define HP_WORK_COUNT	4
-static int offline_pages_multi(struct zone *zone, unsigned long start_pfn)
-{
-	struct partial_work work[HP_WORK_COUNT];
-	struct partial_work *pwork = work;
-	struct partial_job job;
-	struct timer_list timer;
-	int i, psize, pstart, pend;
-	int num_cpus = num_possible_cpus();
-	int ret = 0;
-
-	/* Distribute the works fairly */
-	BUILD_BUG_ON((PAGES_PER_SECTION % HP_WORK_COUNT));
-
-	timer_setup_on_stack(&timer, hotplug_watchdog_handler, 0);
-
-	timer.expires = jiffies + MEM_HP_REFRESH_TIME;
-	add_timer(&timer);
-
-	/* watchdog kicking once before start */
-	s3c2410wdt_keepalive_common();
-
-	init_completion(&job.completion);
-	kref_init(&job.ref);
-
-	psize = PAGES_PER_SECTION / HP_WORK_COUNT;
-	pstart = start_pfn;
-	pend = pstart + psize;
-
-	for (i = 0; i < HP_WORK_COUNT; i++, pwork++) {
-		/* avoid cpu0 */
-		pwork->cpu = (i + 1) % num_cpus;
-		if (num_cpus > 1 && pwork->cpu == 0)
-			pwork->cpu++;
-
-		pwork->result = 0;
-		pwork->start_pfn = pstart;
-		pwork->end_pfn = pend;
-		pwork->zone = zone;
-		pwork->kref = &job.ref;
-		pwork->completion = &job.completion;
-
-		kref_get(&job.ref);
-		INIT_WORK(&pwork->work, __offline_partial_pages);
-		schedule_work_on(pwork->cpu, &pwork->work);
-
-		pstart = pend;
-		pend += psize;
-	}
-
-	kref_put(&job.ref, finish_partial_work);
-	ret = wait_for_completion_interruptible(&job.completion);
-	if (ret) {
-		/*
-		 * Stop is requested by signal,
-		 * so request stop memory offline and wait till done.
-		 */
-		mem_stop_offline();
-		wait_for_completion(&job.completion);
-		return -EINTR;
-	}
-
-	del_timer_sync(&timer);
-	destroy_timer_on_stack(&timer);
-
-	for (i = 0; i < HP_WORK_COUNT; i++) {
-		if (work[i].result != 0) {
-			ret = work[i].result;
-			break;
-		}
-	}
-
-	if (ret == -EINTR) {
-		s64 elapsed_ms;
-
-		elapsed_ms = ktime_to_ms(ktime_sub(ktime_get(), t_memstop_req));
-		pr_info("%lld ms to finish offline stop request\n", elapsed_ms);
-	}
-
-	return ret;
-}
-
 static int __ref __offline_pages(unsigned long start_pfn,
 		  unsigned long end_pfn)
 {
@@ -1652,11 +1592,22 @@ static int __ref __offline_pages(unsigned long start_pfn,
 		goto failed_removal;
 
 	pfn = start_pfn;
-	mem_stop_progress_init();
 repeat:
-	ret = offline_pages_multi(zone, start_pfn);
-	if (ret)
+	/* start memory hot removal */
+	ret = -EINTR;
+	if (signal_pending(current))
 		goto failed_removal;
+
+	cond_resched();
+	lru_add_drain_all();
+	drain_all_pages(zone);
+
+	pfn = scan_movable_pages(start_pfn, end_pfn);
+	if (pfn) { /* We have movable pages */
+		ret = do_migrate_range(pfn, end_pfn);
+		goto repeat;
+	}
+
 	/*
 	 * dissolve free hugepages in the memory block before doing offlining
 	 * actually in order to make hugetlbfs's object counting consistent.
@@ -1890,6 +1841,8 @@ void __ref __remove_memory(int nid, u64 start, u64 size)
 
 	BUG_ON(check_hotplug_memory_range(start, size));
 
+	mem_hotplug_begin();
+
 	/*
 	 * All memory blocks must be offlined before removing memory.  Check
 	 * whether all memory blocks in question are offline and trigger a BUG()
@@ -1902,7 +1855,6 @@ void __ref __remove_memory(int nid, u64 start, u64 size)
 
 	/* remove memmap entry */
 	firmware_map_remove(start, start + size, "System RAM");
-	arch_remove_memory(start, size, NULL);
 	memblock_free(start, size);
 	memblock_remove(start, size);
 

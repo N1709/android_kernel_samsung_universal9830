@@ -196,11 +196,6 @@ check_stack(unsigned long ip, unsigned long *stack)
 	local_irq_restore(flags);
 }
 
-/* Some archs may not define MCOUNT_INSN_SIZE */
-#ifndef MCOUNT_INSN_SIZE
-# define MCOUNT_INSN_SIZE 0
-#endif
-
 static void
 stack_trace_call(unsigned long ip, unsigned long parent_ip,
 		 struct ftrace_ops *op, struct pt_regs *pt_regs)
@@ -453,7 +448,7 @@ static char stack_trace_filter_buf[COMMAND_LINE_SIZE+1] __initdata;
 
 static __init int enable_stacktrace(char *str)
 {
-	if (str_has_prefix(str, "_filter="))
+	if (strncmp(str, "_filter=", 8) == 0)
 		strncpy(stack_trace_filter_buf, str+8, COMMAND_LINE_SIZE);
 
 	stack_tracer_enabled = 1;

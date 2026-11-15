@@ -368,9 +368,7 @@ static int yama_ptrace_access_check(struct task_struct *child,
 			break;
 		case YAMA_SCOPE_RELATIONAL:
 			rcu_read_lock();
-			if (!pid_alive(child))
-				rc = -EPERM;
-			if (!rc && !task_is_descendant(current, child) &&
+			if (!task_is_descendant(current, child) &&
 			    !ptracer_exception_found(current, child) &&
 			    !ns_capable(__task_cred(child)->user_ns, CAP_SYS_PTRACE))
 				rc = -EPERM;
@@ -434,7 +432,7 @@ static struct security_hook_list yama_hooks[] __lsm_ro_after_init = {
 
 #ifdef CONFIG_SYSCTL
 static int yama_dointvec_minmax(struct ctl_table *table, int write,
-				void *buffer, size_t *lenp, loff_t *ppos)
+				void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	struct ctl_table table_copy;
 
@@ -479,15 +477,9 @@ static void __init yama_init_sysctl(void)
 static inline void yama_init_sysctl(void) { }
 #endif /* CONFIG_SYSCTL */
 
-static int __init yama_init(void)
+void __init yama_add_hooks(void)
 {
 	pr_info("Yama: becoming mindful.\n");
 	security_add_hooks(yama_hooks, ARRAY_SIZE(yama_hooks), "yama");
 	yama_init_sysctl();
-	return 0;
 }
-
-DEFINE_LSM(yama) = {
-	.name = "yama",
-	.init = yama_init,
-};

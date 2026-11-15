@@ -589,7 +589,8 @@ probe_wakeup(void *ignore, struct task_struct *p)
 	else
 		tracing_dl = 0;
 
-	wakeup_task = get_task_struct(p);
+	wakeup_task = p;
+	get_task_struct(wakeup_task);
 
 	local_save_flags(flags);
 
@@ -639,7 +640,7 @@ static void start_wakeup_tracer(struct trace_array *tr)
 	if (ret) {
 		pr_info("wakeup trace: Couldn't activate tracepoint"
 			" probe to kernel_sched_migrate_task\n");
-		goto fail_deprobe_sched_switch;
+		return;
 	}
 
 	wakeup_reset(tr);
@@ -657,8 +658,6 @@ static void start_wakeup_tracer(struct trace_array *tr)
 		printk(KERN_ERR "failed to start wakeup tracer\n");
 
 	return;
-fail_deprobe_sched_switch:
-	unregister_trace_sched_switch(probe_wakeup_sched_switch, NULL);
 fail_deprobe_wake_new:
 	unregister_trace_sched_wakeup_new(probe_wakeup, NULL);
 fail_deprobe:

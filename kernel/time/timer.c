@@ -42,11 +42,8 @@
 #include <linux/sched/sysctl.h>
 #include <linux/sched/nohz.h>
 #include <linux/sched/debug.h>
-#include <linux/sched/clock.h>
 #include <linux/slab.h>
 #include <linux/compat.h>
-#include <linux/random.h>
-#include <linux/debug-snapshot.h>
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
@@ -200,10 +197,6 @@ EXPORT_SYMBOL(jiffies_64);
 struct timer_base {
 	raw_spinlock_t		lock;
 	struct timer_list	*running_timer;
-#ifdef CONFIG_PREEMPT_RT
-	spinlock_t		expiry_lock;
-	atomic_t		timer_waiters;
-#endif
 	unsigned long		clk;
 	unsigned long		next_expiry;
 	unsigned int		cpu;
@@ -253,7 +246,8 @@ void timers_update_nohz(void)
 }
 
 int timer_migration_handler(struct ctl_table *table, int write,
-			    void *buffer, size_t *lenp, loff_t *ppos)
+			    void __user *buffer, size_t *lenp,
+			    loff_t *ppos)
 {
 	int ret;
 
@@ -525,8 +519,8 @@ static int calc_wheel_index(unsigned long expires, unsigned long clk)
 		 * Force expire obscene large timeouts to expire at the
 		 * capacity limit of the wheel.
 		 */
-		if (delta >= WHEEL_TIMEOUT_CUTOFF)
-			expires = clk + WHEEL_TIMEOUT_MAX;
+		if (expires >= WHEEL_TIMEOUT_CUTOFF)
+			expires = WHEEL_TIMEOUT_MAX;
 
 		idx = calc_index(expires, LVL_DEPTH - 1);
 	}
@@ -586,15 +580,7 @@ trigger_dyntick_cpu(struct timer_base *base, struct timer_list *timer)
 	 * Set the next expiry time and kick the CPU so it can reevaluate the
 	 * wheel:
 	 */
-	if (time_before(timer->expires, base->clk)) {
-		/*
-		 * Prevent from forward_timer_base() moving the base->clk
-		 * backward
-		 */
-		base->next_expiry = base->clk;
-	} else {
-		base->next_expiry = timer->expires;
-	}
+	base->next_expiry = timer->expires;
 	wake_up_nohz_cpu(base->cpu);
 }
 
@@ -913,13 +899,10 @@ static inline void forward_timer_base(struct timer_base *base)
 	 * If the next expiry value is > jiffies, then we fast forward to
 	 * jiffies otherwise we forward to the next expiry value.
 	 */
-	if (time_after(base->next_expiry, jnow)) {
+	if (time_after(base->next_expiry, jnow))
 		base->clk = jnow;
-	} else {
-		if (WARN_ON_ONCE(time_before(base->next_expiry, base->clk)))
-			return;
+	else
 		base->clk = base->next_expiry;
-	}
 #endif
 }
 
@@ -1079,16 +1062,14 @@ out_unlock:
 }
 
 /**
- * mod_timer_pending - Modify a pending timer's timeout
- * @timer:	The pending timer to be modified
- * @expires:	New absolute timeout in jiffies
+ * mod_timer_pending - modify a pending timer's timeout
+ * @timer: the pending timer to be modified
+ * @expires: new timeout in jiffies
  *
- * mod_timer_pending() is the same for pending timers as mod_timer(), but
- * will not activate inactive timers.
+ * mod_timer_pending() is the same for pending timers as mod_timer(),
+ * but will not re-activate and modify already deleted timers.
  *
- * Return:
- * * %0 - The timer was inactive and not modified
- * * %1 - The timer was active and requeued to expire at @expires
+ * It is useful for unserialized use of timers.
  */
 int mod_timer_pending(struct timer_list *timer, unsigned long expires)
 {
@@ -1097,27 +1078,24 @@ int mod_timer_pending(struct timer_list *timer, unsigned long expires)
 EXPORT_SYMBOL(mod_timer_pending);
 
 /**
- * mod_timer - Modify a timer's timeout
- * @timer:	The timer to be modified
- * @expires:	New absolute timeout in jiffies
+ * mod_timer - modify a timer's timeout
+ * @timer: the timer to be modified
+ * @expires: new timeout in jiffies
+ *
+ * mod_timer() is a more efficient way to update the expire field of an
+ * active timer (if the timer is inactive it will be activated)
  *
  * mod_timer(timer, expires) is equivalent to:
  *
  *     del_timer(timer); timer->expires = expires; add_timer(timer);
  *
- * mod_timer() is more efficient than the above open coded sequence. In
- * case that the timer is inactive, the del_timer() part is a NOP. The
- * timer is in any case activated with the new expiry time @expires.
- *
  * Note that if there are multiple unserialized concurrent users of the
  * same timer, then mod_timer() is the only safe way to modify the timeout,
  * since add_timer() cannot modify an already running timer.
  *
- * Return:
- * * %0 - The timer was inactive and started
- * * %1 - The timer was active and requeued to expire at @expires or
- *	  the timer was active and not modified because @expires did
- *	  not change the effective expiry time
+ * The function returns whether it has modified a pending timer or not.
+ * (ie. mod_timer() of an inactive timer returns 0, mod_timer() of an
+ * active timer returns 1.)
  */
 int mod_timer(struct timer_list *timer, unsigned long expires)
 {
@@ -1128,18 +1106,11 @@ EXPORT_SYMBOL(mod_timer);
 /**
  * timer_reduce - Modify a timer's timeout if it would reduce the timeout
  * @timer:	The timer to be modified
- * @expires:	New absolute timeout in jiffies
+ * @expires:	New timeout in jiffies
  *
  * timer_reduce() is very similar to mod_timer(), except that it will only
- * modify an enqueued timer if that would reduce the expiration time. If
- * @timer is not enqueued it starts the timer.
- *
- * Return:
- * * %0 - The timer was inactive and started
- * * %1 - The timer was active and requeued to expire at @expires or
- *	  the timer was active and not modified because @expires
- *	  did not change the effective expiry time such that the
- *	  timer would expire earlier than already scheduled
+ * modify a running timer if that would reduce the expiration time (it will
+ * start a timer that isn't running).
  */
 int timer_reduce(struct timer_list *timer, unsigned long expires)
 {
@@ -1148,21 +1119,18 @@ int timer_reduce(struct timer_list *timer, unsigned long expires)
 EXPORT_SYMBOL(timer_reduce);
 
 /**
- * add_timer - Start a timer
- * @timer:	The timer to be started
+ * add_timer - start a timer
+ * @timer: the timer to be added
  *
- * Start @timer to expire at @timer->expires in the future. @timer->expires
- * is the absolute expiry time measured in 'jiffies'. When the timer expires
- * timer->function(timer) will be invoked from soft interrupt context.
+ * The kernel will do a ->function(@timer) callback from the
+ * timer interrupt at the ->expires point in the future. The
+ * current time is 'jiffies'.
  *
- * The @timer->expires and @timer->function fields must be set prior
- * to calling this function.
+ * The timer's ->expires, ->function fields must be set prior calling this
+ * function.
  *
- * If @timer->expires is already in the past @timer will be queued to
- * expire at the next timer tick.
- *
- * This can only operate on an inactive timer. Attempts to invoke this on
- * an active timer are rejected with a warning.
+ * Timers with an ->expires field in the past will be executed in the next
+ * timer tick.
  */
 void add_timer(struct timer_list *timer)
 {
@@ -1172,13 +1140,11 @@ void add_timer(struct timer_list *timer)
 EXPORT_SYMBOL(add_timer);
 
 /**
- * add_timer_on - Start a timer on a particular CPU
- * @timer:	The timer to be started
- * @cpu:	The CPU to start it on
+ * add_timer_on - start a timer on a particular CPU
+ * @timer: the timer to be added
+ * @cpu: the CPU to start it on
  *
- * Same as add_timer() except that it starts the timer on the given CPU.
- *
- * See add_timer() for further details.
+ * This is not very scalable on SMP. Double adds are not possible.
  */
 void add_timer_on(struct timer_list *timer, int cpu)
 {
@@ -1213,18 +1179,15 @@ void add_timer_on(struct timer_list *timer, int cpu)
 EXPORT_SYMBOL_GPL(add_timer_on);
 
 /**
- * del_timer - Deactivate a timer.
- * @timer:	The timer to be deactivated
+ * del_timer - deactivate a timer.
+ * @timer: the timer to be deactivated
  *
- * The function only deactivates a pending timer, but contrary to
- * del_timer_sync() it does not take into account whether the timer's
- * callback function is concurrently executed on a different CPU or not.
- * It neither prevents rearming of the timer. If @timer can be rearmed
- * concurrently then the return value of this function is meaningless.
+ * del_timer() deactivates a timer - this works on both active and inactive
+ * timers.
  *
- * Return:
- * * %0 - The timer was not pending
- * * %1 - The timer was pending and deactivated
+ * The function returns whether it has deactivated a pending timer or not.
+ * (ie. del_timer() of an inactive timer returns 0, del_timer() of an
+ * active timer returns 1.)
  */
 int del_timer(struct timer_list *timer)
 {
@@ -1246,19 +1209,10 @@ EXPORT_SYMBOL(del_timer);
 
 /**
  * try_to_del_timer_sync - Try to deactivate a timer
- * @timer:	Timer to deactivate
+ * @timer: timer to delete
  *
- * This function tries to deactivate a timer. On success the timer is not
- * queued and the timer callback function is not running on any CPU.
- *
- * This function does not guarantee that the timer cannot be rearmed right
- * after dropping the base lock. That needs to be prevented by the calling
- * code if necessary.
- *
- * Return:
- * * %0  - The timer was not pending
- * * %1  - The timer was pending and deactivated
- * * %-1 - The timer callback function is running on a different CPU
+ * This function tries to deactivate a timer. Upon successful (ret >= 0)
+ * exit the timer is not queued and the handler is not running on any CPU.
  */
 int try_to_del_timer_sync(struct timer_list *timer)
 {
@@ -1279,91 +1233,25 @@ int try_to_del_timer_sync(struct timer_list *timer)
 }
 EXPORT_SYMBOL(try_to_del_timer_sync);
 
-#ifdef CONFIG_PREEMPT_RT
-static __init void timer_base_init_expiry_lock(struct timer_base *base)
-{
-	spin_lock_init(&base->expiry_lock);
-}
-
-static inline void timer_base_lock_expiry(struct timer_base *base)
-{
-	spin_lock(&base->expiry_lock);
-}
-
-static inline void timer_base_unlock_expiry(struct timer_base *base)
-{
-	spin_unlock(&base->expiry_lock);
-}
-
-/*
- * The counterpart to del_timer_wait_running().
- *
- * If there is a waiter for base->expiry_lock, then it was waiting for the
- * timer callback to finish. Drop expiry_lock and reaquire it. That allows
- * the waiter to acquire the lock and make progress.
- */
-static void timer_sync_wait_running(struct timer_base *base)
-{
-	if (atomic_read(&base->timer_waiters)) {
-		spin_unlock(&base->expiry_lock);
-		spin_lock(&base->expiry_lock);
-	}
-}
-
-/*
- * This function is called on PREEMPT_RT kernels when the fast path
- * deletion of a timer failed because the timer callback function was
- * running.
- *
- * This prevents priority inversion, if the softirq thread on a remote CPU
- * got preempted, and it prevents a life lock when the task which tries to
- * delete a timer preempted the softirq thread running the timer callback
- * function.
- */
-static void del_timer_wait_running(struct timer_list *timer)
-{
-	u32 tf;
-
-	tf = READ_ONCE(timer->flags);
-	if (!(tf & TIMER_MIGRATING)) {
-		struct timer_base *base = get_timer_base(tf);
-
-		/*
-		 * Mark the base as contended and grab the expiry lock,
-		 * which is held by the softirq across the timer
-		 * callback. Drop the lock immediately so the softirq can
-		 * expire the next timer. In theory the timer could already
-		 * be running again, but that's more than unlikely and just
-		 * causes another wait loop.
-		 */
-		atomic_inc(&base->timer_waiters);
-		spin_lock_bh(&base->expiry_lock);
-		atomic_dec(&base->timer_waiters);
-		spin_unlock_bh(&base->expiry_lock);
-	}
-}
-#else
-static inline void timer_base_init_expiry_lock(struct timer_base *base) { }
-static inline void timer_base_lock_expiry(struct timer_base *base) { }
-static inline void timer_base_unlock_expiry(struct timer_base *base) { }
-static inline void timer_sync_wait_running(struct timer_base *base) { }
-static inline void del_timer_wait_running(struct timer_list *timer) { }
-#endif
-
+#ifdef CONFIG_SMP
 /**
- * del_timer_sync - Deactivate a timer and wait for the handler to finish.
- * @timer:	The timer to be deactivated
+ * del_timer_sync - deactivate a timer and wait for the handler to finish.
+ * @timer: the timer to be deactivated
+ *
+ * This function only differs from del_timer() on SMP: besides deactivating
+ * the timer it also makes sure the handler has finished executing on other
+ * CPUs.
  *
  * Synchronization rules: Callers must prevent restarting of the timer,
  * otherwise this function is meaningless. It must not be called from
  * interrupt contexts unless the timer is an irqsafe one. The caller must
- * not hold locks which would prevent completion of the timer's callback
- * function. The timer's handler must not call add_timer_on(). Upon exit
- * the timer is not queued and the handler is not running on any CPU.
+ * not hold locks which would prevent completion of the timer's
+ * handler. The timer's handler must not call add_timer_on(). Upon exit the
+ * timer is not queued and the handler is not running on any CPU.
  *
- * For !irqsafe timers, the caller must not hold locks that are held in
- * interrupt context. Even if the lock has nothing to do with the timer in
- * question.  Here's why::
+ * Note: For !irqsafe timers, you must not hold locks that are held in
+ *   interrupt context while calling this function. Even if the lock has
+ *   nothing to do with the timer in question.  Here's why::
  *
  *    CPU0                             CPU1
  *    ----                             ----
@@ -1377,22 +1265,13 @@ static inline void del_timer_wait_running(struct timer_list *timer) { }
  *    while (base->running_timer == mytimer);
  *
  * Now del_timer_sync() will never return and never release somelock.
- * The interrupt on the other CPU is waiting to grab somelock but it has
- * interrupted the softirq that CPU0 is waiting to finish.
+ * The interrupt on the other CPU is waiting to grab somelock but
+ * it has interrupted the softirq that CPU0 is waiting to finish.
  *
- * This function cannot guarantee that the timer is not rearmed again by
- * some concurrent or preempting code, right after it dropped the base
- * lock. If there is the possibility of a concurrent rearm then the return
- * value of the function is meaningless.
- *
- * Return:
- * * %0	- The timer was not pending
- * * %1	- The timer was pending and deactivated
+ * The function returns whether it has deactivated a pending timer or not.
  */
 int del_timer_sync(struct timer_list *timer)
 {
-	int ret;
-
 #ifdef CONFIG_LOCKDEP
 	unsigned long flags;
 
@@ -1410,26 +1289,19 @@ int del_timer_sync(struct timer_list *timer)
 	 * could lead to deadlock.
 	 */
 	WARN_ON(in_irq() && !(timer->flags & TIMER_IRQSAFE));
-
-	do {
-		ret = try_to_del_timer_sync(timer);
-
-		if (unlikely(ret < 0)) {
-			del_timer_wait_running(timer);
-			cpu_relax();
-		}
-	} while (ret < 0);
-
-	return ret;
+	for (;;) {
+		int ret = try_to_del_timer_sync(timer);
+		if (ret >= 0)
+			return ret;
+		cpu_relax();
+	}
 }
 EXPORT_SYMBOL(del_timer_sync);
+#endif
 
-static void call_timer_fn(struct timer_list *timer,
-			  void (*fn)(struct timer_list *),
-			  unsigned long baseclk)
+static void call_timer_fn(struct timer_list *timer, void (*fn)(struct timer_list *))
 {
 	int count = preempt_count();
-	unsigned long long start_time;
 
 #ifdef CONFIG_LOCKDEP
 	/*
@@ -1450,11 +1322,8 @@ static void call_timer_fn(struct timer_list *timer,
 	 */
 	lock_map_acquire(&lockdep_map);
 
-	dbg_snapshot_irq_var(start_time);
-	trace_timer_expire_entry(timer, baseclk);
-	dbg_snapshot_irq(DSS_FLAG_CALL_TIMER_FN, fn, NULL, 0, DSS_FLAG_IN);
+	trace_timer_expire_entry(timer);
 	fn(timer);
-	dbg_snapshot_irq(DSS_FLAG_CALL_TIMER_FN, fn, NULL, start_time, DSS_FLAG_OUT);
 	trace_timer_expire_exit(timer);
 
 	lock_map_release(&lockdep_map);
@@ -1474,13 +1343,6 @@ static void call_timer_fn(struct timer_list *timer,
 
 static void expire_timers(struct timer_base *base, struct hlist_head *head)
 {
-	/*
-	 * This value is required only for tracing. base->clk was
-	 * incremented directly before expire_timers was called. But expiry
-	 * is related to the old base->clk value.
-	 */
-	unsigned long baseclk = base->clk - 1;
-
 	while (!hlist_empty(head)) {
 		struct timer_list *timer;
 		void (*fn)(struct timer_list *);
@@ -1494,14 +1356,11 @@ static void expire_timers(struct timer_base *base, struct hlist_head *head)
 
 		if (timer->flags & TIMER_IRQSAFE) {
 			raw_spin_unlock(&base->lock);
-			call_timer_fn(timer, fn, baseclk);
-			base->running_timer = NULL;
+			call_timer_fn(timer, fn);
 			raw_spin_lock(&base->lock);
 		} else {
 			raw_spin_unlock_irq(&base->lock);
-			call_timer_fn(timer, fn, baseclk);
-			base->running_timer = NULL;
-			timer_sync_wait_running(base);
+			call_timer_fn(timer, fn);
 			raw_spin_lock_irq(&base->lock);
 		}
 	}
@@ -1731,26 +1590,24 @@ void timer_clear_idle(void)
 static int collect_expired_timers(struct timer_base *base,
 				  struct hlist_head *heads)
 {
-	unsigned long now = READ_ONCE(jiffies);
-
 	/*
 	 * NOHZ optimization. After a long idle sleep we need to forward the
 	 * base to current jiffies. Avoid a loop by searching the bitfield for
 	 * the next expiring timer.
 	 */
-	if ((long)(now - base->clk) > 2) {
+	if ((long)(jiffies - base->clk) > 2) {
 		unsigned long next = __next_timer_interrupt(base);
 
 		/*
 		 * If the next timer is ahead of time forward to current
 		 * jiffies, otherwise forward to the next expiry time:
 		 */
-		if (time_after(next, now)) {
+		if (time_after(next, jiffies)) {
 			/*
 			 * The call site will increment base->clk and then
 			 * terminate the expiry loop immediately.
 			 */
-			base->clk = now;
+			base->clk = jiffies;
 			return 0;
 		}
 		base->clk = next;
@@ -1798,7 +1655,6 @@ static inline void __run_timers(struct timer_base *base)
 	if (!time_after_eq(jiffies, base->clk))
 		return;
 
-	timer_base_lock_expiry(base);
 	raw_spin_lock_irq(&base->lock);
 
 	/*
@@ -1825,8 +1681,8 @@ static inline void __run_timers(struct timer_base *base)
 		while (levels--)
 			expire_timers(base, heads + levels);
 	}
+	base->running_timer = NULL;
 	raw_spin_unlock_irq(&base->lock);
-	timer_base_unlock_expiry(base);
 }
 
 /*
@@ -2071,7 +1927,6 @@ static void __init init_timer_cpu(int cpu)
 		base->cpu = cpu;
 		raw_spin_lock_init(&base->lock);
 		base->clk = jiffies;
-		timer_base_init_expiry_lock(base);
 	}
 }
 

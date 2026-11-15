@@ -15,7 +15,7 @@
 #include <linux/ctype.h>
 #include <linux/security.h>
 #include <linux/vmalloc.h>
-#include <linux/init.h>
+#include <linux/module.h>
 #include <linux/seq_file.h>
 #include <linux/uaccess.h>
 #include <linux/mount.h>
@@ -23,7 +23,6 @@
 #include <linux/capability.h>
 #include <linux/rcupdate.h>
 #include <linux/fs.h>
-#include <linux/fs_context.h>
 #include <linux/poll.h>
 #include <uapi/linux/major.h>
 #include <uapi/linux/magic.h>
@@ -124,26 +123,21 @@ static int aafs_show_path(struct seq_file *seq, struct dentry *dentry)
 	return 0;
 }
 
-static void aafs_i_callback(struct rcu_head *head)
+static void aafs_evict_inode(struct inode *inode)
 {
-	struct inode *inode = container_of(head, struct inode, i_rcu);
+	truncate_inode_pages_final(&inode->i_data);
+	clear_inode(inode);
 	if (S_ISLNK(inode->i_mode))
 		kfree(inode->i_link);
-	free_inode_nonrcu(inode);
-}
-
-static void aafs_destroy_inode(struct inode *inode)
-{
-	call_rcu(&inode->i_rcu, aafs_i_callback);
 }
 
 static const struct super_operations aafs_super_ops = {
 	.statfs = simple_statfs,
-	.destroy_inode = aafs_destroy_inode,
+	.evict_inode = aafs_evict_inode,
 	.show_path = aafs_show_path,
 };
 
-static int apparmorfs_fill_super(struct super_block *sb, struct fs_context *fc)
+static int fill_super(struct super_block *sb, void *data, int silent)
 {
 	static struct tree_descr files[] = { {""} };
 	int error;
@@ -156,25 +150,16 @@ static int apparmorfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	return 0;
 }
 
-static int apparmorfs_get_tree(struct fs_context *fc)
+static struct dentry *aafs_mount(struct file_system_type *fs_type,
+				 int flags, const char *dev_name, void *data)
 {
-	return get_tree_single(fc, apparmorfs_fill_super);
-}
-
-static const struct fs_context_operations apparmorfs_context_ops = {
-	.get_tree	= apparmorfs_get_tree,
-};
-
-static int apparmorfs_init_fs_context(struct fs_context *fc)
-{
-	fc->ops = &apparmorfs_context_ops;
-	return 0;
+	return mount_single(fs_type, flags, data, fill_super);
 }
 
 static struct file_system_type aafs_ops = {
 	.owner = THIS_MODULE,
 	.name = AAFS_NAME,
-	.init_fs_context = apparmorfs_init_fs_context,
+	.mount = aafs_mount,
 	.kill_sb = kill_anon_super,
 };
 
@@ -371,7 +356,6 @@ static void aafs_remove(struct dentry *dentry)
 			simple_rmdir(dir, dentry);
 		else
 			simple_unlink(dir, dentry);
-		d_delete(dentry);
 		dput(dentry);
 	}
 	inode_unlock(dir);
@@ -413,7 +397,7 @@ static struct aa_loaddata *aa_simple_write_to_buffer(const char __user *userbuf,
 
 	data->size = copy_size;
 	if (copy_from_user(data->data, userbuf, copy_size)) {
-		aa_put_loaddata(data);
+		kvfree(data);
 		return ERR_PTR(-EFAULT);
 	}
 
@@ -434,7 +418,7 @@ static ssize_t policy_update(u32 mask, const char __user *buf, size_t size,
 	 */
 	error = aa_may_manage_policy(label, ns, mask);
 	if (error)
-		goto end_section;
+		return error;
 
 	data = aa_simple_write_to_buffer(buf, size, size, pos);
 	error = PTR_ERR(data);
@@ -442,7 +426,6 @@ static ssize_t policy_update(u32 mask, const char __user *buf, size_t size,
 		error = aa_replace_profiles(ns, label, mask, data);
 		aa_put_loaddata(data);
 	}
-end_section:
 	end_current_label_crit_section(label);
 
 	return error;
@@ -604,7 +587,7 @@ static __poll_t ns_revision_poll(struct file *file, poll_table *pt)
 
 void __aa_bump_ns_revision(struct aa_ns *ns)
 {
-	WRITE_ONCE(ns->revision, ns->revision + 1);
+	ns->revision++;
 	wake_up_interruptible(&ns->wait);
 }
 
@@ -879,10 +862,8 @@ static struct multi_transaction *multi_transaction_new(struct file *file,
 	if (!t)
 		return ERR_PTR(-ENOMEM);
 	kref_init(&t->count);
-	if (copy_from_user(t->data, buf, size)) {
-		put_multi_transaction(t);
+	if (copy_from_user(t->data, buf, size))
 		return ERR_PTR(-EFAULT);
-	}
 
 	return t;
 }
@@ -1603,10 +1584,6 @@ int __aafs_profile_mkdir(struct aa_profile *profile, struct dentry *parent)
 		struct aa_profile *p;
 		p = aa_deref_parent(profile);
 		dent = prof_dir(p);
-		if (!dent) {
-			error = -ENOENT;
-			goto fail2;
-		}
 		/* adding to parent that previously didn't have children */
 		dent = aafs_create_dir("profiles", dent);
 		if (IS_ERR(dent))
@@ -1975,6 +1952,9 @@ fail2:
 
 	return error;
 }
+
+
+#define list_entry_is_head(pos, head, member) (&pos->member == (head))
 
 /**
  * __next_ns - find the next namespace to list
