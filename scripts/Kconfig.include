@@ -26,5 +26,12 @@ cc-option = $(success,$(CC) -Werror $(1) -E -x c /dev/null -o /dev/null)
 # Return y if the linker supports <flag>, n otherwise
 ld-option = $(success,$(LD) -v $(1))
 
+# $(as-instr,<assembler instruction>)
+# Return y if the assembler supports <instruction>, n otherwise.
+# The Samsung Kconfig files use this to probe for LSE atomics and for a
+# gas bug workaround; upstream 4.20 does not ship the helper, so define it
+# here next to the other tool probes.
+as-instr = $(success,printf "%b\n" "$(1)" | $(CC) -c -x assembler -o /dev/null -)
+
 # gcc version including patch level
 gcc-version := $(shell,$(srctree)/scripts/gcc-version.sh -p $(CC) | sed 's/^0*//')
