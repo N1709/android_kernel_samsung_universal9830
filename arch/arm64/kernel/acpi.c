@@ -29,7 +29,7 @@
 
 #include <asm/cputype.h>
 #include <asm/cpu_ops.h>
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 #include <asm/smp_plat.h>
 
 int acpi_noirq = 1;		/* skip ACPI IRQ initialization */
@@ -153,14 +153,10 @@ static int __init acpi_fadt_sanity_check(void)
 	 */
 	if (table->revision < 5 ||
 	   (table->revision == 5 && fadt->minor_revision < 1)) {
-		pr_err(FW_BUG "Unsupported FADT revision %d.%d, should be 5.1+\n",
+		pr_err("Unsupported FADT revision %d.%d, should be 5.1+\n",
 		       table->revision, fadt->minor_revision);
-
-		if (!fadt->arm_boot_flags) {
-			ret = -EINVAL;
-			goto out;
-		}
-		pr_err("FADT has ARM boot flags set, assuming 5.1\n");
+		ret = -EINVAL;
+		goto out;
 	}
 
 	if (!(fadt->flags & ACPI_FADT_HW_REDUCED)) {

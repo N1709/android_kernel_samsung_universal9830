@@ -75,10 +75,6 @@
 	status = "okay";
 };
 
-&sd {
-	status = "okay";
-};
-
 &eth0 {
 	status = "okay";
 	phy-handle = <&ethphy0>;
@@ -102,13 +98,5 @@
 };
 
 &nand {
-	status = "okay";
-};
-
-&usb0 {
-	status = "okay";
-};
-
-&usb1 {
 	status = "okay";
 };

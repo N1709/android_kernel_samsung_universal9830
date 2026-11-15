@@ -59,9 +59,7 @@
 #ifndef CONFIG_BROKEN_GAS_INST
 
 #ifdef __ASSEMBLY__
-// The space separator is omitted so that __emit_inst(x) can be parsed as
-// either an assembler directive or an assembler macro argument.
-#define __emit_inst(x)			.inst(x)
+#define __emit_inst(x)			.inst (x)
 #else
 #define __emit_inst(x)			".inst " __stringify((x)) "\n\t"
 #endif
@@ -106,20 +104,9 @@
 #define SET_PSTATE_UAO(x)		__emit_inst(0xd500401f | PSTATE_UAO | ((!!x) << PSTATE_Imm_shift))
 #define SET_PSTATE_SSBS(x)		__emit_inst(0xd500401f | PSTATE_SSBS | ((!!x) << PSTATE_Imm_shift))
 
-#define __SYS_BARRIER_INSN(CRm, op2, Rt) \
-	__emit_inst(0xd5000000 | sys_insn(0, 3, 3, (CRm), (op2)) | ((Rt) & 0x1f))
-
-#define SB_BARRIER_INSN			__SYS_BARRIER_INSN(0, 7, 31)
-
 #define SYS_DC_ISW			sys_insn(1, 0, 7, 6, 2)
-#define SYS_DC_IGSW			sys_insn(1, 0, 7, 6, 4)
-#define SYS_DC_IGDSW			sys_insn(1, 0, 7, 6, 6)
 #define SYS_DC_CSW			sys_insn(1, 0, 7, 10, 2)
-#define SYS_DC_CGSW			sys_insn(1, 0, 7, 10, 4)
-#define SYS_DC_CGDSW			sys_insn(1, 0, 7, 10, 6)
 #define SYS_DC_CISW			sys_insn(1, 0, 7, 14, 2)
-#define SYS_DC_CIGSW			sys_insn(1, 0, 7, 14, 4)
-#define SYS_DC_CIGDSW			sys_insn(1, 0, 7, 14, 6)
 
 #define SYS_OSDTRRX_EL1			sys_reg(2, 0, 0, 0, 2)
 #define SYS_MDCCINT_EL1			sys_reg(2, 0, 0, 2, 0)
@@ -181,7 +168,6 @@
 
 #define SYS_ID_AA64ISAR0_EL1		sys_reg(3, 0, 0, 6, 0)
 #define SYS_ID_AA64ISAR1_EL1		sys_reg(3, 0, 0, 6, 1)
-#define SYS_ID_AA64ISAR2_EL1		sys_reg(3, 0, 0, 6, 2)
 
 #define SYS_ID_AA64MMFR0_EL1		sys_reg(3, 0, 0, 7, 0)
 #define SYS_ID_AA64MMFR1_EL1		sys_reg(3, 0, 0, 7, 1)
@@ -542,16 +528,10 @@
 #define ID_AA64ISAR0_AES_SHIFT		4
 
 /* id_aa64isar1 */
-#define ID_AA64ISAR1_SB_SHIFT		36
-#define ID_AA64ISAR1_GPA_SHIFT		24
 #define ID_AA64ISAR1_LRCPC_SHIFT	20
 #define ID_AA64ISAR1_FCMA_SHIFT		16
 #define ID_AA64ISAR1_JSCVT_SHIFT	12
-#define ID_AA64ISAR1_APA_SHIFT		4
 #define ID_AA64ISAR1_DPB_SHIFT		0
-
-/* id_aa64isar2 */
-#define ID_AA64ISAR2_CLEARBHB_SHIFT	28
 
 /* id_aa64pfr0 */
 #define ID_AA64PFR0_CSV3_SHIFT		60
@@ -578,7 +558,6 @@
 #define ID_AA64PFR0_EL0_32BIT_64BIT	0x2
 
 /* id_aa64pfr1 */
-#define ID_AA64PFR1_RAS_SHIFT		12
 #define ID_AA64PFR1_SSBS_SHIFT		4
 
 #define ID_AA64PFR1_SSBS_PSTATE_NI	0
@@ -611,7 +590,6 @@
 #endif
 
 /* id_aa64mmfr1 */
-#define ID_AA64MMFR1_ECBHB_SHIFT	60
 #define ID_AA64MMFR1_PAN_SHIFT		20
 #define ID_AA64MMFR1_LOR_SHIFT		16
 #define ID_AA64MMFR1_HPD_SHIFT		12
@@ -624,9 +602,7 @@
 
 /* id_aa64mmfr2 */
 #define ID_AA64MMFR2_FWB_SHIFT		40
-#define ID_AA64MMFR2_IDS_SHIFT		36
 #define ID_AA64MMFR2_AT_SHIFT		32
-#define ID_AA64MMFR2_LV_SHIFT		24
 #define ID_AA64MMFR2_LVA_SHIFT		16
 #define ID_AA64MMFR2_IESB_SHIFT		12
 #define ID_AA64MMFR2_LSM_SHIFT		8
@@ -641,16 +617,6 @@
 #define ID_AA64DFR0_PMUVER_SHIFT	8
 #define ID_AA64DFR0_TRACEVER_SHIFT	4
 #define ID_AA64DFR0_DEBUGVER_SHIFT	0
-
-#define ID_ISAR4_SMC_SHIFT		12
-
-#define ID_ISAR5_VCMA_SHIFT		28
-
-#define ID_AA64DFR0_PMUVER_8_1		0x4
-
-#define ID_DFR0_PERFMON_SHIFT		24
-
-#define ID_DFR0_PERFMON_8_1		0x4
 
 #define ID_ISAR5_RDM_SHIFT		24
 #define ID_ISAR5_CRC32_SHIFT		16
@@ -738,39 +704,20 @@
 #include <linux/build_bug.h>
 #include <linux/types.h>
 
-#define __DEFINE_MRS_MSR_S_REGNUM				\
-"	.irp	num,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30\n" \
-"	.equ	.L__reg_num_x\\num, \\num\n"			\
-"	.endr\n"						\
+asm(
+"	.irp	num,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30\n"
+"	.equ	.L__reg_num_x\\num, \\num\n"
+"	.endr\n"
 "	.equ	.L__reg_num_xzr, 31\n"
-
-#define DEFINE_MRS_S						\
-	__DEFINE_MRS_MSR_S_REGNUM				\
-"	.macro	mrs_s, rt, sreg\n"				\
-	__emit_inst(0xd5200000|(\\sreg)|(.L__reg_num_\\rt))	\
+"\n"
+"	.macro	mrs_s, rt, sreg\n"
+	__emit_inst(0xd5200000|(\\sreg)|(.L__reg_num_\\rt))
 "	.endm\n"
-
-#define DEFINE_MSR_S						\
-	__DEFINE_MRS_MSR_S_REGNUM				\
-"	.macro	msr_s, sreg, rt\n"				\
-	__emit_inst(0xd5000000|(\\sreg)|(.L__reg_num_\\rt))	\
+"\n"
+"	.macro	msr_s, sreg, rt\n"
+	__emit_inst(0xd5000000|(\\sreg)|(.L__reg_num_\\rt))
 "	.endm\n"
-
-#define UNDEFINE_MRS_S						\
-"	.purgem	mrs_s\n"
-
-#define UNDEFINE_MSR_S						\
-"	.purgem	msr_s\n"
-
-#define __mrs_s(v, r)						\
-	DEFINE_MRS_S						\
-"	mrs_s " v ", " __stringify(r) "\n"			\
-	UNDEFINE_MRS_S
-
-#define __msr_s(r, v)						\
-	DEFINE_MSR_S						\
-"	msr_s " __stringify(r) ", " v "\n"			\
-	UNDEFINE_MSR_S
+);
 
 /*
  * Unlike read_cpuid, calls to read_sysreg are never expected to be
@@ -798,13 +745,13 @@
  */
 #define read_sysreg_s(r) ({						\
 	u64 __val;							\
-	asm volatile(__mrs_s("%0", r) : "=r" (__val));			\
+	asm volatile("mrs_s %0, " __stringify(r) : "=r" (__val));	\
 	__val;								\
 })
 
 #define write_sysreg_s(v, r) do {					\
 	u64 __val = (u64)(v);						\
-	asm volatile(__msr_s(r, "%x0") : : "rZ" (__val));		\
+	asm volatile("msr_s " __stringify(r) ", %x0" : : "rZ" (__val));	\
 } while (0)
 
 /*

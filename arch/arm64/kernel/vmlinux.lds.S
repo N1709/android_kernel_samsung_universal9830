@@ -11,7 +11,7 @@
 #include <asm/thread_info.h>
 #include <asm/memory.h>
 #include <asm/page.h>
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 
 #include "image.h"
 
@@ -23,13 +23,6 @@ OUTPUT_ARCH(aarch64)
 ENTRY(_text)
 
 jiffies = jiffies_64;
-
-
-#define HYPERVISOR_EXTABLE					\
-	. = ALIGN(SZ_8);					\
-	__start___kvm_ex_table = .;				\
-	*(__kvm_ex_table)					\
-	__stop___kvm_ex_table = .;
 
 #define HYPERVISOR_TEXT					\
 	/*						\
@@ -46,7 +39,6 @@ jiffies = jiffies_64;
 	__hyp_idmap_text_end = .;			\
 	__hyp_text_start = .;				\
 	*(.hyp.text)					\
-	HYPERVISOR_EXTABLE				\
 	__hyp_text_end = .;
 
 #define IDMAP_TEXT					\
@@ -107,8 +99,7 @@ SECTIONS
 		*(.discard)
 		*(.discard.*)
 		*(.interp .dynamic)
-		*(.dynsym .dynstr .hash .gnu.hash)
-		*(.eh_frame)
+		*(.dynsym .dynstr .hash)
 	}
 
 	. = KIMAGE_VADDR + TEXT_OFFSET;
@@ -134,7 +125,6 @@ SECTIONS
 			IDMAP_TEXT
 			HIBERNATE_TEXT
 			TRAMP_TEXT
-			*(.text..L.cfi.jumptable .text..L.cfi.jumptable.*)
 			*(.fixup)
 			*(.gnu.warning)
 		. = ALIGN(16);
@@ -202,21 +192,12 @@ SECTIONS
 
 	PERCPU_SECTION(L1_CACHE_BYTES)
 
-	.rela.dyn : ALIGN(8) {
+	.rela : ALIGN(8) {
 		*(.rela .rela*)
 	}
 
-	__rela_offset	= ABSOLUTE(ADDR(.rela.dyn) - KIMAGE_VADDR);
-	__rela_size	= SIZEOF(.rela.dyn);
-
-#ifdef CONFIG_RELR
-	.relr.dyn : ALIGN(8) {
-		*(.relr.dyn)
-	}
-
-	__relr_offset	= ABSOLUTE(ADDR(.relr.dyn) - KIMAGE_VADDR);
-	__relr_size	= SIZEOF(.relr.dyn);
-#endif
+	__rela_offset	= ABSOLUTE(ADDR(.rela) - KIMAGE_VADDR);
+	__rela_size	= SIZEOF(.rela);
 
 	. = ALIGN(SEGMENT_ALIGN);
 	__initdata_end = .;
@@ -225,10 +206,6 @@ SECTIONS
 	_data = .;
 	_sdata = .;
 	RW_DATA_SECTION(L1_CACHE_BYTES, PAGE_SIZE, THREAD_ALIGN)
-
-	.test_modules : {
-		KUNIT_TEST_MODULES
-	}
 
 	/*
 	 * Data written with the MMU off but read with the MMU on requires
@@ -255,21 +232,6 @@ SECTIONS
 	BSS_SECTION(0, 0, 0)
 
 	. = ALIGN(PAGE_SIZE);
-	idmap_pg_dir = .;
-	. += IDMAP_DIR_SIZE;
-
-#ifdef CONFIG_UNMAP_KERNEL_AT_EL0
-	tramp_pg_dir = .;
-	. += PAGE_SIZE;
-#endif
-
-#ifdef CONFIG_ARM64_SW_TTBR0_PAN
-	reserved_ttbr0 = .;
-	. += RESERVED_TTBR0_SIZE;
-#endif
-	swapper_pg_dir = .;
-	. += SWAPPER_DIR_SIZE;
-	swapper_pg_end = .;
 	init_pg_dir = .;
 	. += INIT_DIR_SIZE;
 	init_pg_end = .;
@@ -295,7 +257,7 @@ ASSERT(__hibernate_exit_text_end - (__hibernate_exit_text_start & ~(SZ_4K - 1))
 	<= SZ_4K, "Hibernate exit text too big or misaligned")
 #endif
 #ifdef CONFIG_UNMAP_KERNEL_AT_EL0
-ASSERT((__entry_tramp_text_end - __entry_tramp_text_start) <= 3*PAGE_SIZE,
+ASSERT((__entry_tramp_text_end - __entry_tramp_text_start) == PAGE_SIZE,
 	"Entry trampoline text too big")
 #endif
 /*

@@ -148,7 +148,3 @@
 &nand {
 	status = "okay";
 };
-
-&usb {
-	status = "okay";
-};

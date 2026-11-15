@@ -114,17 +114,22 @@
 		clocks = <&soc_smc50mhz>;
 		clock-names = "apb_pclk";
 		power-domains = <&scpi_devpd 0>;
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
 
-		in-ports {
-			port {
+			/* input port */
+			port@0 {
+				reg = <0>;
 				etf0_in_port: endpoint {
+					slave-mode;
 					remote-endpoint = <&main_funnel_out_port>;
 				};
 			};
-		};
 
-		out-ports {
-			port {
+			/* output port */
+			port@1 {
+				reg = <0>;
 				etf0_out_port: endpoint {
 				};
 			};
@@ -138,11 +143,10 @@
 		clocks = <&soc_smc50mhz>;
 		clock-names = "apb_pclk";
 		power-domains = <&scpi_devpd 0>;
-		in-ports {
-			port {
-				tpiu_in_port: endpoint {
-					remote-endpoint = <&replicator_out_port0>;
-				};
+		port {
+			tpiu_in_port: endpoint {
+				slave-mode;
+				remote-endpoint = <&replicator_out_port0>;
 			};
 		};
 	};
@@ -155,29 +159,31 @@
 		clocks = <&soc_smc50mhz>;
 		clock-names = "apb_pclk";
 		power-domains = <&scpi_devpd 0>;
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
 
-		out-ports {
-			port {
+			/* output port */
+			port@0 {
+				reg = <0>;
 				main_funnel_out_port: endpoint {
 					remote-endpoint = <&etf0_in_port>;
 				};
 			};
-		};
 
-		main_funnel_in_ports: in-ports {
-			#address-cells = <1>;
-			#size-cells = <0>;
-
-			port@0 {
+			/* input ports */
+			port@1 {
 				reg = <0>;
 				main_funnel_in_port0: endpoint {
+					slave-mode;
 					remote-endpoint = <&cluster0_funnel_out_port>;
 				};
 			};
 
-			port@1 {
+			port@2 {
 				reg = <1>;
 				main_funnel_in_port1: endpoint {
+					slave-mode;
 					remote-endpoint = <&cluster1_funnel_out_port>;
 				};
 			};
@@ -192,12 +198,10 @@
 		clocks = <&soc_smc50mhz>;
 		clock-names = "apb_pclk";
 		power-domains = <&scpi_devpd 0>;
-		arm,scatter-gather;
-		in-ports {
-			port {
-				etr_in_port: endpoint {
-					remote-endpoint = <&replicator_out_port1>;
-				};
+		port {
+			etr_in_port: endpoint {
+				slave-mode;
+				remote-endpoint = <&replicator_out_port1>;
 			};
 		};
 	};
@@ -211,10 +215,8 @@
 		clocks = <&soc_smc50mhz>;
 		clock-names = "apb_pclk";
 		power-domains = <&scpi_devpd 0>;
-		out-ports {
-			port {
-				stm_out_port: endpoint {
-				};
+		port {
+			stm_out_port: endpoint {
 			};
 		};
 	};
@@ -235,11 +237,9 @@
 		clocks = <&soc_smc50mhz>;
 		clock-names = "apb_pclk";
 		power-domains = <&scpi_devpd 0>;
-		out-ports {
-			port {
-				cluster0_etm0_out_port: endpoint {
-					remote-endpoint = <&cluster0_funnel_in_port0>;
-				};
+		port {
+			cluster0_etm0_out_port: endpoint {
+				remote-endpoint = <&cluster0_funnel_in_port0>;
 			};
 		};
 	};
@@ -251,28 +251,29 @@
 		clocks = <&soc_smc50mhz>;
 		clock-names = "apb_pclk";
 		power-domains = <&scpi_devpd 0>;
-		out-ports {
-			port {
-				cluster0_funnel_out_port: endpoint {
-					remote-endpoint = <&main_funnel_in_port0>;
-				};
-			};
-		};
-
-		in-ports {
+		ports {
 			#address-cells = <1>;
 			#size-cells = <0>;
 
 			port@0 {
 				reg = <0>;
-				cluster0_funnel_in_port0: endpoint {
-					remote-endpoint = <&cluster0_etm0_out_port>;
+				cluster0_funnel_out_port: endpoint {
+					remote-endpoint = <&main_funnel_in_port0>;
 				};
 			};
 
 			port@1 {
+				reg = <0>;
+				cluster0_funnel_in_port0: endpoint {
+					slave-mode;
+					remote-endpoint = <&cluster0_etm0_out_port>;
+				};
+			};
+
+			port@2 {
 				reg = <1>;
 				cluster0_funnel_in_port1: endpoint {
+					slave-mode;
 					remote-endpoint = <&cluster0_etm1_out_port>;
 				};
 			};
@@ -295,11 +296,9 @@
 		clocks = <&soc_smc50mhz>;
 		clock-names = "apb_pclk";
 		power-domains = <&scpi_devpd 0>;
-		out-ports {
-			port {
-				cluster0_etm1_out_port: endpoint {
-					remote-endpoint = <&cluster0_funnel_in_port1>;
-				};
+		port {
+			cluster0_etm1_out_port: endpoint {
+				remote-endpoint = <&cluster0_funnel_in_port1>;
 			};
 		};
 	};
@@ -320,11 +319,9 @@
 		clocks = <&soc_smc50mhz>;
 		clock-names = "apb_pclk";
 		power-domains = <&scpi_devpd 0>;
-		out-ports {
-			port {
-				cluster1_etm0_out_port: endpoint {
-					remote-endpoint = <&cluster1_funnel_in_port0>;
-				};
+		port {
+			cluster1_etm0_out_port: endpoint {
+				remote-endpoint = <&cluster1_funnel_in_port0>;
 			};
 		};
 	};
@@ -336,40 +333,43 @@
 		clocks = <&soc_smc50mhz>;
 		clock-names = "apb_pclk";
 		power-domains = <&scpi_devpd 0>;
-		out-ports {
-			port {
-				cluster1_funnel_out_port: endpoint {
-					remote-endpoint = <&main_funnel_in_port1>;
-				};
-			};
-		};
-
-		in-ports {
+		ports {
 			#address-cells = <1>;
 			#size-cells = <0>;
 
 			port@0 {
 				reg = <0>;
-				cluster1_funnel_in_port0: endpoint {
-					remote-endpoint = <&cluster1_etm0_out_port>;
+				cluster1_funnel_out_port: endpoint {
+					remote-endpoint = <&main_funnel_in_port1>;
 				};
 			};
 
 			port@1 {
+				reg = <0>;
+				cluster1_funnel_in_port0: endpoint {
+					slave-mode;
+					remote-endpoint = <&cluster1_etm0_out_port>;
+				};
+			};
+
+			port@2 {
 				reg = <1>;
 				cluster1_funnel_in_port1: endpoint {
+					slave-mode;
 					remote-endpoint = <&cluster1_etm1_out_port>;
 				};
 			};
-			port@2 {
+			port@3 {
 				reg = <2>;
 				cluster1_funnel_in_port2: endpoint {
+					slave-mode;
 					remote-endpoint = <&cluster1_etm2_out_port>;
 				};
 			};
-			port@3 {
+			port@4 {
 				reg = <3>;
 				cluster1_funnel_in_port3: endpoint {
+					slave-mode;
 					remote-endpoint = <&cluster1_etm3_out_port>;
 				};
 			};
@@ -392,11 +392,9 @@
 		clocks = <&soc_smc50mhz>;
 		clock-names = "apb_pclk";
 		power-domains = <&scpi_devpd 0>;
-		out-ports {
-			port {
-				cluster1_etm1_out_port: endpoint {
-					remote-endpoint = <&cluster1_funnel_in_port1>;
-				};
+		port {
+			cluster1_etm1_out_port: endpoint {
+				remote-endpoint = <&cluster1_funnel_in_port1>;
 			};
 		};
 	};
@@ -417,11 +415,9 @@
 		clocks = <&soc_smc50mhz>;
 		clock-names = "apb_pclk";
 		power-domains = <&scpi_devpd 0>;
-		out-ports {
-			port {
-				cluster1_etm2_out_port: endpoint {
-					remote-endpoint = <&cluster1_funnel_in_port2>;
-				};
+		port {
+			cluster1_etm2_out_port: endpoint {
+				remote-endpoint = <&cluster1_funnel_in_port2>;
 			};
 		};
 	};
@@ -442,11 +438,9 @@
 		clocks = <&soc_smc50mhz>;
 		clock-names = "apb_pclk";
 		power-domains = <&scpi_devpd 0>;
-		out-ports {
-			port {
-				cluster1_etm3_out_port: endpoint {
-					remote-endpoint = <&cluster1_funnel_in_port3>;
-				};
+		port {
+			cluster1_etm3_out_port: endpoint {
+				remote-endpoint = <&cluster1_funnel_in_port3>;
 			};
 		};
 	};
@@ -459,7 +453,7 @@
 		clock-names = "apb_pclk";
 		power-domains = <&scpi_devpd 0>;
 
-		out-ports {
+		ports {
 			#address-cells = <1>;
 			#size-cells = <0>;
 
@@ -477,10 +471,12 @@
 					remote-endpoint = <&etr_in_port>;
 				};
 			};
-		};
-		in-ports {
-			port {
+
+			/* replicator input port */
+			port@2 {
+				reg = <0>;
 				replicator_in_port0: endpoint {
+					slave-mode;
 				};
 			};
 		};

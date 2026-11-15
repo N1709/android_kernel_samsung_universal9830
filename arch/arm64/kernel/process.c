@@ -30,7 +30,6 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/stddef.h>
-#include <linux/sysctl.h>
 #include <linux/unistd.h>
 #include <linux/user.h>
 #include <linux/delay.h>
@@ -47,11 +46,9 @@
 #include <linux/hw_breakpoint.h>
 #include <linux/personality.h>
 #include <linux/notifier.h>
-#include <linux/debug-snapshot.h>
 #include <trace/events/power.h>
 #include <linux/percpu.h>
 #include <linux/thread_info.h>
-#include <linux/prctl.h>
 
 #include <asm/alternative.h>
 #include <asm/compat.h>
@@ -60,12 +57,11 @@
 #include <asm/fpsimd.h>
 #include <asm/mmu_context.h>
 #include <asm/processor.h>
-#include <asm/scs.h>
 #include <asm/stacktrace.h>
 
 #ifdef CONFIG_STACKPROTECTOR
 #include <linux/stackprotector.h>
-unsigned long __stack_chk_guard __ro_after_init;
+unsigned long __stack_chk_guard __read_mostly;
 EXPORT_SYMBOL(__stack_chk_guard);
 #endif
 
@@ -76,7 +72,6 @@ void (*pm_power_off)(void);
 EXPORT_SYMBOL_GPL(pm_power_off);
 
 void (*arm_pm_restart)(enum reboot_mode reboot_mode, const char *cmd);
-EXPORT_SYMBOL_GPL(arm_pm_restart);
 
 /*
  * This is our default idle handler.
@@ -142,9 +137,7 @@ void machine_power_off(void)
 
 /*
  * Restart requires that the secondary CPUs stop performing any activity
- * while the primary CPU resets the system. Systems with a single CPU can
- * use soft_restart() as their machine descriptor's .restart hook, since that
- * will cause the only available CPU to reset. Systems with multiple CPUs must
+ * while the primary CPU resets the system. Systems with multiple CPUs must
  * provide a HW restart implementation, to ensure that all CPUs reset at once.
  * This is required so that any code running after reset on the primary CPU
  * doesn't have to co-ordinate with other CPUs to ensure they aren't still
@@ -163,8 +156,6 @@ void machine_restart(char *cmd)
 	 */
 	if (efi_enabled(EFI_RUNTIME_SERVICES))
 		efi_reboot(reboot_mode, NULL);
-
-	dbg_snapshot_post_reboot(cmd);
 
 	/* Now call the architecture specific reboot code. */
 	if (arm_pm_restart)
@@ -212,109 +203,6 @@ static void print_pstate(struct pt_regs *regs)
 	}
 }
 
-#ifdef CONFIG_SEC_DEBUG_AVOID_UNNECESSARY_TRAP
-extern unsigned long long incorrect_addr;
-#endif
-
-/*
- * dump a block of kernel memory from around the given address
- */
-static void show_data(unsigned long addr, int nbytes, const char *name)
-{
-	int	i, j;
-	int	nlines;
-#ifdef CONFIG_SEC_DEBUG_AVOID_UNNECESSARY_TRAP
-	int	nbytes_offset = nbytes;
-#endif
-	u32	*p;
-
-	/*
-	 * don't attempt to dump non-kernel addresses or
-	 * values that are probably just small negative numbers
-	 */
-	if (addr < PAGE_OFFSET || addr > -256UL) {
-		/*
-		 * If kaslr is enabled, Kernel code is able to
-		 * located in VMALLOC address.
-		 */
-		if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
-#ifdef CONFIG_VMAP_STACK
-			if (!is_vmalloc_addr((const void *)addr))
-				return;
-#else
-			if (addr < (unsigned long)KERNEL_START ||
-			    addr > (unsigned long)KERNEL_END)
-				return;
-#endif
-		} else {
-			return;
-		}
-	}
-
-	printk("\n%s: %#lx:\n", name, addr);
-
-	/*
-	 * round address down to a 32 bit boundary
-	 * and always dump a multiple of 32 bytes
-	 */
-	p = (u32 *)(addr & ~(sizeof(u32) - 1));
-	nbytes += (addr & (sizeof(u32) - 1));
-	nlines = (nbytes + 31) / 32;
-
-
-	for (i = 0; i < nlines; i++) {
-		/*
-		 * just display low 16 bits of address to keep
-		 * each line of the dump < 80 characters
-		 */
-		printk("%04lx :", (unsigned long)p & 0xffff);
-		for (j = 0; j < 8; j++) {
-			u32	data;
-#ifdef CONFIG_SEC_DEBUG_AVOID_UNNECESSARY_TRAP
-			if ((incorrect_addr != 0) && (((unsigned long long)p >= (incorrect_addr - nbytes_offset)) && ((unsigned long long)p <= (incorrect_addr + nbytes_offset)))) {
-				if (j == 7)
-					pr_cont(" ********\n");
-				else
-					pr_cont(" ********");
-			}
-			else if (get_kernel_nofault(data, p)) {
-#else
-			if (get_kernel_nofault(data, p)) {
-#endif
-				if (j == 7)
-					pr_cont(" ********\n");
-				else
-					pr_cont(" ********");
-
-			} else {
-				if (j == 7)
-					pr_cont(" %08X\n", data);
-				else
-					pr_cont(" %08X", data);
-			}
-			++p;
-		}
-	}
-}
-
-static void show_extra_register_data(struct pt_regs *regs, int nbytes)
-{
-	mm_segment_t fs;
-	unsigned int i;
-
-	fs = get_fs();
-	set_fs(KERNEL_DS);
-	show_data(regs->pc - nbytes, nbytes * 2, "PC");
-	show_data(regs->regs[30] - nbytes, nbytes * 2, "LR");
-	show_data(regs->sp - nbytes, nbytes * 2, "SP");
-	for (i = 0; i < 30; i++) {
-		char name[4];
-		snprintf(name, sizeof(name), "X%u", i);
-		show_data(regs->regs[i] - nbytes, nbytes * 2, name);
-	}
-	set_fs(fs);
-}
-
 void __show_regs(struct pt_regs *regs)
 {
 	int i, top_reg;
@@ -329,21 +217,6 @@ void __show_regs(struct pt_regs *regs)
 		sp = regs->sp;
 		top_reg = 29;
 	}
-
-	if (!user_mode(regs)) {
-		dbg_snapshot_save_context(regs);
-		/*
-		 *  If you want to see more kernel events after panic,
-		 *  you should modify dbg_snapshot_set_enable's function 2nd parameter
-		 *  to true.
-		 */
-		dbg_snapshot_set_enable_item("log_kevents", false);
-	}
-
-	pr_info("TIF_FOREIGN_FPSTATE: %d, FP/SIMD depth %d, cpu: %d\n",
-			test_thread_flag(TIF_FOREIGN_FPSTATE),
-			atomic_read(&current->thread.fpsimd_kernel_state.depth),
-			current->thread.fpsimd_kernel_state.cpu);
 
 	show_regs_print_info(KERN_DEFAULT);
 	print_pstate(regs);
@@ -371,9 +244,6 @@ void __show_regs(struct pt_regs *regs)
 
 		pr_cont("\n");
 	}
-	if (!user_mode(regs) && !dbg_snapshot_is_hardlockup())
-		show_extra_register_data(regs, 256);
-	printk("\n");
 }
 
 void show_regs(struct pt_regs * regs)
@@ -382,16 +252,6 @@ void show_regs(struct pt_regs * regs)
 	dump_backtrace(regs, NULL);
 }
 
-#ifdef CONFIG_SEC_DEBUG_AUTO_COMMENT
-void show_regs_auto_comment(struct pt_regs * regs, bool comm)
-{
-	__show_regs(regs);
-	if (comm)
-		dump_backtrace_auto_summary(regs, NULL);
-	else
-		dump_backtrace(regs, NULL);
-}
-#endif
 static void tls_thread_flush(void)
 {
 	write_sysreg(0, tpidr_el0);
@@ -409,18 +269,11 @@ static void tls_thread_flush(void)
 	}
 }
 
-static void flush_tagged_addr_state(void)
-{
-	if (IS_ENABLED(CONFIG_ARM64_TAGGED_ADDR_ABI))
-		clear_thread_flag(TIF_TAGGED_ADDR);
-}
-
 void flush_thread(void)
 {
 	fpsimd_flush_thread();
 	tls_thread_flush();
 	flush_ptrace_hw_breakpoint(current);
-	flush_tagged_addr_state();
 }
 
 void release_thread(struct task_struct *dead_task)
@@ -432,38 +285,40 @@ void arch_release_task_struct(struct task_struct *tsk)
 	fpsimd_release_task(tsk);
 }
 
+/*
+ * src and dst may temporarily have aliased sve_state after task_struct
+ * is copied.  We cannot fix this properly here, because src may have
+ * live SVE state and dst's thread_info may not exist yet, so tweaking
+ * either src's or dst's TIF_SVE is not safe.
+ *
+ * The unaliasing is done in copy_thread() instead.  This works because
+ * dst is not schedulable or traceable until both of these functions
+ * have been called.
+ */
 int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
 {
 	if (current->mm)
 		fpsimd_preserve_current_state();
 	*dst = *src;
 
-	/* We rely on the above assignment to initialize dst's thread_flags: */
-	BUILD_BUG_ON(!IS_ENABLED(CONFIG_THREAD_INFO_IN_TASK));
-
-	/*
-	 * Detach src's sve_state (if any) from dst so that it does not
-	 * get erroneously used or freed prematurely.  dst's sve_state
-	 * will be allocated on demand later on if dst uses SVE.
-	 * For consistency, also clear TIF_SVE here: this could be done
-	 * later in copy_process(), but to avoid tripping up future
-	 * maintainers it is best not to leave TIF_SVE and sve_state in
-	 * an inconsistent state, even temporarily.
-	 */
-	dst->thread.sve_state = NULL;
-	clear_tsk_thread_flag(dst, TIF_SVE);
-
 	return 0;
 }
 
 asmlinkage void ret_from_fork(void) asm("ret_from_fork");
 
-int copy_thread_tls(unsigned long clone_flags, unsigned long stack_start,
-		unsigned long stk_sz, struct task_struct *p, unsigned long tls)
+int copy_thread(unsigned long clone_flags, unsigned long stack_start,
+		unsigned long stk_sz, struct task_struct *p)
 {
 	struct pt_regs *childregs = task_pt_regs(p);
 
 	memset(&p->thread.cpu_context, 0, sizeof(struct cpu_context));
+
+	/*
+	 * Unalias p->thread.sve_state (if any) from the parent task
+	 * and disable discard SVE state for p:
+	 */
+	clear_tsk_thread_flag(p, TIF_SVE);
+	p->thread.sve_state = NULL;
 
 	/*
 	 * In case p was allocated the same task_struct pointer as some
@@ -492,11 +347,11 @@ int copy_thread_tls(unsigned long clone_flags, unsigned long stack_start,
 		}
 
 		/*
-		 * If a TLS pointer was passed to clone, use it for the new
-		 * thread.
+		 * If a TLS pointer was passed to clone (4th argument), use it
+		 * for the new thread.
 		 */
 		if (clone_flags & CLONE_SETTLS)
-			p->thread.uw.tp_value = tls;
+			p->thread.uw.tp_value = childregs->regs[3];
 	} else {
 		memset(childregs, 0, sizeof(struct pt_regs));
 		childregs->pstate = PSR_MODE_EL1h;
@@ -529,7 +384,7 @@ static void tls_thread_switch(struct task_struct *next)
 
 	if (is_compat_thread(task_thread_info(next)))
 		write_sysreg(next->thread.uw.tp_value, tpidrro_el0);
-	else
+	else if (!arm64_kernel_unmapped_at_el0())
 		write_sysreg(0, tpidrro_el0);
 
 	write_sysreg(*task_user_tls(next), tpidr_el0);
@@ -544,39 +399,6 @@ void uao_thread_switch(struct task_struct *next)
 		else
 			asm(ALTERNATIVE("nop", SET_PSTATE_UAO(0), ARM64_HAS_UAO));
 	}
-}
-
-/*
- * Force SSBS state on context-switch, since it may be lost after migrating
- * from a CPU which treats the bit as RES0 in a heterogeneous system.
- */
-static void ssbs_thread_switch(struct task_struct *next)
-{
-	struct pt_regs *regs = task_pt_regs(next);
-
-	/*
-	 * Nothing to do for kernel threads, but 'regs' may be junk
-	 * (e.g. idle task) so check the flags and bail early.
-	 */
-	if (unlikely(next->flags & PF_KTHREAD))
-		return;
-
-	/*
-	 * If all CPUs implement the SSBS extension, then we just need to
-	 * context-switch the PSTATE field.
-	 */
-	if (cpu_have_feature(cpu_feature(SSBS)))
-		return;
-
-	/* If the mitigation is enabled, then we leave SSBS clear. */
-	if ((arm64_get_ssbd_state() == ARM64_SSBD_FORCE_ENABLE) ||
-	    test_tsk_thread_flag(next, TIF_SSBD))
-		return;
-
-	if (compat_user_mode(regs))
-		set_compat_ssbs_bit(regs);
-	else if (user_mode(regs))
-		set_ssbs_bit(regs);
 }
 
 /*
@@ -607,8 +429,6 @@ __notrace_funcgraph struct task_struct *__switch_to(struct task_struct *prev,
 	contextidr_thread_switch(next);
 	entry_task_switch(next);
 	uao_thread_switch(next);
-	ssbs_thread_switch(next);
-	scs_overflow_check(next);
 
 	/*
 	 * Complete any pending TLB or cache maintenance on this CPU in case
@@ -677,92 +497,3 @@ void arch_setup_new_exec(void)
 {
 	current->mm->context.flags = is_compat_task() ? MMCF_AARCH32 : 0;
 }
-
-#ifdef CONFIG_GCC_PLUGIN_STACKLEAK
-void __used stackleak_check_alloca(unsigned long size)
-{
-	unsigned long stack_left;
-	unsigned long current_sp = current_stack_pointer;
-	struct stack_info info;
-
-	BUG_ON(!on_accessible_stack(current, current_sp, &info));
-
-	stack_left = current_sp - info.low;
-
-	/*
-	 * There's a good chance we're almost out of stack space if this
-	 * is true. Using panic() over BUG() is more likely to give
-	 * reliable debugging output.
-	 */
-	if (size >= stack_left)
-		panic("alloca() over the kernel stack boundary\n");
-}
-EXPORT_SYMBOL(stackleak_check_alloca);
-#endif
-
-#ifdef CONFIG_ARM64_TAGGED_ADDR_ABI
-/*
- * Control the relaxed ABI allowing tagged user addresses into the kernel.
- */
-static unsigned int tagged_addr_disabled;
-
-long set_tagged_addr_ctrl(unsigned long arg)
-{
-	if (is_compat_task())
-		return -EINVAL;
-	if (arg & ~PR_TAGGED_ADDR_ENABLE)
-		return -EINVAL;
-
-	/*
-	 * Do not allow the enabling of the tagged address ABI if globally
-	 * disabled via sysctl abi.tagged_addr_disabled.
-	 */
-	if (arg & PR_TAGGED_ADDR_ENABLE && tagged_addr_disabled)
-		return -EINVAL;
-
-	update_thread_flag(TIF_TAGGED_ADDR, arg & PR_TAGGED_ADDR_ENABLE);
-
-	return 0;
-}
-
-long get_tagged_addr_ctrl(void)
-{
-	if (is_compat_task())
-		return -EINVAL;
-
-	if (test_thread_flag(TIF_TAGGED_ADDR))
-		return PR_TAGGED_ADDR_ENABLE;
-
-	return 0;
-}
-
-/*
- * Global sysctl to disable the tagged user addresses support. This control
- * only prevents the tagged address ABI enabling via prctl() and does not
- * disable it for tasks that already opted in to the relaxed ABI.
- */
-static int zero;
-static int one = 1;
-
-static struct ctl_table tagged_addr_sysctl_table[] = {
-	{
-		.procname	= "tagged_addr_disabled",
-		.mode		= 0644,
-		.data		= &tagged_addr_disabled,
-		.maxlen		= sizeof(int),
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &zero,
-		.extra2		= &one,
-	},
-	{ }
-};
-
-static int __init tagged_addr_init(void)
-{
-	if (!register_sysctl("abi", tagged_addr_sysctl_table))
-		return -EINVAL;
-	return 0;
-}
-
-core_initcall(tagged_addr_init);
-#endif	/* CONFIG_ARM64_TAGGED_ADDR_ABI */

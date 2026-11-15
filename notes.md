@@ -14,7 +14,8 @@ Working document. Updated as the merge progresses.
 | FBE v2 filesystem stack | in progress — Lineage `fs/crypto`, `fs/verity`, `fs/ext4`, `fs/f2fs`; 4.19 compat shims added for the core APIs 4.20 removed |
 | Target ROM | Android 17 / LineageOS 24.0, all Exynos 990 (universal9830) devices |
 | Hybridswap | not present in this tree; required by the ROM, source pending |
-| v4.20 build | cluster compile test for ext4/f2fs/crypto/trace, then full `-j2` build |
+| arch/arm64 | generic code forced to v4.20; `boot/dts/**` and `configs/**` stay vendor (v4.20 has no Exynos 990 files at all) |
+| v4.20 build | first full `-j2 -k` run stopped after 62 errors; arch/arm64 was a v4.20/vendor mix, now resynced to v4.20 |
 | v4.20 boot test | pending build |
 | v5.0 merge | on hold until v4.20 builds and boots |
 | Branch | `K4.20` (GitHub default); `lineage-24.0` removed |

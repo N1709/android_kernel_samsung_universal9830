@@ -32,8 +32,6 @@
 #include <linux/io.h>
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
-#include <linux/dma-contiguous.h>
-#include <linux/cma.h>
 
 #include <asm/barrier.h>
 #include <asm/cputype.h>
@@ -68,40 +66,6 @@ EXPORT_SYMBOL(empty_zero_page);
 static pte_t bm_pte[PTRS_PER_PTE] __page_aligned_bss;
 static pmd_t bm_pmd[PTRS_PER_PMD] __page_aligned_bss __maybe_unused;
 static pud_t bm_pud[PTRS_PER_PUD] __page_aligned_bss __maybe_unused;
-
-struct dma_contig_early_reserve {
-	phys_addr_t base;
-	unsigned long size;
-};
-
-static struct dma_contig_early_reserve dma_mmu_remap[MAX_CMA_AREAS];
-static int dma_mmu_remap_num;
-
-void __init dma_contiguous_early_fixup(phys_addr_t base, unsigned long size)
-{
-	if (dma_mmu_remap_num >= ARRAY_SIZE(dma_mmu_remap)) {
-		pr_err("ARM64: Not enough slots for DMA fixup reserved regions!\n");
-		return;
-	}
-	dma_mmu_remap[dma_mmu_remap_num].base = base;
-	dma_mmu_remap[dma_mmu_remap_num].size = size;
-	dma_mmu_remap_num++;
-}
-
-static bool dma_overlap(phys_addr_t start, phys_addr_t end)
-{
-	int i;
-
-	for (i = 0; i < dma_mmu_remap_num; i++) {
-		phys_addr_t dma_base = dma_mmu_remap[i].base;
-		phys_addr_t dma_end = dma_mmu_remap[i].base +
-			dma_mmu_remap[i].size;
-
-		if ((dma_base < end) && (dma_end > start))
-			return true;
-	}
-	return false;
-}
 
 static DEFINE_SPINLOCK(swapper_pgdir_lock);
 
@@ -254,8 +218,7 @@ static void init_pmd(pud_t *pudp, unsigned long addr, unsigned long end,
 
 		/* try section mapping first */
 		if (((addr | next | phys) & ~SECTION_MASK) == 0 &&
-		    (flags & NO_BLOCK_MAPPINGS) == 0 &&
-		    !dma_overlap(phys, phys + next - addr)) {
+		    (flags & NO_BLOCK_MAPPINGS) == 0) {
 			pmd_set_huge(pmdp, phys, prot);
 
 			/*
@@ -322,6 +285,7 @@ static inline bool use_1G_block(unsigned long addr, unsigned long next,
 
 	if (((addr | next | phys) & ~PUD_MASK) != 0)
 		return false;
+
 	return true;
 }
 
@@ -353,8 +317,7 @@ static void alloc_init_pud(pgd_t *pgdp, unsigned long addr, unsigned long end,
 		 * For 4K granule only, attempt to put down a 1GB block
 		 */
 		if (use_1G_block(addr, next, phys) &&
-		    (flags & NO_BLOCK_MAPPINGS) == 0 &&
-		    !dma_overlap(phys, phys + next - addr)) {
+		    (flags & NO_BLOCK_MAPPINGS) == 0) {
 			pud_set_huge(pudp, phys, prot);
 
 			/*
@@ -407,8 +370,7 @@ static void __create_pgd_mapping(pgd_t *pgdir, phys_addr_t phys,
 
 static phys_addr_t pgd_pgtable_alloc(void)
 {
-	void *ptr;
-	ptr = (void *)__get_free_page(PGALLOC_GFP);
+	void *ptr = (void *)__get_free_page(PGALLOC_GFP);
 	if (!ptr || !pgtable_page_ctor(virt_to_page(ptr)))
 		BUG();
 
@@ -416,27 +378,6 @@ static phys_addr_t pgd_pgtable_alloc(void)
 	dsb(ishst);
 	return __pa(ptr);
 }
-
-/**
- * create_pgtable_mapping - create a pagetable mapping for given
- * physical start and end addresses.
- * @start: physical start address.
- * @end: physical end address.
- */
-void create_pgtable_mapping(phys_addr_t start, phys_addr_t end)
-{
-	unsigned long virt = (unsigned long)phys_to_virt(start);
-
-	if (virt < VMALLOC_START) {
-		pr_warn("BUG: not creating mapping for %pa at 0x%016lx - outside kernel range\n",
-			&start, virt);
-		return;
-	}
-
-	__create_pgd_mapping(init_mm.pgd, start, virt, end - start,
-				PAGE_KERNEL, NULL, 0);
-}
-EXPORT_SYMBOL_GPL(create_pgtable_mapping);
 
 /*
  * This function can only be used to modify existing table entries,
@@ -451,7 +392,6 @@ static void __init create_mapping_noalloc(phys_addr_t phys, unsigned long virt,
 			&phys, virt);
 		return;
 	}
-
 	__create_pgd_mapping(init_mm.pgd, phys, virt, size, prot, NULL,
 			     NO_CONT_MAPPINGS);
 }
@@ -606,6 +546,7 @@ static void __init map_kernel_segment(pgd_t *pgdp, void *va_start, void *va_end,
 	vma->size	= size;
 	vma->flags	= VM_MAP | vm_flags;
 	vma->caller	= __builtin_return_address(0);
+
 	vm_area_add_early(vma);
 }
 
@@ -618,8 +559,6 @@ early_param("rodata", parse_rodata);
 #ifdef CONFIG_UNMAP_KERNEL_AT_EL0
 static int __init map_entry_trampoline(void)
 {
-	int i;
-
 	pgprot_t prot = rodata_enabled ? PAGE_KERNEL_ROX : PAGE_KERNEL_EXEC;
 	phys_addr_t pa_start = __pa_symbol(__entry_tramp_text_start);
 
@@ -628,15 +567,11 @@ static int __init map_entry_trampoline(void)
 
 	/* Map only the text into the trampoline page table */
 	memset(tramp_pg_dir, 0, PGD_SIZE);
-	__create_pgd_mapping(tramp_pg_dir, pa_start, TRAMP_VALIAS,
-			     entry_tramp_text_size(), prot, pgd_pgtable_alloc,
-			     0);
+	__create_pgd_mapping(tramp_pg_dir, pa_start, TRAMP_VALIAS, PAGE_SIZE,
+			     prot, pgd_pgtable_alloc, 0);
 
 	/* Map both the text and data into the kernel page table */
-	for (i = 0; i < DIV_ROUND_UP(entry_tramp_text_size(), PAGE_SIZE); i++)
-		__set_fixmap(FIX_ENTRY_TRAMP_TEXT1 - i,
-			     pa_start + i * PAGE_SIZE, prot);
-
+	__set_fixmap(FIX_ENTRY_TRAMP_TEXT, pa_start, prot);
 	if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
 		extern char __entry_tramp_data_start[];
 
@@ -768,188 +703,6 @@ int kern_addr_valid(unsigned long addr)
 
 	return pfn_valid(pte_pfn(pte));
 }
-EXPORT_SYMBOL_GPL(kern_addr_valid);
-
-#ifdef CONFIG_MEMORY_HOTPLUG
-static void free_hotplug_page_range(struct page *page, ssize_t size)
-{
-	WARN_ON(PageReserved(page));
-	free_pages((unsigned long)page_address(page), get_order(size));
-}
-
-static void free_hotplug_pgtable_page(struct page *page)
-{
-	free_hotplug_page_range(page, PAGE_SIZE);
-}
-
-static void free_pte_table(pte_t *ptep, pmd_t *pmdp, unsigned long addr)
-{
-	struct page *page;
-	int i;
-
-	for (i = 0; i < PTRS_PER_PTE; i++) {
-		if (!pte_none(ptep[i]))
-			return;
-	}
-
-	page = pmd_page(READ_ONCE(*pmdp));
-	pmd_clear(pmdp);
-	__flush_tlb_kernel_pgtable(addr);
-	free_hotplug_pgtable_page(page);
-}
-
-static void free_pmd_table(pmd_t *pmdp, pud_t *pudp, unsigned long addr)
-{
-	struct page *page;
-	int i;
-
-	if (CONFIG_PGTABLE_LEVELS <= 2)
-		return;
-
-	for (i = 0; i < PTRS_PER_PMD; i++) {
-		if (!pmd_none(pmdp[i]))
-			return;
-	}
-
-	page = pud_page(READ_ONCE(*pudp));
-	pud_clear(pudp);
-	__flush_tlb_kernel_pgtable(addr);
-	free_hotplug_pgtable_page(page);
-}
-
-static void free_pud_table(pud_t *pudp, pgd_t *pgdp, unsigned long addr)
-{
-	struct page *page;
-	int i;
-
-	if (CONFIG_PGTABLE_LEVELS <= 3)
-		return;
-
-	for (i = 0; i < PTRS_PER_PUD; i++) {
-		if (!pud_none(pudp[i]))
-			return;
-	}
-
-	page = pgd_page(READ_ONCE(*pgdp));
-	pgd_clear(pgdp);
-	__flush_tlb_kernel_pgtable(addr);
-	free_hotplug_pgtable_page(page);
-}
-
-static void
-remove_pte_table(pmd_t *pmdp, unsigned long addr,
-			unsigned long end, bool sparse_vmap)
-{
-	struct page *page;
-	pte_t *ptep, pte;
-	unsigned long start = addr;
-
-	for (; addr < end; addr += PAGE_SIZE) {
-		ptep = pte_offset_kernel(pmdp, addr);
-		pte = READ_ONCE(*ptep);
-
-		if (pte_none(pte))
-			continue;
-
-		WARN_ON(!pte_present(pte));
-		if (sparse_vmap) {
-			page = pte_page(pte);
-			free_hotplug_page_range(page, PAGE_SIZE);
-		}
-		pte_clear(&init_mm, addr, ptep);
-	}
-	flush_tlb_kernel_range(start, end);
-}
-
-static void
-remove_pmd_table(pud_t *pudp, unsigned long addr,
-			unsigned long end, bool sparse_vmap)
-{
-	unsigned long next;
-	struct page *page;
-	pte_t *ptep_base;
-	pmd_t *pmdp, pmd;
-
-	for (; addr < end; addr = next) {
-		next = pmd_addr_end(addr, end);
-		pmdp = pmd_offset(pudp, addr);
-		pmd = READ_ONCE(*pmdp);
-
-		if (pmd_none(pmd))
-			continue;
-
-		WARN_ON(!pmd_present(pmd));
-		if (pmd_sect(pmd)) {
-			if (sparse_vmap) {
-				page = pmd_page(pmd);
-				free_hotplug_page_range(page, PMD_SIZE);
-			}
-			pmd_clear(pmdp);
-			continue;
-		}
-		ptep_base = pte_offset_kernel(pmdp, 0UL);
-		remove_pte_table(pmdp, addr, next, sparse_vmap);
-		free_pte_table(ptep_base, pmdp, addr);
-	}
-}
-
-static void
-remove_pud_table(pgd_t *pgdp, unsigned long addr,
-			unsigned long end, bool sparse_vmap)
-{
-	unsigned long next;
-	struct page *page;
-	pmd_t *pmdp_base;
-	pud_t *pudp, pud;
-
-	for (; addr < end; addr = next) {
-		next = pud_addr_end(addr, end);
-		pudp = pud_offset(pgdp, addr);
-		pud = READ_ONCE(*pudp);
-
-		if (pud_none(pud))
-			continue;
-
-		WARN_ON(!pud_present(pud));
-		if (pud_sect(pud)) {
-			if (sparse_vmap) {
-				page = pud_page(pud);
-				free_hotplug_page_range(page, PUD_SIZE);
-			}
-			pud_clear(pudp);
-			continue;
-		}
-		pmdp_base = pmd_offset(pudp, 0UL);
-		remove_pmd_table(pudp, addr, next, sparse_vmap);
-		free_pmd_table(pmdp_base, pudp, addr);
-	}
-}
-
-static void
-remove_pagetable(unsigned long start, unsigned long end, bool sparse_vmap)
-{
-	unsigned long addr, next;
-	pud_t *pudp_base;
-	pgd_t *pgdp, pgd;
-
-	spin_lock(&init_mm.page_table_lock);
-	for (addr = start; addr < end; addr = next) {
-		next = pgd_addr_end(addr, end);
-		pgdp = pgd_offset_k(addr);
-		pgd = READ_ONCE(*pgdp);
-
-		if (pgd_none(pgd))
-			continue;
-
-		WARN_ON(!pgd_present(pgd));
-		pudp_base = pud_offset(pgdp, 0UL);
-		remove_pud_table(pgdp, addr, next, sparse_vmap);
-		free_pud_table(pudp_base, pgdp, addr);
-	}
-	spin_unlock(&init_mm.page_table_lock);
-}
-#endif
-
 #ifdef CONFIG_SPARSEMEM_VMEMMAP
 #if !ARM64_SWAPPER_USES_SECTION_MAPS
 int __meminit vmemmap_populate(unsigned long start, unsigned long end, int node,
@@ -997,9 +750,6 @@ int __meminit vmemmap_populate(unsigned long start, unsigned long end, int node,
 void vmemmap_free(unsigned long start, unsigned long end,
 		struct vmem_altmap *altmap)
 {
-#ifdef CONFIG_MEMORY_HOTPLUG
-	remove_pagetable(start, end, true);
-#endif
 }
 #endif	/* CONFIG_SPARSEMEM_VMEMMAP */
 
@@ -1107,7 +857,7 @@ void __set_fixmap(enum fixed_addresses idx,
 	}
 }
 
-void *__init fixmap_remap_fdt(phys_addr_t dt_phys, int *size, pgprot_t prot)
+void *__init __fixmap_remap_fdt(phys_addr_t dt_phys, int *size, pgprot_t prot)
 {
 	const u64 dt_virt_base = __fix_to_virt(FIX_FDT);
 	int offset;
@@ -1160,20 +910,28 @@ void *__init fixmap_remap_fdt(phys_addr_t dt_phys, int *size, pgprot_t prot)
 	return dt_virt;
 }
 
+void *__init fixmap_remap_fdt(phys_addr_t dt_phys)
+{
+	void *dt_virt;
+	int size;
+
+	dt_virt = __fixmap_remap_fdt(dt_phys, &size, PAGE_KERNEL_RO);
+	if (!dt_virt)
+		return NULL;
+
+	memblock_reserve(dt_phys, size);
+	return dt_virt;
+}
+
 int __init arch_ioremap_pud_supported(void)
 {
-	/*
-	 * Only 4k granule supports level 1 block mappings.
-	 * SW table walks can't handle removal of intermediate entries.
-	 */
-	return IS_ENABLED(CONFIG_ARM64_4K_PAGES) &&
-	       !IS_ENABLED(CONFIG_ARM64_PTDUMP_DEBUGFS);
+	/* only 4k granule supports level 1 block mappings */
+	return IS_ENABLED(CONFIG_ARM64_4K_PAGES);
 }
 
 int __init arch_ioremap_pmd_supported(void)
 {
-	/* See arch_ioremap_pud_supported() */
-	return !IS_ENABLED(CONFIG_ARM64_PTDUMP_DEBUGFS);
+	return 1;
 }
 
 int pud_set_huge(pud_t *pudp, phys_addr_t phys, pgprot_t prot)
@@ -1266,8 +1024,7 @@ int pud_free_pmd_page(pud_t *pudp, unsigned long addr)
 	next = addr;
 	end = addr + PUD_SIZE;
 	do {
-		if (pmd_present(READ_ONCE(*pmdp)))
-			pmd_free_pte_page(pmdp, next);
+		pmd_free_pte_page(pmdp, next);
 	} while (pmdp++, next += PMD_SIZE, next != end);
 
 	pud_clear(pudp);
@@ -1275,44 +1032,3 @@ int pud_free_pmd_page(pud_t *pudp, unsigned long addr)
 	pmd_free(NULL, table);
 	return 1;
 }
-
-#ifdef CONFIG_MEMORY_HOTPLUG
-static void __remove_pgd_mapping(pgd_t *pgdir, unsigned long start, u64 size)
-{
-	WARN_ON(pgdir != init_mm.pgd);
-	remove_pagetable(start, start + size, false);
-}
-
-int arch_add_memory(int nid, u64 start, u64 size, struct vmem_altmap *altmap,
-		    bool want_memblock)
-{
-	int ret, flags = 0;
-
-	if (debug_pagealloc_enabled())
-		flags = NO_BLOCK_MAPPINGS | NO_CONT_MAPPINGS;
-
-	__create_pgd_mapping(swapper_pg_dir, start, __phys_to_virt(start),
-			     size, PAGE_KERNEL, pgd_pgtable_alloc, flags);
-
-	ret = __add_pages(nid, start >> PAGE_SHIFT, size >> PAGE_SHIFT,
-			   altmap, want_memblock);
-	if (ret)
-		__remove_pgd_mapping(swapper_pg_dir,
-				     __phys_to_virt(start), size);
-	return ret;
-}
-
-#ifdef CONFIG_MEMORY_HOTREMOVE
-int arch_remove_memory(u64 start, u64 size, struct vmem_altmap *altmap)
-{
-	unsigned long start_pfn = start >> PAGE_SHIFT;
-	unsigned long nr_pages = size >> PAGE_SHIFT;
-	struct zone *zone = page_zone(pfn_to_page(start_pfn));
-
-	__remove_pages(zone, start_pfn, nr_pages, altmap);
-	__remove_pgd_mapping(swapper_pg_dir, __phys_to_virt(start), size);
-
-	return 0;
-}
-#endif
-#endif
