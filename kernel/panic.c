@@ -124,6 +124,20 @@ void nmi_panic(struct pt_regs *regs, const char *msg)
 }
 EXPORT_SYMBOL(nmi_panic);
 
+/*
+ * v4.20 keeps the panic_on_warn handling inline in __warn(); expose the
+ * helper the vendor scheduler expects. The Samsung warn_limit/warn_count
+ * policy is not part of this tree yet.
+ */
+void check_panic_on_warn(const char *origin)
+{
+	if (panic_on_warn) {
+		panic_on_warn = 0;
+		panic("%s: panic_on_warn set ...\n", origin);
+	}
+}
+EXPORT_SYMBOL(check_panic_on_warn);
+
 /**
  *	panic - halt the system
  *	@fmt: The text string to print

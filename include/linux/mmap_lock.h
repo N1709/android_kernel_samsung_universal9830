@@ -1,6 +1,10 @@
 #ifndef _LINUX_MMAP_LOCK_H
 #define _LINUX_MMAP_LOCK_H
 
+#include <linux/mm_types.h>
+#include <linux/rwsem.h>
+#include <linux/lockdep.h>
+
 static inline void mmap_init_lock(struct mm_struct *mm)
 {
 	init_rwsem(&mm->mmap_sem);
@@ -54,7 +58,7 @@ static inline void mmap_read_unlock(struct mm_struct *mm)
 static inline bool mmap_read_trylock_non_owner(struct mm_struct *mm)
 {
 	if (down_read_trylock(&mm->mmap_sem)) {
-		rwsem_release(&mm->mmap_sem.dep_map, _RET_IP_);
+		rwsem_release(&mm->mmap_sem.dep_map, 1, _RET_IP_);
 		return true;
 	}
 	return false;
