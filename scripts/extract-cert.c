@@ -27,8 +27,7 @@
  */
 #if OPENSSL_VERSION_NUMBER < 0x40000000L && !defined(OPENSSL_NO_ENGINE)
 #include <openssl/engine.h>
-#else
-#define OPENSSL_NO_ENGINE 1
+#define HAVE_ENGINE 1
 #endif
 
 #define PKEY_ID_PKCS7 2
@@ -120,6 +119,7 @@ int main(int argc, char **argv)
 		fclose(f);
 		exit(0);
 	} else if (!strncmp(cert_src, "pkcs11:", 7)) {
+#ifdef HAVE_ENGINE
 		ENGINE *e;
 		struct {
 			const char *cert_id;
@@ -142,6 +142,9 @@ int main(int argc, char **argv)
 		ENGINE_ctrl_cmd(e, "LOAD_CERT_CTRL", 0, &parms, NULL, 1);
 		ERR(!parms.cert, "Get X.509 from PKCS#11");
 		write_cert(parms.cert);
+#else
+		errx(1, "PKCS#11 support requires an OpenSSL build with the ENGINE API");
+#endif
 	} else {
 		BIO *b;
 		X509 *x509;
