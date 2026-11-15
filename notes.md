@@ -112,6 +112,19 @@ config, so `fs/verity` and `fs/ext4/verity.c` are not built.  The
 `S_VERITY`/`IS_VERITY` definitions stay in `fs.h` because f2fs headers
 still reference them.
 
+## Stability plan
+
+Priority order: green build, then boot, then stability, then features.
+
+1. Build `Image.gz` + `dtbs` with zero errors on the Android 17 config.
+2. Boot test on universal9830; capture last_kmsg/pstore if it fails.
+3. Keep vendor drivers and board files untouched until boot is green.
+4. arch/arm64 generic code is v4.20 per the user's decision.  If early
+   boot fails on Exynos-specific errata, cpuidle or suspend, restore
+   only the affected vendor file instead of the whole directory.
+5. No MGLRU, BORE, Simple LMK, WALT or Adreno boosts before boot and
+   basic stability are confirmed; they are separate, reversible commits.
+
 ## Initial state of the v4.20 merge
 
 `git merge --no-commit --no-ff v4.20` → **1239 conflicted files**.
