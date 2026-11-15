@@ -1125,4 +1125,6 @@ struct bpf_sock_ops_kern {
 					 */
 };
 
+extern struct static_key_false bpf_sk_lookup_enabled;
+
 #endif /* __LINUX_FILTER_H__ */

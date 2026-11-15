@@ -7329,6 +7329,9 @@ const struct bpf_verifier_ops flow_dissector_verifier_ops = {
 const struct bpf_prog_ops flow_dissector_prog_ops = {
 };
 
+DEFINE_STATIC_KEY_FALSE(bpf_sk_lookup_enabled);
+EXPORT_SYMBOL(bpf_sk_lookup_enabled);
+
 int sk_detach_filter(struct sock *sk)
 {
 	int ret = -ENOENT;
