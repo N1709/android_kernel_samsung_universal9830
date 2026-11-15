@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * fs/kernfs/mount.c - kernfs mount implementation
  *
  * Copyright (c) 2001-3 Patrick Mochel
  * Copyright (c) 2007 SUSE Linux Products GmbH
  * Copyright (c) 2007, 2013 Tejun Heo <tj@kernel.org>
+ *
+ * This file is released under the GPLv2.
  */
 
 #include <linux/fs.h>
@@ -68,14 +69,15 @@ const struct super_operations kernfs_sops = {
  * Similar to kernfs_fh_get_inode, this one gets kernfs node from inode
  * number and generation
  */
-struct kernfs_node *kernfs_get_node_by_id(struct kernfs_root *root, u64 id)
+struct kernfs_node *kernfs_get_node_by_id(struct kernfs_root *root,
+	const union kernfs_node_id *id)
 {
 	struct kernfs_node *kn;
 
-	kn = kernfs_find_and_get_node_by_ino(root, kernfs_id_ino(id));
+	kn = kernfs_find_and_get_node_by_ino(root, id->ino);
 	if (!kn)
 		return NULL;
-	if (kernfs_gen(kn) != kernfs_id_gen(id)) {
+	if (kn->id.generation != id->generation) {
 		kernfs_put(kn);
 		return NULL;
 	}
@@ -194,10 +196,8 @@ struct dentry *kernfs_node_dentry(struct kernfs_node *kn,
 		return dentry;
 
 	knparent = find_next_ancestor(kn, NULL);
-	if (WARN_ON(!knparent)) {
-		dput(dentry);
+	if (WARN_ON(!knparent))
 		return ERR_PTR(-EINVAL);
-	}
 
 	do {
 		struct dentry *dtmp;
@@ -206,11 +206,9 @@ struct dentry *kernfs_node_dentry(struct kernfs_node *kn,
 		if (kn == knparent)
 			return dentry;
 		kntmp = find_next_ancestor(kn, knparent);
-		if (WARN_ON(!kntmp)) {
-			dput(dentry);
+		if (WARN_ON(!kntmp))
 			return ERR_PTR(-EINVAL);
-		}
-		dtmp = lookup_positive_unlocked(kntmp->name, dentry,
+		dtmp = lookup_one_len_unlocked(kntmp->name, dentry,
 					       strlen(kntmp->name));
 		dput(dentry);
 		if (IS_ERR(dtmp))

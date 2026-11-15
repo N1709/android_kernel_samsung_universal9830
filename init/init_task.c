@@ -10,9 +10,8 @@
 #include <linux/fs.h>
 #include <linux/mm.h>
 #include <linux/audit.h>
-#include <linux/scs.h>
 
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 #include <linux/uaccess.h>
 
 static struct signal_struct init_signals = {
@@ -66,7 +65,7 @@ struct task_struct init_task
 #endif
 	.state		= 0,
 	.stack		= init_stack,
-	.usage		= REFCOUNT_INIT(2),
+	.usage		= ATOMIC_INIT(2),
 	.flags		= PF_KTHREAD,
 	.prio		= MAX_PRIO - 20,
 	.static_prio	= MAX_PRIO - 20,
@@ -74,7 +73,6 @@ struct task_struct init_task
 	.policy		= SCHED_NORMAL,
 	.cpus_allowed	= CPU_MASK_ALL,
 	.nr_cpus_allowed= NR_CPUS,
-	.cpus_requested	= CPU_MASK_ALL,
 	.mm		= NULL,
 	.active_mm	= &init_mm,
 	.restart_block	= {
@@ -142,10 +140,6 @@ struct task_struct init_task
 	.rcu_tasks_holdout_list = LIST_HEAD_INIT(init_task.rcu_tasks_holdout_list),
 	.rcu_tasks_idle_cpu = -1,
 #endif
-#ifdef CONFIG_TASKS_TRACE_RCU
-	.trc_reader_nesting = 0,
-	.trc_holdout_list = LIST_HEAD_INIT(init_task.trc_holdout_list),
-#endif
 #ifdef CONFIG_CPUSETS
 	.mems_allowed_seq = SEQCNT_ZERO(init_task.mems_allowed_seq),
 #endif
@@ -174,8 +168,7 @@ struct task_struct init_task
 	.lockdep_recursion = 0,
 #endif
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
-	.ret_stack		= NULL,
-	.tracing_graph_pause	= ATOMIC_INIT(0),
+	.ret_stack	= NULL,
 #endif
 #if defined(CONFIG_TRACING) && defined(CONFIG_PREEMPT)
 	.trace_recursion = 0,
@@ -188,13 +181,6 @@ struct task_struct init_task
 #endif
 };
 EXPORT_SYMBOL(init_task);
-
-#ifdef CONFIG_SHADOW_CALL_STACK
-unsigned long init_shadow_call_stack[SCS_SIZE / sizeof(long)] __init_task_data
-		__aligned(SCS_SIZE) = {
-	[(SCS_SIZE / sizeof(long)) - 1] = SCS_END_MAGIC
-};
-#endif
 
 /*
  * Initial thread structure. Alignment of this is handled by a special

@@ -1084,3 +1084,5 @@ struct dma_map_ops exynos_pcie_dma_ops = {
 };
 EXPORT_SYMBOL(exynos_pcie_dma_ops);
 
+#endif /* CONFIG_EXYNOS_PCIE_IOMMU */
+

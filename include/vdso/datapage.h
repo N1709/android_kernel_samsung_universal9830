@@ -5,7 +5,6 @@
 #ifndef __ASSEMBLY__
 
 #include <linux/compiler.h>
-#include <linux/compat_time.h>
 #include <uapi/linux/time.h>
 #include <uapi/linux/types.h>
 #include <uapi/asm-generic/errno-base.h>

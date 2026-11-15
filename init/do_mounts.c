@@ -586,7 +586,6 @@ void __init prepare_namespace(void)
 	wait_for_device_probe();
 
 	md_run_setup();
-	dm_run_setup();
 
 	if (saved_root_name[0]) {
 		root_device_name = saved_root_name;
@@ -626,23 +625,33 @@ out:
 }
 
 static bool is_tmpfs;
-static int rootfs_init_fs_context(struct fs_context *fc)
+static struct dentry *rootfs_mount(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data)
 {
-	if (IS_ENABLED(CONFIG_TMPFS) && is_tmpfs)
-		return shmem_init_fs_context(fc);
+	static unsigned long once;
+	void *fill = ramfs_fill_super;
 
-	return ramfs_init_fs_context(fc);
+	if (test_and_set_bit(0, &once))
+		return ERR_PTR(-ENODEV);
+
+	if (IS_ENABLED(CONFIG_TMPFS) && is_tmpfs)
+		fill = shmem_fill_super;
+
+	return mount_nodev(fs_type, flags, data, fill);
 }
 
-struct file_system_type rootfs_fs_type = {
+static struct file_system_type rootfs_fs_type = {
 	.name		= "rootfs",
-	.init_fs_context = rootfs_init_fs_context,
+	.mount		= rootfs_mount,
 	.kill_sb	= kill_litter_super,
 };
 
 int __init init_rootfs(void)
 {
-	int err = 0;
+	int err = register_filesystem(&rootfs_fs_type);
+
+	if (err)
+		return err;
 
 	if (IS_ENABLED(CONFIG_TMPFS) && !saved_root_name[0] &&
 		(!root_fs_names || strstr(root_fs_names, "tmpfs"))) {
@@ -651,5 +660,9 @@ int __init init_rootfs(void)
 	} else {
 		err = init_ramfs_fs();
 	}
+
+	if (err)
+		unregister_filesystem(&rootfs_fs_type);
+
 	return err;
 }

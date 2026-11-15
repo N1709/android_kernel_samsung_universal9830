@@ -30,6 +30,8 @@ Working document. Updated as the merge progresses.
 - [x] 2. `git config rerere.enabled true`
 - [x] 3. `git checkout -b upgrade-5.0`
 - [ ] 4. `git merge v4.20` → resolve → commit → build passes
+  - [x] merge + resolve + commit (`3027a77146cf`)
+  - [ ] build passes
 - [ ] 5. `git merge v5.0` → resolve → commit → build passes
 - [ ] 6. STOP (user runs the boot test)
 
@@ -147,17 +149,148 @@ drop. Example: `python3 /tmp/opencode/resolve.py kernel/sched/fair.c o,t,o`.
     because they carry Exynos platform hooks (errata, SMC, dma-mapping, etc.).
 - **drivers/tty/serial/samsung.c** → manual (Samsung driver).
 
-## Deviations / features dropped
+## v4.20 merge result
 
-(none yet; fill in if something has to be dropped)
+Merge commit: `3027a77146cf` — "Merge v4.20 into upgrade-5.0".
+All 1239 conflicts resolved; `Makefile` is now `4.20.0`.
+
+Resolution details worth remembering:
+
+| Area | Decision |
+|---|---|
+| Generic files | upstream v4.20 (`--theirs`) |
+| Locally deleted files (staging/erofs, i40evf, mt7621-mmc, ...) | keep deleted |
+| Files removed upstream (iavf, mt76 tx, docg4, ...) | accept deletion |
+| `fs/f2fs/**` | whole directory taken from HEAD (Samsung fork stays consistent) |
+| `kernel/sched/psi.c`, `psi.h`, `psi_types.h` | upstream |
+| `kernel/sched/{fair,sched.h,topology,pelt,core,Makefile}` | HEAD (EMS + schedtune SPC) |
+| `arch/arm64/**` | per-hunk, v5.0 as tie-breaker |
+| `arch/arm64/mm/dma-mapping.c` | upstream v4.20 + re-ported Samsung PCIe S2MPU / PL330 mcode ops on `dma_direct_*` |
+| `drivers/tty/serial/samsung.c` | Samsung clock helpers kept, upstream resume reset taken |
+
+Notable per-file choices in `arch/arm64`:
+- kept ours (newer backports): `cpucaps.h`, `cputype.h`, `cpu_errata.c`,
+  `sysreg.h` (SB barrier, RAS), `hwcap.h` (`HWCAP_SB`), `ptrace.h`,
+  `Kconfig.platforms`, `Makefile` (dtbo + vdso32 rules), `crypto/Makefile`
+  (crc32-ce, poly1305-neon), `net/bpf_jit_comp.c`, `vmlinux.lds.S` (both
+  page-table blocks), `lib/crc32.S` (ours' faster crc32 path).
+- took theirs (v5.0-consistent): `stage2_pgtable.h`, `pgtable.h`,
+  `processor.h`, `traps.c`, `sys_compat.c`, `kvm/hyp/hyp-entry.S`,
+  `mm/{init,mmu}.c`, `cpufeature.c` (most hunks), `mm/fault.c` (new
+  `arm64_notify_die`/`is_el1_permission_fault` signatures).
+- `mm/fault.c`: Samsung debug hooks (`safe_fault_in_progress`,
+  `CONFIG_SEC_DEBUG_EXTRA_INFO`, `CONFIG_SEC_DEBUG_FAULT_MSG_ADV`) were
+  re-inserted by hand after taking the new API.
+- `cpufeature.c`: dropped the upstream `ARM64_HAS_CRC32` capability entry
+  because `cpucaps.h` stays on the Lineage numbering (no `ARM64_HAS_CRC32`);
+  4.19's `crc32-ce-glue.c` uses `cpu_have_crc32()` instead.
 
 ## Build
 
+Build script in the tree (`build_kernel.sh`) references
+`exynos9830-x1slte_defconfig`, which does not exist in `arch/arm64/configs/`.
+The available configs are `exynos9830_defconfig` plus per-device fragments
+(`x1s.config`, `y2s.config`, `z3s.config`, ...).
+
+Toolchain: the defconfig was generated with Android clang 14.0.6 + LLD.
+The host only has clang 23.1.5 / LLD 23.1.5, which is much newer than what
+4.19/v4.20 Kbuild expects.
+
+Kconfig note: the first `make ... defconfig` failed with a bogus
+`init/Kconfig:17: syntax error` plus `scripts/gcc-version.sh: -p: command not
+found`. Root cause was the stale 4.19 `scripts/gcc-version.sh` (see below),
+not the compiler selection.
+
+### Build fixes needed after the merge
+
+1. `scripts/gcc-version.sh` was still the old 4.19 script (no `-p` support)
+   while `init/Kconfig` was already v4.20. Restored v4.20's version.
+2. `scripts/gcc-plugins/Kconfig` and `security/Kconfig.hardening` both defined
+   `GCC_PLUGIN_STRUCTLEAK*`. `security/Kconfig.hardening` (Lineage backport,
+   not present in v4.20) owns the definitions inside the
+   "Initialize kernel stack variables" choice, so the duplicate block was
+   removed from `scripts/gcc-plugins/Kconfig`.
+3. The defconfig was generated with clang originally; make sure the config is
+   regenerated with the clang toolchain so `CONFIG_CC_IS_CLANG` matches the
+   compiler actually used.
+4. `scripts/dtc/` was a mix of v4.20 `dtc.h` and an older `livetree.c`
+   (`build_property`/`build_node` signatures did not match). Restored the
+   whole directory from v4.20 (`git checkout v4.20 -- scripts/dtc/`); the
+   file list is identical, including `yamltree.c`.
+5. `include/linux/pgtable.h` is a Lineage backport of the old
+   `asm-generic/pgtable.h` (guard is still `_ASM_GENERIC_PGTABLE_H`), but
+   v4.20's `arch/arm64/include/asm/pgtable.h` ends with
+   `#include <asm-generic/pgtable.h>`, which no longer exists here. Added
+   `#include <linux/pgtable.h>` at the end of `asm/pgtable.h` and
+   `#include <asm/pgtable.h>` at the top of `linux/pgtable.h`, so the header
+   is self-contained no matter which one is included first (e.g.
+   `linux/memremap.h` pulls in `linux/pgtable.h` before `asm/pgtable.h`).
+6. `scripts/dtc/dtc-lexer.l`: v4.20 defines `YYLTYPE yylloc;` in the lexer,
+   which clashes with the definition from the generated parser when the host
+   compiler defaults to `-fno-common`. Dropped the definition (HEAD already
+   did this); the parser's `extern` declaration is enough.
+6. `include/linux/cpumask.h` used `bitmap_size()` (a much newer helper that
+   does not exist in 4.19/4.20/5.0). Replaced with the equivalent
+   `BITS_TO_LONGS(nr_cpumask_bits) * sizeof(long)`.
+7. `include/linux/debug-snapshot.h` defined both a
+   `dbg_snapshot_get_hardlockup()` macro and a `static inline` function of the
+   same name in the `!CONFIG_DEBUG_SNAPSHOT` stub block. Removed the macro.
+
+Note: `CONFIG_DEBUG_SNAPSHOT` has no `config` entry anywhere in the tree
+(neither in HEAD nor after the merge), so the Samsung debug-snapshot code is
+already compiled out in this branch. This is pre-existing, not caused by the
+merge.
+
+### Pre-existing version skew in HEAD
+
+The starting tree was already a mix of 4.19, 5.x backports and partial
+Android/Lineage patches, and several of those combinations did not compile:
+
+- `include/linux/sched/task.h` used `refcount_inc(&t->usage)` while
+  `struct task_struct.usage` is still `atomic_t`.
+- `include/linux/mm_types.h` and `include/linux/mm.h` both defined
+  `compound_mapcount_ptr()`.
+- `include/linux/page-flags.h` (5.x backport) used
+  `compound_mapcount_ptr()` from `mm_types.h`.
+- `include/linux/kernfs.h` was the 5.5+ version (`kn->id` is `u64`) while
+  `include/linux/cgroup.h` still used `union kernfs_node_id`.
+- `include/linux/cgroup-defs.h` was the 5.x version (no `int id` in
+  `struct cgroup`, has freezer state) while `kernel/cgroup/cgroup.c` still
+  dereferenced `cgrp->id`.
+- `arch/arm64/include/asm/memory.h` used `page_kasan_tag()` but nothing
+  defined it.
+
+Fixes chosen (generic subsystems are aligned to v4.20, Samsung/Android
+features are kept):
+
+| File(s) | Action |
+|---|---|
+| `include/linux/sched/task.h` | v4.20 (matches `atomic_t usage` and `kernel/fork.c`) |
+| `include/linux/page-flags.h` | v4.20 (the 5.x `PageTransCompoundMap` backport needed the duplicate helper) |
+| `include/linux/mm_types.h` | kept HEAD (SPECULATIVE_PAGE_FAULT, ANDROID_KABI, anon_name); removed the duplicate `compound_mapcount_ptr()` |
+| `include/linux/mm.h` | added the v5.0 `page_kasan_tag*()` helpers and `KASAN_TAG_PGSHIFT` |
+| `include/linux/mmzone.h` | re-added the Samsung `ZERO_PAGE_ALLOC_*` node stats for `CONFIG_KZEROD` |
+| `include/linux/kernfs.h`, `fs/kernfs/`, `fs/sysfs/`, `include/linux/cgroup-defs.h`, `kernel/cgroup/` | v4.20 as one consistent cluster |
+| `kernel/cgroup/legacy_freezer.c` | removed (v4.20 has no legacy freezer) |
+| `include/linux/cgroup-defs.h` | re-added `CGRP_ROOT_MEMORY_LOCAL_EVENTS` and `CGRP_ROOT_MEMORY_RECURSIVE_PROT` (used by the kept `mm/memcontrol.c`) |
+| `scripts/extract-cert.c` | guard the ENGINE/PKCS#11 code with `OPENSSL_NO_ENGINE` (host OpenSSL 4 has no ENGINE API) |
+| `include/vdso/datapage.h` | dropped `#include <linux/compat_time.h>`; that header never existed upstream and the file does not use any of its types |
+
+Side effect to remember: because `kernel/cgroup/` is v4.20, the cgroup core
+never sets `CGRP_ROOT_MEMORY_RECURSIVE_PROT`, so the memory cgroup recursive
+protection knob from the Lineage backport is inactive. It compiles and does
+not affect boot.
+
+Recommended build invocation (host toolchain is much newer than the
+Android clang 14 the tree was written for):
+
 ```bash
-cd /home/n1709/app/experimental/upstream-4.19-5.4
-ls arch/arm64/configs/ | grep -i -E 'exynos|universal|lineage'   # find the defconfig
-make O=out ARCH=arm64 <defconfig>
-make O=out ARCH=arm64 -j$(nproc)
+make O=out ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- \
+     AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
+     STRIP=llvm-strip exynos9830_defconfig
+make O=out ARCH=arm64 CC=clang LD=ld.lld CROSS_COMPILE=aarch64-linux-gnu- \
+     AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
+     STRIP=llvm-strip -j$(nproc)
 ```
 
 ## Log
