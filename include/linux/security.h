@@ -59,6 +59,10 @@ struct fs_context;
 struct fs_parameter;
 enum fs_value_type;
 
+/* Compatibility names used by the vendor LSM code */
+#define SECURITY_CAP_NOAUDIT 0
+#define SECURITY_CAP_AUDIT 1
+
 /* Default (no) options for the capable function */
 #define CAP_OPT_NONE 0x0
 /* If capable should audit the security request */

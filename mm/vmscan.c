@@ -4234,3 +4234,77 @@ void check_move_unevictable_pages(struct page **pages, int nr_pages)
 	}
 }
 #endif /* CONFIG_SHMEM */
+
+/*
+ * Samsung app-launch / memory boosting hooks. kzerod and zram register
+ * here. The reclaim side stays inert until the userspace tunables are
+ * restored.
+ */
+enum mem_boost {
+	NO_BOOST,
+	BOOST_MID = 1,
+	BOOST_HIGH = 2,
+	BOOST_KILL = 3,
+};
+static int mem_boost_mode = NO_BOOST;
+static unsigned long last_mode_change;
+#define MEM_BOOST_MAX_TIME (5 * HZ)
+
+static inline bool mem_boost_pgdat_wmark(struct pglist_data *pgdat)
+{
+	int z;
+	struct zone *zone;
+	unsigned long mark;
+
+	for (z = 0; z < MAX_NR_ZONES; z++) {
+		zone = &pgdat->node_zones[z];
+		if (!managed_zone(zone))
+			continue;
+		mark = low_wmark_pages(zone);
+		if (zone_watermark_ok_safe(zone, 0, mark, 0))
+			return true;
+	}
+	return false;
+}
+
+bool need_memory_boosting(struct pglist_data *pgdat)
+{
+	bool ret;
+
+	if (time_after(jiffies, last_mode_change + MEM_BOOST_MAX_TIME))
+		mem_boost_mode = NO_BOOST;
+
+	switch (mem_boost_mode) {
+	case BOOST_KILL:
+	case BOOST_HIGH:
+		ret = true;
+		break;
+	case BOOST_MID:
+#ifndef CONFIG_NEED_MULTIPLE_NODES
+		if (!pgdat)
+			pgdat = &contig_page_data;
+#endif
+		ret = mem_boost_pgdat_wmark(pgdat) ? false : true;
+		break;
+	case NO_BOOST:
+	default:
+		ret = false;
+		break;
+	}
+	return ret;
+}
+EXPORT_SYMBOL(need_memory_boosting);
+
+ATOMIC_NOTIFIER_HEAD(am_app_launch_notifier);
+
+int am_app_launch_notifier_register(struct notifier_block *nb)
+{
+	return atomic_notifier_chain_register(&am_app_launch_notifier, nb);
+}
+EXPORT_SYMBOL(am_app_launch_notifier_register);
+
+int am_app_launch_notifier_unregister(struct notifier_block *nb)
+{
+	return atomic_notifier_chain_unregister(&am_app_launch_notifier, nb);
+}
+EXPORT_SYMBOL(am_app_launch_notifier_unregister);

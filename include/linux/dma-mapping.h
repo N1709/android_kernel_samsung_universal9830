@@ -588,7 +588,8 @@ dma_cache_sync(struct device *dev, void *vaddr, size_t size,
 }
 
 extern int dma_common_mmap(struct device *dev, struct vm_area_struct *vma,
-			   void *cpu_addr, dma_addr_t dma_addr, size_t size);
+			   void *cpu_addr, dma_addr_t dma_addr, size_t size,
+			   unsigned long attrs);
 
 void *dma_common_contiguous_remap(struct page *page, size_t size,
 			unsigned long vm_flags,
@@ -597,8 +598,7 @@ void *dma_common_contiguous_remap(struct page *page, size_t size,
 void *dma_common_pages_remap(struct page **pages, size_t size,
 			unsigned long vm_flags, pgprot_t prot,
 			const void *caller);
-void dma_common_free_remap(void *cpu_addr, size_t size, unsigned long vm_flags,
-			   bool nowarn);
+void dma_common_free_remap(void *cpu_addr, size_t size, unsigned long vm_flags);
 
 /**
  * dma_mmap_attrs - map a coherent DMA allocation into user space
@@ -621,14 +621,15 @@ dma_mmap_attrs(struct device *dev, struct vm_area_struct *vma, void *cpu_addr,
 	BUG_ON(!ops);
 	if (ops->mmap)
 		return ops->mmap(dev, vma, cpu_addr, dma_addr, size, attrs);
-	return dma_common_mmap(dev, vma, cpu_addr, dma_addr, size);
+	return dma_common_mmap(dev, vma, cpu_addr, dma_addr, size, attrs);
 }
 
 #define dma_mmap_coherent(d, v, c, h, s) dma_mmap_attrs(d, v, c, h, s, 0)
 
 int
 dma_common_get_sgtable(struct device *dev, struct sg_table *sgt,
-		       void *cpu_addr, dma_addr_t dma_addr, size_t size);
+		       void *cpu_addr, dma_addr_t dma_addr, size_t size,
+		       unsigned long attrs);
 
 static inline int
 dma_get_sgtable_attrs(struct device *dev, struct sg_table *sgt, void *cpu_addr,
@@ -640,7 +641,7 @@ dma_get_sgtable_attrs(struct device *dev, struct sg_table *sgt, void *cpu_addr,
 	if (ops->get_sgtable)
 		return ops->get_sgtable(dev, sgt, cpu_addr, dma_addr, size,
 					attrs);
-	return dma_common_get_sgtable(dev, sgt, cpu_addr, dma_addr, size);
+	return dma_common_get_sgtable(dev, sgt, cpu_addr, dma_addr, size, attrs);
 }
 
 #define dma_get_sgtable(d, t, v, h, s) dma_get_sgtable_attrs(d, t, v, h, s, 0)

@@ -11,7 +11,6 @@
 #include <linux/module.h>
 #include <linux/magic.h>
 #include <linux/mount.h>
-#include <linux/pseudo_fs.h>
 #include <linux/migrate.h>
 #include <linux/ratelimit.h>
 #include <linux/swap.h>
@@ -316,23 +315,21 @@ static char *kzerodfs_dname(struct dentry *dentry, char *buffer, int buflen)
 				d_inode(dentry)->i_ino);
 }
 
-static int kzerod_init_fs_context(struct fs_context *fc)
+static struct dentry *kzerod_mount_fs(struct file_system_type *fs_type,
+				      int flags, const char *dev_name,
+				      void *data)
 {
 	static const struct dentry_operations ops = {
 		.d_dname = kzerodfs_dname,
 	};
-	struct pseudo_fs_context *ctx = init_pseudo(fc, KZEROD_MAGIC);
 
-	if (!ctx)
-		return -ENOMEM;
-	ctx->dops = &ops;
-	return 0;
+	return mount_pseudo(fs_type, "kzerod:", NULL, &ops, KZEROD_MAGIC);
 }
 
 static struct file_system_type kzerod_fs = {
 	.name		= "kzerod",
-	.init_fs_context = kzerod_init_fs_context,
-	.kill_sb	= kill_anon_super,
+	.mount		= kzerod_mount_fs,
+	.kill_sb	= kill_litter_super,
 };
 
 static int kzerod_mount(void)

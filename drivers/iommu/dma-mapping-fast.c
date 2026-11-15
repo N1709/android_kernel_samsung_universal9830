@@ -356,7 +356,7 @@ static int __init atomic_pool_init(void)
 	goto out;
 
 remove_mapping:
-	dma_common_free_remap(addr, atomic_pool_size, VM_USERMAP, false);
+	dma_common_free_remap(addr, atomic_pool_size, VM_USERMAP);
 destroy_genpool:
 	gen_pool_destroy(atomic_pool);
 	atomic_pool = NULL;
@@ -874,12 +874,12 @@ static void fast_smmu_free(struct device *dev, size_t size,
 	if (area && area->pages) {
 		struct page **pages = area->pages;
 
-		dma_common_free_remap(cpu_addr, size, VM_USERMAP, false);
+		dma_common_free_remap(cpu_addr, size, VM_USERMAP);
 		__fast_smmu_free_pages(pages, size >> FAST_PAGE_SHIFT);
 	} else if (attrs & DMA_ATTR_FORCE_CONTIGUOUS) {
 		struct page *page = vmalloc_to_page(cpu_addr);
 
-		dma_common_free_remap(cpu_addr, size, VM_USERMAP, false);
+		dma_common_free_remap(cpu_addr, size, VM_USERMAP);
 		dma_release_from_contiguous(dev, page, size >> PAGE_SHIFT);
 	} else if (!is_vmalloc_addr(cpu_addr)) {
 		__free_pages(virt_to_page(cpu_addr), get_order(size));

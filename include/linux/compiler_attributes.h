@@ -48,6 +48,11 @@
 #define __alias(symbol)                 __attribute__((__alias__(#symbol)))
 
 /*
+ *   gcc: https://gcc.gnu.org/onlinedocs/gcc/Statement-Attributes.html
+ */
+#define fallthrough                     __attribute__((__fallthrough__))
+
+/*
  *   gcc: https://gcc.gnu.org/onlinedocs/gcc/Common-Function-Attributes.html#index-aligned-function-attribute
  *   gcc: https://gcc.gnu.org/onlinedocs/gcc/Common-Type-Attributes.html#index-aligned-type-attribute
  *   gcc: https://gcc.gnu.org/onlinedocs/gcc/Common-Variable-Attributes.html#index-aligned-variable-attribute

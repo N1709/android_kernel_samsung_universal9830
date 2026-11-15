@@ -140,6 +140,9 @@ long arch_dma_coherent_to_pfn(struct device *dev, void *cpu_addr,
 	return __phys_to_pfn(dma_to_phys(dev, dma_addr));
 }
 
+#ifdef arch_dma_mmap_pgprot
+#undef arch_dma_mmap_pgprot
+#endif
 pgprot_t arch_dma_mmap_pgprot(struct device *dev, pgprot_t prot,
 		unsigned long attrs)
 {

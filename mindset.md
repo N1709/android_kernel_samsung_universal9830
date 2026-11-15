@@ -42,8 +42,11 @@ v4.20:
 Everything else that exists in upstream v4.20 is expected to be
 byte-for-byte v4.20. "Normalise to 4.20" never overrides the table above.
 
-Current checkpoint: the v4.20 merge is committed. The tree must compile
-and boot with v4.20 before any v5.0 work starts.
+Current checkpoint: the v4.20 merge is committed. The vendor 5.9 BPF
+backport has been reverted to v4.20 because it required 5.x core APIs and
+produced about 550 of the 553 build errors. The tree must compile and
+boot with v4.20 before any v5.0 work starts. The build is not green yet;
+the next full build decides the remaining seam errors.
 
 Branch: `K4.20`. Do not create new branches. Do not rewrite published
 history except the documented `--amend` case in `notes.md`.
@@ -384,6 +387,13 @@ Fix these the same way again, do not re-litigate them.
 | `mmap_lock`, `make_task_dead`, `struct sched_param`, `probe_kernel_read` | v4.20 callers expect the 5.x-ish helpers; declarations restored in `mm.h`, `sched/task.h`, `sched/types.h`, `uaccess.h` |
 | `prog->call_get_stack` | field does not exist in this tree's `struct bpf_prog`; the check was removed from `kernel/events/core.c` |
 | `VM_FAULT_*_HINDEX` | owned by `mm_types.h`; duplicates removed from `mm.h` |
+| vendor 5.9 BPF backport | do not restore it. v4.20 lacks the required core (BTF, trampoline, local storage, iterators); the backport alone produced about 550 errors. `kernel/bpf/**`, BPF/BTF/filter/skmsg headers, `net/core/filter.c` and the BPF UAPI stay v4.20 |
+| vendor pseudo-fs / `init_fs_context` | do not mix with the v4.20 VFS. `struct file_system_type` in this tree has no `init_fs_context`; use v4.20 `fs/libfs.c` and `mount_pseudo()`/`mount_pseudo_xattr()`, and leave `fs/fs_context.c` and `fs/fs_parser.c` uncompiled |
+| `dma_common_mmap` / `dma_common_get_sgtable` / `dma_common_free_remap` | use the v4.20 signatures (`attrs` argument on the first two, no `nowarn` on the last) and update vendor callers such as `drivers/iommu/dma-mapping-fast.c` |
+| `arch_dma_mmap_pgprot` | the arch header defines it as an object-like macro; `arch/arm64/mm/dma-mapping.c` must `#undef` it before defining the function |
+| `sched_idle_set_state` | v4.20 takes one argument. The vendor `index` parameter belongs to a newer scheduler; do not change the v4.20 header to match it |
+| `kernfs_xattr_get/set` | v4.20 kernfs keeps xattrs private; the public wrappers are a deliberate Samsung/SELinux seam, not a general v4.20 API |
+| memory hotplug / PASR | do not enable until `arch_add_memory()` and `ARCH_ENABLE_MEMORY_HOTPLUG/HOTREMOVE` are ported to arm64. Leaving the Kconfig symbols on without the arch code only hides the gap |
 
 ---
 
@@ -461,15 +471,34 @@ roughly 55% 4.19 and 40% 4.20, which is exactly why it produces a stream
 of signature and struct mismatches. Expect the same in `fs/` and
 `drivers/net/`.
 
+Progress estimate after the latest checkpoint:
+
+| Area | Estimate |
+|---|---:|
+| v4.20 merge and generic normalization | 100% |
+| Build-clean | ~80-85% |
+| Boot and stability | 0% |
+| Overall | ~80% |
+
+The estimate is based on the last full build (553 errors, about 550 in the
+vendor 5.9 BPF backport). The BPF backport is now reverted and the related
+seam fixes are in the working tree, but the checkpoint has not been rebuilt.
+Do not treat 80-85% as a green build; only a full `-j4 -k` run with `dtbs`
+can confirm it.
+
 - v4.20 merge committed as `3027a7714`.
-- Build fixes: `962ddc46b`, `634c8c9cb`, `4c371f972`, `358220981`.
+- Build fixes: `962ddc46b`, `634c8c9cb`, `4c371f972`, `358220981`,
+  `1a1232fb6`.
 - Already unified: `math64` ownership, `printk_safe_init`, clang
   toolchain plumbing, `bpf.h` restored, `fs.h` restored, `ipv6_stub`
   ownership, `ip6_dst_lookup_flow` arity, `inet6_bind` flags.
-- Next candidates, confirm by compiling their consumers rather than by
-  guessing: `nl80211.h`, `fuse.h`, `binder.h`, and the `sock.h` seam
-  (`__sk_flags_offset`, `SK_FL_TYPE_MASK`, `SK_FL_PROTO_MASK`, which
-  `net/core/filter.c` still uses because that file is the 4.19 version).
+- Deliberately reverted or deferred: vendor 5.9 BPF backport; FUSE
+  passthrough/virtiofs; the vendor `fs_context` pseudo-fs; memory-hotplug
+  and PASR; printk process-name extension; warn-limit policy; memory-boost
+  sysfs/reclaim policy. See `notes.md` for the full table.
+- Next work is measured, not guessed: rebuild the current checkpoint,
+  classify the remaining seam errors, fix them, then run the final build
+  with `dtbs`. Only after that can the human boot-test v4.20.
 - `arch/arm64/Makefile` still has the duplicate `dtbs` / `dtbs_install`
   recipes inherited from 4.19. Cosmetic, fix after the build is green.
 - Hybridswap: required for the Android 17 ROM, but there is no

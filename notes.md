@@ -18,10 +18,23 @@ Working document. Updated as the merge progresses.
 | dropped v4.20 files | `lib/chacha20.c`, `mm/kasan/kasan.c`, `mm/kasan/kasan_init.c`, `crypto/memneq.c` restored in `1b6e32131` |
 | arch/arm64 cluster | rc=0, zero errors (kernel, mm, lib, crypto) |
 | vendor build wiring | restored after the v4.20 normalization silently dropped it; see "Vendor build wiring" below |
-| v4.20 build | first full `-j2 -k` run stopped after 62 errors; arch/arm64 was a v4.20/vendor mix, now resynced to v4.20 |
+| v4.20 build | checkpoint: last full `-j2 -k` run had 553 errors, about 550 from the vendor 5.9 BPF backport; that backport is now reverted to v4.20 and the remaining seam errors still need a full rebuild |
 | v4.20 boot test | pending build |
 | v5.0 merge | on hold until v4.20 builds and boots |
 | Branch | `K4.20` (GitHub default); `lineage-24.0` removed |
+
+## Progress snapshot (15 Nov 2026)
+
+| Area | Estimate | Evidence |
+|---|---:|---|
+| v4.20 merge and generic normalization | 100% | merge `3027a7714`; generic files normalized by `a838f89fb` and `466c12f3e` |
+| Build-clean | ~80-85% | 553 errors in the last full build; the ~550-error BPF cluster is reverted to v4.20, but the checkpoint has not been rebuilt yet. Remaining failures are seam errors (fs_context/libfs, DMA, cgroup/BPF leftovers, missing vendor helpers) |
+| Boot and stability | 0% | no v4.20 image has been boot-tested |
+| Overall | ~80% | build work dominates; boot, stability and v5.0 remain |
+
+The next full build is the only reliable way to replace the estimates above
+with a measured error count. Do not report the tree as build-clean before
+that run finishes and `dtbs` is included.
 
 The local clone is shallow (`git rev-parse --is-shallow-repository` says
 true) and partial (`blob:none`). Tags `v4.20` and `v5.0` are present;
@@ -308,6 +321,25 @@ Notable per-file choices in `arch/arm64`:
   because `cpucaps.h` stays on the Lineage numbering (no `ARM64_HAS_CRC32`);
   4.19's `crc32-ce-glue.c` uses `cpu_have_crc32()` instead.
 
+## Deviations and deferred items
+
+These are deliberate reductions from the vendor 5.x backports. They are
+recorded here so they are not mistaken for completed work.
+
+| Item | Current state | Reason |
+|---|---|---|
+| Vendor 5.9 BPF backport | reverted to v4.20 (`kernel/bpf/**`, BPF/BTF/filter/skmsg headers, `net/core/filter.c`, UAPI bpf/btf); vendor-only BPF files deleted | the backport needs 5.x core APIs that v4.20 does not have, and it caused about 550 of the 553 build errors |
+| BPF LSM, BPF preload, BTF, bpfilter, bpf_local_storage, task/iter, trampoline, ringbuf, FUSE-BPF | not built; `CONFIG_BPF_LSM` and `CONFIG_BPF_PRELOAD` removed from the defconfig | consequential to the BPF revert |
+| FUSE passthrough and virtiofs | `fs/fuse/Makefile` is v4.20; vendor files remain in the tree but are not compiled | backports depend on the newer FUSE and fs_context APIs |
+| Vendor pseudo-fs / `fs_context` mount API | v4.20 `fs/libfs.c` and the legacy `mount_pseudo()` API are used; vendor `fs/fs_context.c`, `fs/fs_parser.c` and `include/linux/pseudo_fs.h` stay uncompiled | v4.20 `struct file_system_type` has no `init_fs_context`; mixing the two mount APIs breaks every pseudo-fs |
+| `CONFIG_PRINTK_PROCESS` | v4.20 printk core with Samsung log hooks ported in; the process-name extension is deferred | the vendor printk core is 5.x and cannot be mixed with the v4.20 core |
+| `panic_on_warn` warn limit/count | only the upstream `panic_on_warn` behaviour is kept | vendor `warn_limit`/`warn_count` are not in the v4.20 warn implementation |
+| Memory boost sysfs knobs and reclaim integration | `need_memory_boosting()` and the app-launch notifier registration are present; the userspace tunables and the reclaim-side policy are deferred | the full vendor implementation assumes a newer reclaim core; the stubs keep kzerod and zram linkable without changing reclaim semantics |
+| Memory hotplug / PASR | `CONFIG_MEMORY_HOTPLUG`, `CONFIG_MEMORY_HOTREMOVE` and `CONFIG_EXYNOS_PASR` stay off | v4.20 arm64 has no `arch_add_memory()` and no `ARCH_ENABLE_MEMORY_HOTPLUG/HOTREMOVE`; the vendor block has not been ported yet |
+| perf ksymbol / BPF JIT symbol records | `perf_event_ksymbol()` is a no-op static inline | the v4.20 perf core has no ksymbol records; nothing calls it in the built configuration |
+| Kernfs security xattrs | public `kernfs_xattr_get/set()` wrappers restored for SELinux | needed by the vendor SELinux hooks; the v4.20 kernfs internals do not export them |
+| Hybridswap | not present | no source, Kconfig symbol or header exists in this tree yet |
+
 ## Build
 
 Build script in the tree (`build_kernel.sh`) references
@@ -507,3 +539,9 @@ Notes:
   enables `CONFIG_GENERIC_GETTIMEOFDAY` and fixes the arm64 vDSO build.
 - Cluster build (`/tmp/opencode/cluster1.sh`, 12 seam targets incl. vDSO):
   rc=0, all targets clean. Full `-j2` build started after that.
+- Checkpoint after the BPF revert: vendor 5.9 BPF disabled and vendor-only
+  BPF files removed; DMA common-helper signatures aligned to v4.20; kernfs
+  xattr wrappers added; perf security defines added; kzerod moved to the
+  legacy mount API; memory-boost notifier stubs added; vmscan zero-page
+  stats wired; `fs/libfs.c` restored to v4.20 with the fscrypt casefold
+  helpers ported in. This checkpoint has not been rebuilt yet.

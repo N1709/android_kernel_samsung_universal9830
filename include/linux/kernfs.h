@@ -361,6 +361,11 @@ struct super_block *kernfs_pin_sb(struct kernfs_root *root, const void *ns);
 
 void kernfs_init(void);
 
+int kernfs_xattr_get(struct kernfs_node *kn, const char *name,
+		     void *value, size_t size);
+int kernfs_xattr_set(struct kernfs_node *kn, const char *name,
+		     const void *value, size_t size, int flags);
+
 struct kernfs_node *kernfs_get_node_by_id(struct kernfs_root *root,
 	const union kernfs_node_id *id);
 #else	/* CONFIG_KERNFS */
@@ -398,6 +403,13 @@ kernfs_walk_and_get_ns(struct kernfs_node *parent, const char *path,
 
 static inline void kernfs_get(struct kernfs_node *kn) { }
 static inline void kernfs_put(struct kernfs_node *kn) { }
+
+static inline int kernfs_xattr_get(struct kernfs_node *kn, const char *name,
+				   void *value, size_t size)
+{ return -ENOSYS; }
+static inline int kernfs_xattr_set(struct kernfs_node *kn, const char *name,
+				   const void *value, size_t size, int flags)
+{ return -ENOSYS; }
 
 static inline struct kernfs_node *kernfs_node_from_dentry(struct dentry *dentry)
 { return NULL; }

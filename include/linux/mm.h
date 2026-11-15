@@ -2217,6 +2217,11 @@ extern int __meminit init_per_zone_wmark_min(void);
 extern void mem_init(void);
 extern void __init mmap_init(void);
 extern void show_mem(unsigned int flags, nodemask_t *nodemask);
+
+/* Samsung memory management helpers */
+extern bool need_memory_boosting(struct pglist_data *pgdat);
+extern void wake_ion_rbin_heap_shrink(void);
+extern int init_rbincache(unsigned long pfn, unsigned long nr_pages);
 extern long si_mem_available(void);
 extern void si_meminfo(struct sysinfo * val);
 extern void si_meminfo_node(struct sysinfo *val, int nid);

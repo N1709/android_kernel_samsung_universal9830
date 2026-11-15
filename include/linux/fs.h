@@ -3098,6 +3098,9 @@ enum {
 
 	/* filesystem does not support filling holes */
 	DIO_SKIP_HOLES	= 0x02,
+
+	/* HPB read hint for the block layer */
+	DIO_HPB_IO	= 0x10,
 };
 
 void dio_end_io(struct bio *bio);

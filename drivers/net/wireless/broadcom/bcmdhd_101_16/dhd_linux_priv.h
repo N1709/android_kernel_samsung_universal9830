@@ -493,17 +493,10 @@ extern uint fis_enab;
 #define WAKELOCK_BACKPORT
 
 #ifdef CONFIG_HAS_WAKELOCK
-#if ((LINUX_VERSION_CODE  >= KERNEL_VERSION(5, 4, 0)) || defined(WAKELOCK_BACKPORT))
 #define dhd_wake_lock_init(wakeup_source, dev, name) \
 do { \
 	wakeup_source = wakeup_source_register(dev, name); \
 } while (0);
-#else
-#define dhd_wake_lock_init(wakeup_source, dev, name) \
-do { \
-	wakeup_source = wakeup_source_register(name); \
-} while (0);
-#endif /* LINUX_VERSION >= 5.4.0 */
 #define dhd_wake_lock_destroy(wakeup_source) \
 do { \
 	wakeup_source_unregister(wakeup_source); \
