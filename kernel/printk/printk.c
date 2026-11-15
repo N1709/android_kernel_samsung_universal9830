@@ -356,6 +356,10 @@ struct printk_log {
 	u8 facility;		/* syslog facility */
 	u8 flags:5;		/* internal record flags */
 	u8 level:3;		/* syslog level */
+#ifdef CONFIG_SEC_DEBUG_AUTO_COMMENT
+	u8 for_auto_comment;	/* message came from pr_auto() */
+	u8 type_auto_comment;	/* ASL level of the auto summary */
+#endif
 }
 #ifdef CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS
 __packed __aligned(4)
@@ -575,6 +579,89 @@ static u32 truncate_msg(u16 *text_len, u16 *trunc_msg_len,
 	return msg_used_size(*text_len + *trunc_msg_len, 0, pad_len);
 }
 
+#if defined(CONFIG_DEBUG_SNAPSHOT) || defined(CONFIG_SEC_DEBUG_FIRST2M_LOG)
+static size_t hook_size;
+static char hook_text[LOG_LINE_MAX + PREFIX_MAX];
+static size_t msg_print_text(const struct printk_log *msg,
+			     bool syslog, char *buf, size_t size);
+#endif
+
+#ifdef CONFIG_SEC_DEBUG_AUTO_COMMENT
+static void (*func_hook_auto_comm)(int type, const char *buf, size_t size);
+void register_set_auto_comm_buf(void (*func)(int type, const char *buf, size_t size))
+{
+	func_hook_auto_comm = func;
+}
+#endif
+
+#ifdef CONFIG_SEC_DEBUG_INIT_LOG
+static void (*func_hook_init_log)(const char *buf, size_t size);
+void register_init_log_hook_func(void (*func)(const char *buf, size_t size))
+{
+	func_hook_init_log = func;
+}
+#endif
+
+#ifdef CONFIG_DEBUG_SNAPSHOT
+static void (*func_hook_logbuf)(const char *buf, size_t size, int fatal);
+void register_hook_logbuf(void (*func)(const char *buf, size_t size, int fatal))
+{
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&logbuf_lock, flags);
+	/*
+	 * Replay the messages already in the ring so a late hook still
+	 * receives the boot log, matching the vendor printk behaviour.
+	 */
+	if (log_first_seq != log_next_seq) {
+		unsigned int step_seq, step_idx, start, end;
+		struct printk_log *msg;
+
+		start = log_first_seq;
+		end = log_next_seq;
+		step_idx = log_first_idx;
+		for (step_seq = start; step_seq < end; step_seq++) {
+			msg = (struct printk_log *)(log_buf + step_idx);
+			hook_size = msg_print_text(msg, true, hook_text,
+						   LOG_LINE_MAX + PREFIX_MAX);
+			func(hook_text, hook_size,
+			     msg->level <= LOGLEVEL_ERR ? 1 : 0);
+			step_idx = log_next(step_idx);
+		}
+	}
+	func_hook_logbuf = func;
+	raw_spin_unlock_irqrestore(&logbuf_lock, flags);
+}
+EXPORT_SYMBOL(register_hook_logbuf);
+#endif
+
+#ifdef CONFIG_SEC_DEBUG_FIRST2M_LOG
+static void (*func_hook_first_kmsg)(const char *buf, size_t size);
+void register_first_kmsg_hook_func(void (*func)(const char *buf, size_t size))
+{
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&logbuf_lock, flags);
+	if (log_first_seq != log_next_seq) {
+		unsigned int step_seq, step_idx, start, end;
+		struct printk_log *msg;
+
+		start = log_first_seq;
+		end = log_next_seq;
+		step_idx = log_first_idx;
+		for (step_seq = start; step_seq < end; step_seq++) {
+			msg = (struct printk_log *)(log_buf + step_idx);
+			hook_size = msg_print_text(msg, true, hook_text,
+						   LOG_LINE_MAX + PREFIX_MAX);
+			func(hook_text, hook_size);
+			step_idx = log_next(step_idx);
+		}
+	}
+	func_hook_first_kmsg = func;
+	raw_spin_unlock_irqrestore(&logbuf_lock, flags);
+}
+#endif
+
 /* insert record into the buffer, discard old ones, update heads */
 static int log_store(int facility, int level,
 		     enum log_flags flags, u64 ts_nsec,
@@ -618,6 +705,12 @@ static int log_store(int facility, int level,
 	memcpy(log_dict(msg), dict, dict_len);
 	msg->dict_len = dict_len;
 	msg->facility = facility;
+#ifdef CONFIG_SEC_DEBUG_AUTO_COMMENT
+	msg->for_auto_comment = (level / 10 == 9) ? 1 : 0;
+	msg->type_auto_comment = (level / 10 == 9) ?
+				 level - LOGLEVEL_PR_AUTO_BASE : 0;
+	level = (msg->for_auto_comment) ? 0 : level;
+#endif
 	msg->level = level & 7;
 	msg->flags = flags & 0x1f;
 	if (ts_nsec > 0)
@@ -626,6 +719,33 @@ static int log_store(int facility, int level,
 		msg->ts_nsec = local_clock();
 	memset(log_dict(msg) + dict_len, 0, pad_len);
 	msg->len = size;
+
+#ifdef CONFIG_DEBUG_SNAPSHOT
+	if (func_hook_logbuf) {
+		hook_size = msg_print_text(msg, true, hook_text,
+					   LOG_LINE_MAX + PREFIX_MAX);
+		func_hook_logbuf(hook_text, hook_size,
+				 msg->level <= LOGLEVEL_ERR ? 1 : 0);
+
+#ifdef CONFIG_SEC_DEBUG_AUTO_COMMENT
+		if (msg->for_auto_comment && func_hook_auto_comm)
+			func_hook_auto_comm(msg->type_auto_comment,
+					    hook_text, hook_size);
+#endif
+
+#ifdef CONFIG_SEC_DEBUG_INIT_LOG
+		/* user log only */
+		if (msg->facility && task_pid_nr(current) == 1 &&
+		    func_hook_init_log)
+			func_hook_init_log(hook_text, hook_size);
+#endif
+
+#ifdef CONFIG_SEC_DEBUG_FIRST2M_LOG
+		if (func_hook_first_kmsg)
+			func_hook_first_kmsg(hook_text, hook_size);
+#endif
+	}
+#endif
 
 	/* insert message */
 	log_next_idx += msg->len;
@@ -1859,6 +1979,13 @@ int vprintk_store(int facility, int level,
 				if (level == LOGLEVEL_DEFAULT)
 					level = kern_level - '0';
 				/* fallthrough */
+#ifdef CONFIG_SEC_DEBUG_AUTO_COMMENT
+			case 'B' ... 'J':
+				if (level == LOGLEVEL_DEFAULT)
+					level = LOGLEVEL_PR_AUTO_BASE +
+						(kern_level - 'A'); /* 91 ~ 99 */
+				/* fallthrough */
+#endif
 			case 'd':	/* KERN_DEFAULT */
 				lflags |= LOG_PREFIX;
 				break;
