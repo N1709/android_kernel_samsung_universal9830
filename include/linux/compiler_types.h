@@ -124,6 +124,10 @@ struct ftrace_likely_data {
  */
 #define __naked			__attribute__((__naked__)) notrace
 
+#ifndef __nocfi
+#define __nocfi
+#endif
+
 #define __compiler_offsetof(a, b)	__builtin_offsetof(a, b)
 
 /*
