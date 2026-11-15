@@ -1795,6 +1795,13 @@ struct block_device_operations;
 
 struct iov_iter;
 
+#ifdef CONFIG_COMPAT
+extern long compat_ptr_ioctl(struct file *file, unsigned int cmd,
+			      unsigned long arg);
+#else
+#define compat_ptr_ioctl NULL
+#endif
+
 struct file_operations {
 	struct module *owner;
 	loff_t (*llseek) (struct file *, loff_t, int);

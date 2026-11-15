@@ -53,6 +53,14 @@ static inline void getboottime(struct timespec *ts)
 }
 
 /*
+ * Timespec interface utilized by the Samsung vendor drivers.
+ */
+static inline void get_monotonic_boottime(struct timespec *ts)
+{
+	*ts = ktime_to_timespec(ktime_get_boottime());
+}
+
+/*
  * Persistent clock related interfaces
  */
 extern void read_persistent_clock(struct timespec *ts);

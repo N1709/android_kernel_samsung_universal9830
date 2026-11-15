@@ -12,6 +12,9 @@
 #ifndef _LINUX_FS_PARSER_H
 #define _LINUX_FS_PARSER_H
 
+/* Parameter not supported */
+#define ENOPARAM	519
+
 #include <linux/fs_context.h>
 
 struct path;
