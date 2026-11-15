@@ -316,6 +316,20 @@ long strncpy_from_user_nofault(char *dst, const void __user *unsafe_addr,
 		long count);
 extern long strnlen_unsafe_user(const void __user *unsafe_addr, long count);
 
+/*
+ * Legacy 4.x interface, still implemented by mm/maccess.c in this tree.
+ * Callers merged from v4.20 use probe_kernel_read()/probe_kernel_address().
+ */
+extern long probe_kernel_read(void *dst, const void *src, size_t size);
+extern long probe_kernel_write(void *dst, const void *src, size_t size);
+
+#define probe_kernel_address(addr, retval)			\
+({								\
+	long __ret;						\
+	__ret = probe_kernel_read(&(retval), (addr), sizeof(retval)); \
+	__ret;							\
+})
+
 /**
  * get_kernel_nofault(): safely attempt to read from a location
  * @val: read into this variable

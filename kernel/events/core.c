@@ -9004,7 +9004,6 @@ static int perf_event_set_bpf_handler(struct perf_event *event, u32 prog_fd)
 		return PTR_ERR(prog);
 
 	if (event->attr.precise_ip &&
-	    prog->call_get_stack &&
 	    (!(event->attr.sample_type & __PERF_SAMPLE_CALLCHAIN_EARLY) ||
 	     event->attr.exclude_callchain_kernel ||
 	     event->attr.exclude_callchain_user)) {
