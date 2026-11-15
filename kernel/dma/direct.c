@@ -338,7 +338,9 @@ const struct dma_map_ops dma_direct_ops = {
 	.unmap_page		= dma_direct_unmap_page,
 	.unmap_sg		= dma_direct_unmap_sg,
 #endif
+#ifdef ARCH_HAS_DMA_GET_REQUIRED_MASK
 	.get_required_mask	= dma_direct_get_required_mask,
+#endif
 	.dma_supported		= dma_direct_supported,
 	.mapping_error		= dma_direct_mapping_error,
 	.cache_sync		= arch_dma_cache_sync,

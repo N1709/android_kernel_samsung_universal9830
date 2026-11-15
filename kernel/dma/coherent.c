@@ -29,8 +29,8 @@ static inline struct dma_coherent_mem *dev_get_coherent_memory(struct device *de
 	return NULL;
 }
 
-static inline dma_addr_t dma_get_device_base(struct device *dev,
-					     struct dma_coherent_mem * mem)
+dma_addr_t dma_get_device_base(struct device *dev,
+			       struct dma_coherent_mem *mem)
 {
 	if (mem->use_dev_dma_pfn_offset)
 		return (mem->pfn_base - dev->dma_pfn_offset) << PAGE_SHIFT;
