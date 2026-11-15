@@ -415,9 +415,10 @@ Commit style used in this branch:
 - <file>: <what and why>
 ```
 
-Do not use the `UPSTREAM:` prefix. It was only for the v4.20 integration
-commit; later fixes use plain subsystem prefixes (`kbuild:`, `kconfig:`,
-`arm64:`, `docs:`).
+Commits that bring in upstream code (the v4.20/v5.0 merges, upstream
+backports, and restorations taken from an upstream tag) use the
+`UPSTREAM:` prefix. Local seam fixes use a plain subsystem prefix
+(`kbuild:`, `kconfig:`, `arm64:`, `docs:`).
 
 Leave `notes.md` in English, no emoji, no commentary about where the
 build was run. Update it when a milestone changes, not for every commit.

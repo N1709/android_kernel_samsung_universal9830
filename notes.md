@@ -528,8 +528,9 @@ Notes:
 - v5.0 blocker: the local clone is still shallow and has no upstream tags —
   re-run the fetch from "Current status" first.
 - Branch renamed `lineage-24.0` → `K4.20` and set as the GitHub default;
-  `lineage-24.0` removed locally and remotely. Commit subjects no longer use
-  the `UPSTREAM:` prefix.
+  `lineage-24.0` removed locally and remotely. Commits that bring in
+  upstream code (merges, backports, restorations from a v4.20/v5.0 tag) use
+  the `UPSTREAM:` prefix; local seam fixes use a subsystem prefix.
 - `a838f89fb`: 9838 non-vendor files normalized byte-for-byte to v4.20; only
   `Makefile` and `.gitignore` differ on purpose.
 - `efd91f859`: Kconfig/header seams — 4.19 kconfig parser, `as-instr` helper,
