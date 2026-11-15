@@ -21,7 +21,15 @@
 #include <openssl/bio.h>
 #include <openssl/pem.h>
 #include <openssl/err.h>
+#include <openssl/opensslv.h>
+/* OpenSSL 4.0 removed the ENGINE API.  Keep the PKCS#11 path for older
+ * libraries and fail cleanly on builds that no longer provide it.
+ */
+#if OPENSSL_VERSION_NUMBER < 0x40000000L && !defined(OPENSSL_NO_ENGINE)
 #include <openssl/engine.h>
+#else
+#define OPENSSL_NO_ENGINE 1
+#endif
 
 #define PKEY_ID_PKCS7 2
 

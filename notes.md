@@ -14,7 +14,10 @@ Working document. Updated as the merge progresses.
 | FBE v2 filesystem stack | in progress — Lineage `fs/crypto`, `fs/verity`, `fs/ext4`, `fs/f2fs`; 4.19 compat shims added for the core APIs 4.20 removed |
 | Target ROM | Android 17 / LineageOS 24.0, all Exynos 990 (universal9830) devices |
 | Hybridswap | not present in this tree; required by the ROM, source pending |
-| arch/arm64 | generic code forced to v4.20; `boot/dts/**` and `configs/**` stay vendor (v4.20 has no Exynos 990 files at all) |
+| arch/arm64 | generic code forced to v4.20 (`b9b373430`); `boot/dts/**` and `configs/**` stay vendor (v4.20 has no Exynos 990 files at all) |
+| dropped v4.20 files | `lib/chacha20.c`, `mm/kasan/kasan.c`, `mm/kasan/kasan_init.c`, `crypto/memneq.c` restored in `1b6e32131` |
+| arch/arm64 cluster | rc=0, zero errors (kernel, mm, lib, crypto) |
+| vendor build wiring | restored after the v4.20 normalization silently dropped it; see "Vendor build wiring" below |
 | v4.20 build | first full `-j2 -k` run stopped after 62 errors; arch/arm64 was a v4.20/vendor mix, now resynced to v4.20 |
 | v4.20 boot test | pending build |
 | v5.0 merge | on hold until v4.20 builds and boots |
@@ -124,6 +127,28 @@ Priority order: green build, then boot, then stability, then features.
    only the affected vendor file instead of the whole directory.
 5. No MGLRU, BORE, Simple LMK, WALT or Adreno boosts before boot and
    basic stability are confirmed; they are separate, reversible commits.
+
+## Vendor build wiring (must stay vendor)
+
+The v4.20 normalization also replaced `drivers/Kconfig`, `drivers/Makefile`
+and thousands of other Kconfig/Makefile files with their upstream versions.
+That silently disabled the whole Samsung driver set:
+
+- `drivers/samsung/` was never entered from `drivers/Makefile`, so
+  `CONFIG_SEC_*` never appeared in `.config`;
+- 145 Exynos/Samsung symbols requested by the defconfig were dropped,
+  including `SOC_EXYNOS9830`, `MODEL_Z3S`, `EXYNOS_DPU30`,
+  `BATTERY_SAMSUNG`, `SEC_PM` and `EXYNOS_BTS`;
+- `arch/arm64/Kconfig.platforms` was v4.20, so the Exynos platform and
+  model selection menus did not exist at all.
+
+A build without those drivers cannot boot Android, even if `Image.gz`
+links.  The whole Kconfig/Makefile set under `drivers/`, `sound/`,
+`security/`, `fs/`, `net/`, `block/`, `mm/`, `kernel/`, `lib/`, `ipc/`,
+`firmware/` and `init/`, plus `arch/arm64/Kconfig.platforms`, is
+therefore restored from the vendor tree (`3027a7714^1`).  The v4.20
+top-level `Makefile`, `scripts/`, and the already-synced 4.20 code stay
+as they are.
 
 ## Initial state of the v4.20 merge
 
