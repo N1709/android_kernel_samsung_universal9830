@@ -11,6 +11,72 @@
 #include <asm/nmi.h>
 #endif
 
+#ifdef CONFIG_SEC_DEBUG_LOCKUP_INFO
+#define TASK_COMM_LEN 16
+#define SOFTIRQ_TYPE_LEN 16
+
+enum hardlockup_type {
+	HL_TASK_STUCK = 1,
+	HL_IRQ_STUCK,
+	HL_IDLE_STUCK,
+	HL_SMC_CALL_STUCK,
+	HL_IRQ_STORM,
+	HL_HRTIMER_ERROR,
+	HL_UNKNOWN_STUCK
+};
+
+struct task_info {
+	char task_comm[TASK_COMM_LEN];
+};
+
+struct cpuidle_info {
+	char *mode;
+};
+
+struct smc_info {
+	int cmd;
+};
+
+struct irq_info {
+	int irq;
+	void *fn;
+	unsigned long long avg_period;
+};
+
+struct hardlockup_info {
+	enum hardlockup_type hl_type;
+	unsigned long long delay_time;
+	union {
+		struct task_info task_info;
+		struct cpuidle_info cpuidle_info;
+		struct smc_info smc_info;
+		struct irq_info irq_info;
+	};
+};
+
+struct softirq_info {
+	ktime_t last_arrival;
+	char softirq_type[SOFTIRQ_TYPE_LEN];
+	void *fn;
+};
+
+enum softlockup_type {
+	SL_SOFTIRQ_STUCK = 1,
+	SL_TASK_STUCK,
+	SL_UNKNOWN_STUCK
+};
+
+struct softlockup_info {
+	enum softlockup_type sl_type;
+	unsigned long long delay_time;
+	int preempt_count;
+	union {
+		struct softirq_info softirq_info;
+		struct task_info task_info;
+	};
+};
+#endif
+
 #ifdef CONFIG_LOCKUP_DETECTOR
 void lockup_detector_init(void);
 void lockup_detector_soft_poweroff(void);
