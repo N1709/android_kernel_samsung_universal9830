@@ -416,6 +416,12 @@ bool ns_capable_noaudit(struct user_namespace *ns, int cap)
 }
 EXPORT_SYMBOL(ns_capable_noaudit);
 
+bool ns_capable_setid(struct user_namespace *ns, int cap)
+{
+	return ns_capable_common(ns, cap, true);
+}
+EXPORT_SYMBOL(ns_capable_setid);
+
 /**
  * capable - Determine if the current task has a superior capability in effect
  * @cap: The capability to be tested for
