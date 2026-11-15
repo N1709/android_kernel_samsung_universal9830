@@ -273,17 +273,6 @@ config ARM_SBSA_WATCHDOG
 	  To compile this driver as module, choose M here: The module
 	  will be called sbsa_gwdt.
 
-config ARMADA_37XX_WATCHDOG
-	tristate "Armada 37xx watchdog"
-	depends on ARCH_MVEBU || COMPILE_TEST
-	select MFD_SYSCON
-	select WATCHDOG_CORE
-	help
-	   Say Y here to include support for the watchdog timer found on
-	   Marvell Armada 37xx SoCs.
-	   To compile this driver as a module, choose M here: the
-	   module will be called armada_37xx_wdt.
-
 config ASM9260_WATCHDOG
 	tristate "Alphascale ASM9260 watchdog"
 	depends on MACH_ASM9260 || COMPILE_TEST
@@ -410,6 +399,18 @@ config S3C2410_WATCHDOG
 	  The driver can be built as a module by choosing M, and will
 	  be called s3c2410_wdt
 
+config S3C2410_SHUTDOWN_REBOOT
+	bool "Support watchdog reset after watchdog shutdown"
+	depends on S3C2410_WATCHDOG
+	default n
+	help
+	  This config disable the shutdown function of S3C2410 watchdog.
+	  To prevent stuck after watchdog driver shutdown, shutdown
+	  function will not stop or disable watchdog and it will just
+	  kick 30 second. It will prevent being stucked in reset
+	  sequence with some other failure.
+	  This feature is not recommeneded for debugging.
+
 config SA1100_WATCHDOG
 	tristate "SA1100/PXA2xx watchdog"
 	depends on ARCH_SA1100 || ARCH_PXA
@@ -526,7 +527,7 @@ config SUNXI_WATCHDOG
 
 config COH901327_WATCHDOG
 	bool "ST-Ericsson COH 901 327 watchdog"
-	depends on ARCH_U300 || (ARM && COMPILE_TEST)
+	depends on ARCH_U300 || (ARM && COMMON_CLK && COMPILE_TEST)
 	default y if MACH_U300
 	select WATCHDOG_CORE
 	help
@@ -605,6 +606,7 @@ config MAX63XX_WATCHDOG
 config MAX77620_WATCHDOG
 	tristate "Maxim Max77620 Watchdog Timer"
 	depends on MFD_MAX77620 || COMPILE_TEST
+	select WATCHDOG_CORE
 	help
 	 This is the driver for the Max77620 watchdog timer.
 	 Say 'Y' here to enable the watchdog timer support for
@@ -661,6 +663,7 @@ config MOXART_WDT
 
 config SIRFSOC_WATCHDOG
 	tristate "SiRFSOC watchdog"
+	depends on HAS_IOMEM
 	depends on ARCH_SIRF || COMPILE_TEST
 	select WATCHDOG_CORE
 	default y
@@ -1533,7 +1536,7 @@ config SIBYTE_WDOG
 
 config AR7_WDT
 	tristate "TI AR7 Watchdog Timer"
-	depends on AR7 || (MIPS && COMPILE_TEST)
+	depends on AR7 || (MIPS && 32BIT && COMPILE_TEST)
 	help
 	  Hardware driver for the TI AR7 Watchdog Timer.
 
@@ -1632,7 +1635,6 @@ config IMGPDC_WDT
 config LANTIQ_WDT
 	tristate "Lantiq SoC watchdog"
 	depends on LANTIQ
-	select WATCHDOG_CORE
 	help
 	  Hardware driver for the Lantiq SoC Watchdog Timer.
 
@@ -1979,6 +1981,7 @@ comment "Watchdog Pretimeout Governors"
 
 config WATCHDOG_PRETIMEOUT_GOV
 	bool "Enable watchdog pretimeout governors"
+	depends on WATCHDOG_CORE
 	help
 	  The option allows to select watchdog pretimeout governors.
 

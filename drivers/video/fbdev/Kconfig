@@ -8,6 +8,12 @@ config FB_CMDLINE
 config FB_NOTIFY
 	bool
 
+config FB_CLPS711X_OLD
+	tristate
+	select FB_CFB_FILLRECT
+	select FB_CFB_COPYAREA
+	select FB_CFB_IMAGEBLIT
+
 menuconfig FB
 	tristate "Support for frame buffer devices"
 	select FB_CMDLINE
@@ -47,6 +53,7 @@ menuconfig FB
 config FIRMWARE_EDID
        bool "Enable firmware EDID"
        depends on FB
+       default n
        ---help---
          This enables access to the EDID transferred from the firmware.
 	 On the i386, this is from the Video BIOS. Enable this if DDC/I2C
@@ -64,10 +71,12 @@ config FB_DDC
        depends on FB
        select I2C_ALGOBIT
        select I2C
+       default n
 
 config FB_BOOT_VESA_SUPPORT
 	bool
 	depends on FB
+	default n
 	---help---
 	  If true, at least one selected framebuffer driver can take advantage
 	  of VESA video modes set at an early boot stage via the vga= parameter.
@@ -75,6 +84,7 @@ config FB_BOOT_VESA_SUPPORT
 config FB_CFB_FILLRECT
 	tristate
 	depends on FB
+	default n
 	---help---
 	  Include the cfb_fillrect function for generic software rectangle
 	  filling. This is used by drivers that don't provide their own
@@ -83,6 +93,7 @@ config FB_CFB_FILLRECT
 config FB_CFB_COPYAREA
 	tristate
 	depends on FB
+	default n
 	---help---
 	  Include the cfb_copyarea function for generic software area copying.
 	  This is used by drivers that don't provide their own (accelerated)
@@ -91,6 +102,7 @@ config FB_CFB_COPYAREA
 config FB_CFB_IMAGEBLIT
 	tristate
 	depends on FB
+	default n
 	---help---
 	  Include the cfb_imageblit function for generic software image
 	  blitting. This is used by drivers that don't provide their own
@@ -99,6 +111,7 @@ config FB_CFB_IMAGEBLIT
 config FB_CFB_REV_PIXELS_IN_BYTE
 	bool
 	depends on FB
+	default n
 	---help---
 	  Allow generic frame-buffer functions to work on displays with 1, 2
 	  and 4 bits per pixel depths which has opposite order of pixels in
@@ -107,6 +120,7 @@ config FB_CFB_REV_PIXELS_IN_BYTE
 config FB_SYS_FILLRECT
 	tristate
 	depends on FB
+	default n
 	---help---
 	  Include the sys_fillrect function for generic software rectangle
 	  filling. This is used by drivers that don't provide their own
@@ -115,6 +129,7 @@ config FB_SYS_FILLRECT
 config FB_SYS_COPYAREA
 	tristate
 	depends on FB
+	default n
 	---help---
 	  Include the sys_copyarea function for generic software area copying.
 	  This is used by drivers that don't provide their own (accelerated)
@@ -123,6 +138,7 @@ config FB_SYS_COPYAREA
 config FB_SYS_IMAGEBLIT
 	tristate
 	depends on FB
+	default n
 	---help---
 	  Include the sys_imageblit function for generic software image
 	  blitting. This is used by drivers that don't provide their own
@@ -131,6 +147,7 @@ config FB_SYS_IMAGEBLIT
 config FB_PROVIDE_GET_FB_UNMAPPED_AREA
 	bool
 	depends on FB
+	default n
 	---help---
 	  Allow generic frame-buffer to provide get_fb_unmapped_area
 	  function.
@@ -162,6 +179,7 @@ endchoice
 config FB_SYS_FOPS
        tristate
        depends on FB
+       default n
 
 config FB_DEFERRED_IO
 	bool
@@ -175,6 +193,7 @@ config FB_HECUBA
 config FB_SVGALIB
 	tristate
 	depends on FB
+	default n
 	---help---
 	  Common utility functions useful to fbdev drivers of VGA-based
 	  cards.
@@ -182,16 +201,19 @@ config FB_SVGALIB
 config FB_MACMODES
        tristate
        depends on FB
+       default n
 
 config FB_BACKLIGHT
 	bool
 	depends on FB
 	select BACKLIGHT_LCD_SUPPORT
 	select BACKLIGHT_CLASS_DEVICE
+	default n
 
 config FB_MODE_HELPERS
         bool "Enable Video Mode Handling Helpers"
         depends on FB
+	default n
 	---help---
 	  This enables functions for handling video modes using the
 	  Generalized Timing Formula and the EDID parser. A few drivers rely
@@ -202,6 +224,7 @@ config FB_MODE_HELPERS
 config FB_TILEBLITTING
        bool "Enable Tile Blitting Support"
        depends on FB
+       default n
        ---help---
          This enables tile blitting.  Tile blitting is a drawing technique
 	 where the screen is divided into rectangular sections (tiles), whereas
@@ -253,6 +276,7 @@ config FB_PM2
 	select FB_CFB_COPYAREA
 	select FB_CFB_IMAGEBLIT
 	help
+
 	  This is the frame buffer device driver for cards based on
 	  the 3D Labs Permedia, Permedia 2 and Permedia 2V chips.
 	  The driver was tested on the following cards:
@@ -315,6 +339,7 @@ config FB_ACORN
 config FB_CLPS711X
 	tristate "CLPS711X LCD support"
 	depends on FB && (ARCH_CLPS711X || COMPILE_TEST)
+	select FB_CLPS711X_OLD if ARCH_CLPS711X && !ARCH_MULTIPLATFORM
 	select BACKLIGHT_LCD_SUPPORT
 	select FB_MODE_HELPERS
 	select FB_SYS_FILLRECT
@@ -912,6 +937,7 @@ config FB_NVIDIA_I2C
 config FB_NVIDIA_DEBUG
 	bool "Lots of debug output"
 	depends on FB_NVIDIA
+	default n
 	help
 	  Say Y here if you want the nVidia driver to output all sorts
 	  of debugging information to provide to the maintainer when
@@ -958,6 +984,7 @@ config FB_RIVA_I2C
 config FB_RIVA_DEBUG
 	bool "Lots of debug output"
 	depends on FB_RIVA
+	default n
 	help
 	  Say Y here if you want the Riva driver to output all sorts
 	  of debugging information to provide to the maintainer when
@@ -1240,6 +1267,7 @@ config FB_RADEON_BACKLIGHT
 config FB_RADEON_DEBUG
 	bool "Lots of debug output from Radeon driver"
 	depends on FB_RADEON
+	default n
 	help
 	  Say Y here if you want the Radeon driver to output all sorts
 	  of debugging information to provide to the maintainer when
@@ -1276,6 +1304,7 @@ config FB_ATY
 	select FB_CFB_IMAGEBLIT
 	select FB_BACKLIGHT if FB_ATY_BACKLIGHT
 	select FB_MACMODES if PPC
+	select FB_ATY_CT if SPARC64 && PCI
 	help
 	  This driver supports graphics boards with the ATI Mach64 chips.
 	  Say Y if you have such a graphics board.
@@ -1286,7 +1315,6 @@ config FB_ATY
 config FB_ATY_CT
 	bool "Mach64 CT/VT/GT/LT (incl. 3D RAGE) support"
 	depends on PCI && FB_ATY
-	default y if SPARC64 && PCI
 	help
 	  Say Y here to support use of ATI's 64-bit Rage boards (or other
 	  boards based on the Mach64 CT, VT, GT, and LT chipsets) as a
@@ -1372,6 +1400,7 @@ config FB_SAVAGE_I2C
 config FB_SAVAGE_ACCEL
        bool "Enable Console Acceleration"
        depends on FB_SAVAGE
+       default n
        help
           This option will compile in console acceleration support. If
           the resulting framebuffer console has bothersome glitches, then
@@ -1428,6 +1457,7 @@ if FB_VIA
 
 config FB_VIA_DIRECT_PROCFS
 	bool "direct hardware access via procfs (DEPRECATED)(DANGEROUS)"
+	default n
 	help
 	  Allow direct hardware access to some output registers via procfs.
 	  This is dangerous but may provide the only chance to get the
@@ -1436,6 +1466,7 @@ config FB_VIA_DIRECT_PROCFS
 
 config FB_VIA_X_COMPATIBILITY
 	bool "X server compatibility"
+	default n
 	help
 	  This option reduces the functionality (power saving, ...) of the
 	  framebuffer to avoid negative impact on the OpenChrome X server.
@@ -1660,6 +1691,7 @@ config FB_WM8505
 config FB_WMT_GE_ROPS
 	bool "VT8500/WM8xxx accelerated raster ops support"
 	depends on (FB = y) && (FB_VT8500 || FB_WM8505)
+	default n
 	help
 	  This adds support for accelerated raster operations on the
 	  VIA VT8500 and Wondermedia 85xx series SoCs.
@@ -1769,14 +1801,17 @@ config FB_PXA
 
 config FB_PXA_OVERLAY
 	bool "Support PXA27x/PXA3xx Overlay(s) as framebuffer"
+	default n
 	depends on FB_PXA && (PXA27x || PXA3xx)
 
 config FB_PXA_SMARTPANEL
 	bool "PXA Smartpanel LCD support"
+	default n
 	depends on FB_PXA
 
 config FB_PXA_PARAMETERS
 	bool "PXA LCD command line parameters"
+	default n
 	depends on FB_PXA
 	---help---
 	  Enable the use of kernel command line or module parameters
@@ -1814,6 +1849,7 @@ config FB_MBX
 config FB_MBX_DEBUG
        bool "Enable debugging info via debugfs"
        depends on FB_MBX && DEBUG_FS
+       default n
        ---help---
          Enable this if you want debugging information using the debug
          filesystem (debugfs)
@@ -2049,7 +2085,7 @@ config FB_COBALT
 	depends on FB && MIPS_COBALT
 
 config FB_SH7760
-	bool "SH7760/SH7763/SH7720/SH7721 LCDC support"
+	tristate "SH7760/SH7763/SH7720/SH7721 LCDC support"
 	depends on FB && (CPU_SUBTYPE_SH7760 || CPU_SUBTYPE_SH7763 \
 		|| CPU_SUBTYPE_SH7720 || CPU_SUBTYPE_SH7721)
 	select FB_CFB_FILLRECT
@@ -2203,7 +2239,7 @@ config FB_MX3
 
 config FB_BROADSHEET
 	tristate "E-Ink Broadsheet/Epson S1D13521 controller support"
-	depends on FB && (ARCH_PXA || COMPILE_TEST)
+	depends on FB
 	select FB_SYS_FILLRECT
 	select FB_SYS_COPYAREA
 	select FB_SYS_IMAGEBLIT
@@ -2271,6 +2307,11 @@ config FB_SIMPLE
 	  Configuration re: surface address, size, and format must be provided
 	  through device tree, or plain old platform data.
 
+source "drivers/video/fbdev/omap/Kconfig"
+source "drivers/video/fbdev/omap2/Kconfig"
+source "drivers/video/fbdev/exynos/Kconfig"
+source "drivers/video/fbdev/mmp/Kconfig"
+
 config FB_SSD1307
 	tristate "Solomon SSD1307 framebuffer support"
 	depends on FB && I2C
@@ -2281,7 +2322,6 @@ config FB_SSD1307
 	select FB_SYS_COPYAREA
 	select FB_SYS_IMAGEBLIT
 	select FB_DEFERRED_IO
-	select PWM
 	select FB_BACKLIGHT
 	help
 	  This driver implements support for the Solomon SSD1307
@@ -2300,7 +2340,3 @@ config FB_SM712
 	  This driver is also available as a module. The module will be
 	  called sm712fb. If you want to compile it as a module, say M
 	  here and read <file:Documentation/kbuild/modules.txt>.
-
-source "drivers/video/fbdev/omap/Kconfig"
-source "drivers/video/fbdev/omap2/Kconfig"
-source "drivers/video/fbdev/mmp/Kconfig"

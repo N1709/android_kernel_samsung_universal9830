@@ -38,12 +38,15 @@ config SCSI
 	  However, do not compile this as a module if your root file system
 	  (the one containing the directory /) is located on a SCSI device.
 
+config UFS_SRPMB
+	bool "UFS Secure RPMB support"
+	depends on SCSI
+	help
+	  This option activates ufs secure rpmb.
+
 config SCSI_DMA
 	bool
 	default n
-
-config SCSI_ESP_PIO
-	bool
 
 config SCSI_NETLINK
 	bool
@@ -146,15 +149,6 @@ config BLK_DEV_SR
 	  To compile this driver as a module, choose M here and read
 	  <file:Documentation/scsi/scsi.txt>.
 	  The module will be called sr_mod.
-
-config BLK_DEV_SR_VENDOR
-	bool "Enable vendor-specific extensions (for SCSI CDROM)"
-	depends on BLK_DEV_SR
-	help
-	  This enables the usage of vendor specific SCSI commands. This is
-	  required to support multisession CDs with old NEC/TOSHIBA cdrom
-	  drives (and HP Writers). If you have such a drive and get the first
-	  session only, try saying Y here; everybody else says N.
 
 config CHR_DEV_SG
 	tristate "SCSI generic support"
@@ -485,7 +479,7 @@ config SCSI_MVUMI
 
 config SCSI_DPT_I2O
 	tristate "Adaptec I2O RAID support "
-	depends on SCSI && PCI && VIRT_TO_BUS
+	depends on SCSI && PCI
 	help
 	  This driver supports all of Adaptec's I2O based RAID controllers as 
 	  well as the DPT SmartRaid V cards.  This is an Adaptec maintained
@@ -538,7 +532,7 @@ config SCSI_HPTIOP
 
 config SCSI_BUSLOGIC
 	tristate "BusLogic SCSI support"
-	depends on (PCI || ISA) && SCSI && ISA_DMA_API && VIRT_TO_BUS
+	depends on (PCI || ISA || MCA) && SCSI && ISA_DMA_API && VIRT_TO_BUS
 	---help---
 	  This is support for BusLogic MultiMaster and FlashPoint SCSI Host
 	  Adapters. Consult the SCSI-HOWTO, available from
@@ -559,37 +553,6 @@ config SCSI_FLASHPOINT
 	  BusLogic SCSI driver. The FlashPoint SCCB Manager code is
 	  substantial, so users of MultiMaster Host Adapters may not
 	  wish to include it.
-
-config SCSI_MYRB
-	tristate "Mylex DAC960/DAC1100 PCI RAID Controller (Block Interface)"
-	depends on PCI
-	select RAID_ATTRS
-	help
-	  This driver adds support for the Mylex DAC960, AcceleRAID, and
-	  eXtremeRAID PCI RAID controllers. This driver supports the
-	  older, block based interface.
-	  This driver is a reimplementation of the original DAC960
-	  driver. If you have used the DAC960 driver you should enable
-	  this module.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called myrb.
-
-config SCSI_MYRS
-	tristate "Mylex DAC960/DAC1100 PCI RAID Controller (SCSI Interface)"
-	depends on PCI
-	depends on !CPU_BIG_ENDIAN || COMPILE_TEST
-	select RAID_ATTRS
-	help
-	  This driver adds support for the Mylex DAC960, AcceleRAID, and
-	  eXtremeRAID PCI RAID controllers.  This driver supports the
-	  newer, SCSI-based interface only.
-	  This driver is a reimplementation of the original DAC960
-	  driver. If you have used the DAC960 driver you should enable
-	  this module.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called myrs.
 
 config VMWARE_PVSCSI
 	tristate "VMware PVSCSI driver support"
@@ -896,7 +859,7 @@ config SCSI_SNI_53C710
 
 config 53C700_LE_ON_BE
 	bool
-	depends on SCSI_LASI700
+	depends on SCSI_LASI700 || SCSI_SNI_53C710
 	default y
 
 config SCSI_STEX
@@ -1176,12 +1139,12 @@ config SCSI_LPFC_DEBUG_FS
 
 config SCSI_SIM710
 	tristate "Simple 53c710 SCSI support (Compaq, NCR machines)"
-	depends on EISA && SCSI
+	depends on (EISA || MCA) && SCSI
 	select SCSI_SPI_ATTRS
 	---help---
 	  This driver is for NCR53c710 based SCSI host adapters.
 
-	  It currently supports Compaq EISA cards.
+	  It currently supports Compaq EISA cards and NCR MCA cards
 
 config SCSI_DC395x
 	tristate "Tekram DC395(U/UW/F) and DC315(U) SCSI support"
@@ -1295,7 +1258,7 @@ source "drivers/scsi/arm/Kconfig"
 
 config JAZZ_ESP
 	bool "MIPS JAZZ FAS216 SCSI support"
-	depends on MACH_JAZZ && SCSI
+	depends on MACH_JAZZ && SCSI=y
 	select SCSI_SPI_ATTRS
 	help
 	  This is the driver for the onboard SCSI host adapter of MIPS Magnum
@@ -1366,7 +1329,6 @@ config SCSI_ZORRO_ESP
 	tristate "Zorro ESP SCSI support"
 	depends on ZORRO && SCSI
 	select SCSI_SPI_ATTRS
-	select SCSI_ESP_PIO
 	help
 	  Support for various NCR53C9x (ESP) based SCSI controllers on Zorro
 	  expansion boards for the Amiga.
@@ -1409,7 +1371,6 @@ config SCSI_MAC_ESP
 	tristate "Macintosh NCR53c9[46] SCSI"
 	depends on MAC && SCSI
 	select SCSI_SPI_ATTRS
-	select SCSI_ESP_PIO
 	help
 	  This is the NCR 53c9x SCSI controller found on most of the 68040
 	  based Macintoshes.

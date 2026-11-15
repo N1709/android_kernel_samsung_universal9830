@@ -8,6 +8,7 @@ config NET_DSA
 	tristate "Distributed Switch Architecture"
 	depends on HAVE_NET_DSA && MAY_USE_DEVLINK
 	depends on BRIDGE || BRIDGE=n
+	select GRO_CELLS
 	select NET_SWITCHDEV
 	select PHYLINK
 	---help---
@@ -36,9 +37,6 @@ config NET_DSA_TAG_DSA
 	bool
 
 config NET_DSA_TAG_EDSA
-	bool
-
-config NET_DSA_TAG_GSWIP
 	bool
 
 config NET_DSA_TAG_KSZ

@@ -68,9 +68,6 @@ config E1000E
 
 	  <http://support.intel.com>
 
-	  More specific information on configuring the driver is in
-	  <file:Documentation/networking/e1000e.rst>.
-
 	  To compile this driver as a module, choose M here. The module
 	  will be called e1000e.
 
@@ -97,7 +94,7 @@ config IGB
 	  <http://support.intel.com>
 
 	  More specific information on configuring the driver is in
-	  <file:Documentation/networking/igb.rst>.
+	  <file:Documentation/networking/e1000.rst>.
 
 	  To compile this driver as a module, choose M here. The module
 	  will be called igb.
@@ -133,7 +130,7 @@ config IGBVF
 	  <http://support.intel.com>
 
 	  More specific information on configuring the driver is in
-	  <file:Documentation/networking/igbvf.rst>.
+	  <file:Documentation/networking/e1000.rst>.
 
 	  To compile this driver as a module, choose M here. The module
 	  will be called igbvf.
@@ -150,7 +147,7 @@ config IXGB
 	  <http://support.intel.com>
 
 	  More specific information on configuring the driver is in
-	  <file:Documentation/networking/ixgb.rst>.
+	  <file:Documentation/networking/ixgb.txt>.
 
 	  To compile this driver as a module, choose M here. The module
 	  will be called ixgb.
@@ -166,9 +163,6 @@ config IXGBE
 	  to the Adapter & Driver ID Guide that can be located at:
 
 	  <http://support.intel.com>
-
-	  More specific information on configuring the driver is in
-	  <file:Documentation/networking/ixgbe.rst>.
 
 	  To compile this driver as a module, choose M here. The module
 	  will be called ixgbe.
@@ -200,15 +194,6 @@ config IXGBE_DCB
 
 	  If unsure, say N.
 
-config IXGBE_IPSEC
-	bool "IPSec XFRM cryptography-offload acceleration"
-	depends on IXGBE
-	depends on XFRM_OFFLOAD
-	default y
-	select XFRM_ALGO
-	---help---
-	  Enable support for IPSec offload in ixgbe.ko
-
 config IXGBEVF
 	tristate "Intel(R) 10GbE PCI Express Virtual Function Ethernet support"
 	depends on PCI_MSI
@@ -220,20 +205,11 @@ config IXGBEVF
 	  <http://support.intel.com>
 
 	  More specific information on configuring the driver is in
-	  <file:Documentation/networking/ixgbevf.rst>.
+	  <file:Documentation/networking/ixgbevf.txt>.
 
 	  To compile this driver as a module, choose M here. The module
 	  will be called ixgbevf.  MSI-X interrupt support is required
 	  for this driver to work correctly.
-
-config IXGBEVF_IPSEC
-	bool "IPSec XFRM cryptography-offload acceleration"
-	depends on IXGBEVF
-	depends on XFRM_OFFLOAD
-	default y
-	select XFRM_ALGO
-	---help---
-	  Enable support for IPSec offload in ixgbevf.ko
 
 config I40E
 	tristate "Intel(R) Ethernet Controller XL710 Family support"
@@ -245,9 +221,6 @@ config I40E
 	  to the Adapter & Driver ID Guide that can be located at:
 
 	  <http://support.intel.com>
-
-	  More specific information on configuring the driver is in
-	  <file:Documentation/networking/i40e.rst>.
 
 	  To compile this driver as a module, choose M here. The module
 	  will be called i40e.
@@ -281,9 +254,6 @@ config I40EVF
 
 	  This driver was formerly named i40evf.
 
-	  More specific information on configuring the driver is in
-	  <file:Documentation/networking/iavf.rst>.
-
 	  To compile this driver as a module, choose M here. The module
 	  will be called iavf.  MSI-X interrupt support is required
 	  for this driver to work correctly.
@@ -298,9 +268,6 @@ config ICE
 	  to the Adapter & Driver ID Guide that can be located at:
 
 	  <http://support.intel.com>
-
-	  More specific information on configuring the driver is in
-	  <file:Documentation/networking/ice.rst>.
 
 	  To compile this driver as a module, choose M here. The module
 	  will be called ice.
@@ -317,26 +284,7 @@ config FM10K
 
 	  <http://support.intel.com>
 
-	  More specific information on configuring the driver is in
-	  <file:Documentation/networking/fm10k.rst>.
-
 	  To compile this driver as a module, choose M here. The module
 	  will be called fm10k.  MSI-X interrupt support is required
-
-config IGC
-	tristate "Intel(R) Ethernet Controller I225-LM/I225-V support"
-	default n
-	depends on PCI
-	---help---
-	  This driver supports Intel(R) Ethernet Controller I225-LM/I225-V
-	  family of adapters.
-
-	  For more information on how to identify your adapter, go
-	  to the Adapter & Driver ID Guide that can be located at:
-
-	  <http://support.intel.com>
-
-	  To compile this driver as a module, choose M here. The module
-	  will be called igc.
 
 endif # NET_VENDOR_INTEL

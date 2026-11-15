@@ -447,9 +447,10 @@ config PWM_TEGRA
 
 config  PWM_TIECAP
 	tristate "ECAP PWM support"
-	depends on ARCH_OMAP2PLUS || ARCH_DAVINCI_DA8XX || ARCH_KEYSTONE || ARCH_K3
+	depends on ARCH_OMAP2PLUS || ARCH_DAVINCI_DA8XX || ARCH_KEYSTONE
 	help
-	  PWM driver support for the ECAP APWM controller found on TI SOCs
+	  PWM driver support for the ECAP APWM controller found on AM33XX
+	  TI SOC
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called pwm-tiecap.

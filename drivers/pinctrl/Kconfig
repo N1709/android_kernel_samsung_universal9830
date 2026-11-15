@@ -195,16 +195,6 @@ config PINCTRL_RZA1
 	help
 	  This selects pinctrl driver for Renesas RZ/A1 platforms.
 
-config PINCTRL_RZN1
-	bool "Renesas RZ/N1 pinctrl driver"
-	depends on OF
-	depends on ARCH_RZN1 || COMPILE_TEST
-	select GENERIC_PINCTRL_GROUPS
-	select GENERIC_PINMUX_FUNCTIONS
-	select GENERIC_PINCONF
-	help
-	  This selects pinctrl driver for Renesas RZ/N1 devices.
-
 config PINCTRL_SINGLE
 	tristate "One-register-per-pin type device tree based pinctrl driver"
 	depends on OF
@@ -319,14 +309,12 @@ config PINCTRL_ZYNQ
 
 config PINCTRL_INGENIC
 	bool "Pinctrl driver for the Ingenic JZ47xx SoCs"
-	default MACH_INGENIC
+	default y
 	depends on OF
-	depends on MIPS || COMPILE_TEST
+	depends on MACH_INGENIC || COMPILE_TEST
 	select GENERIC_PINCONF
 	select GENERIC_PINCTRL_GROUPS
 	select GENERIC_PINMUX_FUNCTIONS
-	select GPIOLIB
-	select GPIOLIB_IRQCHIP
 	select REGMAP_MMIO
 
 config PINCTRL_RK805
@@ -358,7 +346,6 @@ source "drivers/pinctrl/freescale/Kconfig"
 source "drivers/pinctrl/intel/Kconfig"
 source "drivers/pinctrl/mvebu/Kconfig"
 source "drivers/pinctrl/nomadik/Kconfig"
-source "drivers/pinctrl/nuvoton/Kconfig"
 source "drivers/pinctrl/pxa/Kconfig"
 source "drivers/pinctrl/qcom/Kconfig"
 source "drivers/pinctrl/samsung/Kconfig"

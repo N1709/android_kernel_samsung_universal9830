@@ -10,7 +10,7 @@ obj-$(CONFIG_CRYPTO_DEV_CHELSIO) += chelsio/
 obj-$(CONFIG_CRYPTO_DEV_CPT) += cavium/cpt/
 obj-$(CONFIG_CRYPTO_DEV_NITROX) += cavium/nitrox/
 obj-$(CONFIG_CRYPTO_DEV_EXYNOS_RNG) += exynos-rng.o
-obj-$(CONFIG_CRYPTO_DEV_FSL_CAAM_COMMON) += caam/
+obj-$(CONFIG_CRYPTO_DEV_FSL_CAAM) += caam/
 obj-$(CONFIG_CRYPTO_DEV_GEODE) += geode-aes.o
 obj-$(CONFIG_CRYPTO_DEV_HIFN_795X) += hifn_795x.o
 obj-$(CONFIG_CRYPTO_DEV_IMGTEC_HASH) += img-hash.o
@@ -47,3 +47,6 @@ obj-$(CONFIG_CRYPTO_DEV_BCM_SPU) += bcm/
 obj-$(CONFIG_CRYPTO_DEV_SAFEXCEL) += inside-secure/
 obj-$(CONFIG_CRYPTO_DEV_ARTPEC6) += axis/
 obj-y += hisilicon/
+ifeq ($(CONFIG_EXYNOS_FMP),y)
+obj-y += fmp/ exynos-fmp.o
+endif

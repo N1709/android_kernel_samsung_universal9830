@@ -73,17 +73,6 @@ config ZCRYPT
 	  + Crypto Express 2,3,4 or 5 Accelerator (CEXxA)
 	  + Crypto Express 4 or 5 EP11 Coprocessor (CEXxP)
 
-config ZCRYPT_MULTIDEVNODES
-	bool "Support for multiple zcrypt device nodes"
-	default y
-	depends on S390
-	depends on ZCRYPT
-	help
-	  With this option enabled the zcrypt device driver can
-	  provide multiple devices nodes in /dev. Each device
-	  node can get customized to limit access and narrow
-	  down the use of the available crypto hardware.
-
 config PKEY
 	tristate "Kernel API for protected key handling"
 	depends on S390
@@ -692,6 +681,7 @@ config CRYPTO_DEV_BCM_SPU
 	depends on ARCH_BCM_IPROC
 	depends on MAILBOX
 	default m
+	select CRYPTO_AUTHENC
 	select CRYPTO_DES
 	select CRYPTO_MD5
 	select CRYPTO_SHA1
@@ -771,5 +761,7 @@ config CRYPTO_DEV_CCREE
 	  If unsure say Y.
 
 source "drivers/crypto/hisilicon/Kconfig"
+
+source "drivers/crypto/fmp/Kconfig"
 
 endif # CRYPTO_HW
