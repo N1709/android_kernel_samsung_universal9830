@@ -716,6 +716,12 @@ int security_capable(const struct cred *cred,
 	return call_int_hook(capable, 0, cred, ns, cap, opts);
 }
 
+int security_capable_noaudit(const struct cred *cred, struct user_namespace *ns,
+			     int cap)
+{
+	return call_int_hook(capable, 0, cred, ns, cap, CAP_OPT_NOAUDIT);
+}
+
 int security_quotactl(int cmds, int type, int id, struct super_block *sb)
 {
 	return call_int_hook(quotactl, 0, cmds, type, id, sb);
@@ -1472,7 +1478,7 @@ int security_mmap_file(struct file *file, unsigned long prot,
 	ret = call_int_hook(mmap_file, 0, file, prot, prot_adj, flags);
 	if (ret)
 		return ret;
-	return ima_file_mmap(file, prot, prot_adj, flags);
+	return ima_file_mmap(file, prot);
 }
 
 int security_mmap_addr(unsigned long addr)

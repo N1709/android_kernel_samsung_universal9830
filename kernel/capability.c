@@ -299,7 +299,7 @@ bool has_ns_capability(struct task_struct *t,
 	int ret;
 
 	rcu_read_lock();
-	ret = security_capable(__task_cred(t), ns, cap);
+	ret = security_capable(__task_cred(t), ns, cap, CAP_OPT_NONE);
 	rcu_read_unlock();
 
 	return (ret == 0);
@@ -372,7 +372,7 @@ static bool ns_capable_common(struct user_namespace *ns, int cap, bool audit)
 		BUG();
 	}
 
-	capable = audit ? security_capable(current_cred(), ns, cap) :
+	capable = audit ? security_capable(current_cred(), ns, cap, CAP_OPT_NONE) :
 			  security_capable_noaudit(current_cred(), ns, cap);
 	if (capable == 0) {
 		current->flags |= PF_SUPERPRIV;
@@ -457,7 +457,7 @@ bool file_ns_capable(const struct file *file, struct user_namespace *ns,
 	if (WARN_ON_ONCE(!cap_valid(cap)))
 		return false;
 
-	if (security_capable(file->f_cred, ns, cap) == 0)
+	if (security_capable(file->f_cred, ns, cap, CAP_OPT_NONE) == 0)
 		return true;
 
 	return false;
