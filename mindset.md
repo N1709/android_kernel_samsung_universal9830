@@ -36,6 +36,7 @@ v4.20:
 | `drivers/android/**` | binder features used by Android 17 |
 | `arch/arm64/**` | board support, errata, SMC, DTBs |
 | `kernel/sched/**` (EMS) | Samsung scheduler |
+| `hybridswap` (once ported) | Samsung zram + swapfile policy expected by the ROM; not present in this tree yet |
 | Samsung drivers under `drivers/{gpu/arm,soc,clk,pinctrl,drm,media}/...`, `sec_*` | board support |
 
 Everything else that exists in upstream v4.20 is expected to be
@@ -346,6 +347,10 @@ In that real case 13 callers used the 4-argument form and 3 used the
 - `include/linux/fs.h` is v4.20, but must keep the Lineage `S_CASEFOLD`,
   `S_VERITY`, `IS_CASEFOLDED()` and `IS_VERITY()` definitions that
   `fs/crypto`, `fs/verity` and `fs/f2fs` consume.
+- Hybridswap is a required ROM feature but is not in this tree yet. When
+  it is ported, never normalise its files (`mm/hybridswap*`,
+  `include/linux/hybridswap.h`, zram/swap hooks, `CONFIG_HYBRIDSWAP`) to
+  upstream v4.20; keep the Samsung implementation and its Kconfig.
 - Do not silently revert a post-merge fix commit. Check
   `git log --oneline -8` and `git diff 3027a7714 HEAD -- <file>` before
   `git checkout`.
@@ -467,6 +472,9 @@ of signature and struct mismatches. Expect the same in `fs/` and
   `net/core/filter.c` still uses because that file is the 4.19 version).
 - `arch/arm64/Makefile` still has the duplicate `dtbs` / `dtbs_install`
   recipes inherited from 4.19. Cosmetic, fix after the build is green.
+- Hybridswap: required for the Android 17 ROM, but there is no
+  `hybridswap` source, Kconfig symbol or header in this tree. Documentation
+  reserves the path; implementation needs a reference patch/repo.
 - v5.0 work is blocked until v4.20 builds and the human boot-tests it.
   Before that: `git fetch --unshallow --filter=blob:none origin` and fetch
   tags `v4.19.325`, `v4.20`, `v5.0`; verify

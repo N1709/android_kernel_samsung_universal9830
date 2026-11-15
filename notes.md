@@ -7,18 +7,20 @@ Working document. Updated as the merge progresses.
 | Stage | Status |
 |---|---|
 | v4.20 merge | done — `3027a77146cf`, 1239 conflicts resolved |
-| v4.20 normalization | `a838f89fb`, 9838 non-vendor files at v4.20 |
+| v4.20 normalization | `a838f89fb` covered 9838 files; second pass for 309 missed generic files in progress |
 | v4.20 Kconfig/header seams | `efd91f859` |
 | v4.20 vDSO config | `a448d5c26` — `source "lib/vdso/Kconfig"` in `lib/Kconfig` |
-| v4.20 build | full `-j2` build running |
+| Android-critical headers | `e450173fb` — Lineage fscrypt/f2fs headers kept |
+| Target ROM | Android 17 / LineageOS 24.0, all Exynos 990 (universal9830) devices |
+| Hybridswap | not present in this tree; required by the ROM, source pending |
+| v4.20 build | full build paused for the second normalization pass |
 | v4.20 boot test | pending build |
 | v5.0 merge | on hold until v4.20 builds and boots |
 | Branch | `K4.20` (GitHub default); `lineage-24.0` removed |
 
-Important: the local clone is **shallow** (single commit, `.git/shallow`
-present) and has **no** `v4.19.325`/`v4.20`/`v5.0` tags. A
-`--filter=blob:none` fetch of the upstream tags was started but cancelled.
-Before merging v5.0, re-run:
+The local clone is shallow (`git rev-parse --is-shallow-repository` says
+true) and partial (`blob:none`). Tags `v4.20` and `v5.0` are present;
+`v4.19.325` is not. Before merging v5.0, re-run:
 
 ```bash
 git fetch --unshallow --filter=blob:none origin
@@ -35,6 +37,9 @@ git merge-base HEAD v4.19.325     # harus a67e7cdde7cc...
 - Target ROM: **Android 17 / LineageOS 24.0**, all universal9830 variants.
   Android-critical paths (f2fs, fscrypt/fs-verity, SELinux/defex, binder,
   Samsung platform code) keep the Lineage 4.19 APIs.
+- Hybridswap is part of that contract. It is not in this tree yet; port it
+  once a reference source is available, and keep its files out of the
+  v4.20 normalization.
 - End target: **boot test on v5.0** only (not a production kernel).
 - The user runs the boot test manually; the agent stops after the v5.0 merge
   builds.
