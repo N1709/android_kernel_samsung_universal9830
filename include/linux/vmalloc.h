@@ -97,6 +97,10 @@ extern void *__vmalloc_node_flags_caller(unsigned long size,
 extern void vfree(const void *addr);
 extern void vfree_atomic(const void *addr);
 
+static inline void set_vm_flush_reset_perms(void *addr)
+{
+}
+
 extern void *vmap(struct page **pages, unsigned int count,
 			unsigned long flags, pgprot_t prot);
 extern void vunmap(const void *addr);

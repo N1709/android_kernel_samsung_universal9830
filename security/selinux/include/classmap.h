@@ -29,14 +29,6 @@
 		"wake_alarm", "block_suspend", "audit_read", "perfmon", "bpf", \
 		"checkpoint_restore"
 
-/* Android 12 and newer need CAP_CHECKPOINT_RESTORE (40).  The uapi header
- * used by the host tools does not know the capability yet, so keep the
- * number local to this check.
- */
-#ifndef CAP_CHECKPOINT_RESTORE
-#define CAP_CHECKPOINT_RESTORE	40
-#endif
-
 #if CAP_LAST_CAP > CAP_CHECKPOINT_RESTORE
 #error New capability defined, please update COMMON_CAP2_PERMS.
 #endif
@@ -261,13 +253,6 @@ struct security_class_mapping secclass_map[] = {
 	{ NULL }
   };
 
-/*
- * Only check the kernel's address family list.  The host tools used by
- * scripts/selinux include libc headers, whose PF_MAX tracks the build
- * machine and is larger than 4.20's AF_MAX (45).
- */
-#ifdef __KERNEL__
 #if PF_MAX > 45
 #error New address family defined, please update secclass_map.
-#endif
 #endif

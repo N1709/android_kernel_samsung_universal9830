@@ -468,6 +468,22 @@ static void bpf_prog_ksym_node_del(struct bpf_prog_aux *aux)
 	list_del_rcu(&aux->ksym_lnode);
 }
 
+static LIST_HEAD(bpf_ksym_list);
+
+void bpf_ksym_add(struct bpf_ksym *ksym)
+{
+	WARN_ON_ONCE(!list_empty(&ksym->lnode));
+	list_add_tail_rcu(&ksym->lnode, &bpf_ksym_list);
+}
+
+void bpf_ksym_del(struct bpf_ksym *ksym)
+{
+	if (list_empty(&ksym->lnode))
+		return;
+
+	list_del_rcu(&ksym->lnode);
+}
+
 static bool bpf_prog_kallsyms_candidate(const struct bpf_prog *fp)
 {
 	return fp->jited && !bpf_prog_was_classic(fp);

@@ -1,14 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * linux/drivers/staging/erofs/xattr.c
- *
  * Copyright (C) 2017-2018 HUAWEI, Inc.
- *             http://www.huawei.com/
- * Created by Gao Xiang <gaoxiang25@huawei.com>
- *
- * This file is subject to the terms and conditions of the GNU General Public
- * License.  See the file COPYING in the main directory of the Linux
- * distribution for more details.
+ *             https://www.huawei.com/
  */
 #include <linux/security.h>
 #include "xattr.h"
@@ -25,7 +18,7 @@ struct xattr_iter {
 static inline void xattr_iter_end(struct xattr_iter *it, bool atomic)
 {
 	/* the only user of kunmap() is 'init_inode_xattrs' */
-	if (unlikely(!atomic))
+	if (!atomic)
 		kunmap(it->page);
 	else
 		kunmap_atomic(it->kaddr);
@@ -36,7 +29,7 @@ static inline void xattr_iter_end(struct xattr_iter *it, bool atomic)
 
 static inline void xattr_iter_end_final(struct xattr_iter *it)
 {
-	if (it->page == NULL)
+	if (!it->page)
 		return;
 
 	xattr_iter_end(it, true);
@@ -44,28 +37,68 @@ static inline void xattr_iter_end_final(struct xattr_iter *it)
 
 static int init_inode_xattrs(struct inode *inode)
 {
+	struct erofs_inode *const vi = EROFS_I(inode);
 	struct xattr_iter it;
 	unsigned int i;
 	struct erofs_xattr_ibody_header *ih;
 	struct super_block *sb;
 	struct erofs_sb_info *sbi;
-	struct erofs_vnode *vi;
 	bool atomic_map;
+	int ret = 0;
 
-	if (likely(inode_has_inited_xattr(inode)))
+	/* the most case is that xattrs of this inode are initialized. */
+	if (test_bit(EROFS_I_EA_INITED_BIT, &vi->flags)) {
+		/*
+		 * paired with smp_mb() at the end of the function to ensure
+		 * fields will only be observed after the bit is set.
+		 */
+		smp_mb();
 		return 0;
+	}
 
-	vi = EROFS_V(inode);
-	BUG_ON(!vi->xattr_isize);
+	if (wait_on_bit_lock(&vi->flags, EROFS_I_BL_XATTR_BIT, TASK_KILLABLE))
+		return -ERESTARTSYS;
+
+	/* someone has initialized xattrs for us? */
+	if (test_bit(EROFS_I_EA_INITED_BIT, &vi->flags))
+		goto out_unlock;
+
+	/*
+	 * bypass all xattr operations if ->xattr_isize is not greater than
+	 * sizeof(struct erofs_xattr_ibody_header), in detail:
+	 * 1) it is not enough to contain erofs_xattr_ibody_header then
+	 *    ->xattr_isize should be 0 (it means no xattr);
+	 * 2) it is just to contain erofs_xattr_ibody_header, which is on-disk
+	 *    undefined right now (maybe use later with some new sb feature).
+	 */
+	if (vi->xattr_isize == sizeof(struct erofs_xattr_ibody_header)) {
+		erofs_err(inode->i_sb,
+			  "xattr_isize %d of nid %llu is not supported yet",
+			  vi->xattr_isize, vi->nid);
+		ret = -EOPNOTSUPP;
+		goto out_unlock;
+	} else if (vi->xattr_isize < sizeof(struct erofs_xattr_ibody_header)) {
+		if (vi->xattr_isize) {
+			erofs_err(inode->i_sb,
+				  "bogus xattr ibody @ nid %llu", vi->nid);
+			DBG_BUGON(1);
+			ret = -EFSCORRUPTED;
+			goto out_unlock;	/* xattr ondisk layout error */
+		}
+		ret = -ENOATTR;
+		goto out_unlock;
+	}
 
 	sb = inode->i_sb;
 	sbi = EROFS_SB(sb);
 	it.blkaddr = erofs_blknr(iloc(sbi, vi->nid) + vi->inode_isize);
 	it.ofs = erofs_blkoff(iloc(sbi, vi->nid) + vi->inode_isize);
 
-	it.page = erofs_get_inline_page(inode, it.blkaddr);
-	if (IS_ERR(it.page))
-		return PTR_ERR(it.page);
+	it.page = erofs_get_meta_page(sb, it.blkaddr);
+	if (IS_ERR(it.page)) {
+		ret = PTR_ERR(it.page);
+		goto out_unlock;
+	}
 
 	/* read in shared xattr array (non-atomic, see kmalloc below) */
 	it.kaddr = kmap(it.page);
@@ -76,24 +109,28 @@ static int init_inode_xattrs(struct inode *inode)
 	vi->xattr_shared_count = ih->h_shared_count;
 	vi->xattr_shared_xattrs = kmalloc_array(vi->xattr_shared_count,
 						sizeof(uint), GFP_KERNEL);
-	if (vi->xattr_shared_xattrs == NULL) {
+	if (!vi->xattr_shared_xattrs) {
 		xattr_iter_end(&it, atomic_map);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto out_unlock;
 	}
 
 	/* let's skip ibody header */
 	it.ofs += sizeof(struct erofs_xattr_ibody_header);
 
 	for (i = 0; i < vi->xattr_shared_count; ++i) {
-		if (unlikely(it.ofs >= EROFS_BLKSIZ)) {
+		if (it.ofs >= EROFS_BLKSIZ) {
 			/* cannot be unaligned */
-			BUG_ON(it.ofs != EROFS_BLKSIZ);
+			DBG_BUGON(it.ofs != EROFS_BLKSIZ);
 			xattr_iter_end(&it, atomic_map);
 
-			it.page = erofs_get_meta_page(sb,
-				++it.blkaddr, S_ISDIR(inode->i_mode));
-			if (IS_ERR(it.page))
-				return PTR_ERR(it.page);
+			it.page = erofs_get_meta_page(sb, ++it.blkaddr);
+			if (IS_ERR(it.page)) {
+				kfree(vi->xattr_shared_xattrs);
+				vi->xattr_shared_xattrs = NULL;
+				ret = PTR_ERR(it.page);
+				goto out_unlock;
+			}
 
 			it.kaddr = kmap_atomic(it.page);
 			atomic_map = true;
@@ -105,8 +142,13 @@ static int init_inode_xattrs(struct inode *inode)
 	}
 	xattr_iter_end(&it, atomic_map);
 
-	inode_set_inited_xattr(inode);
-	return 0;
+	/* paired with smp_mb() at the beginning of the function. */
+	smp_mb();
+	set_bit(EROFS_I_EA_INITED_BIT, &vi->flags);
+
+out_unlock:
+	clear_and_wake_up_bit(EROFS_I_BL_XATTR_BIT, &vi->flags);
+	return ret;
 }
 
 /*
@@ -117,10 +159,12 @@ static int init_inode_xattrs(struct inode *inode)
  *                            and need to be handled
  */
 struct xattr_iter_handlers {
-	int (*entry)(struct xattr_iter *, struct erofs_xattr_entry *);
-	int (*name)(struct xattr_iter *, unsigned int, char *, unsigned int);
-	int (*alloc_buffer)(struct xattr_iter *, unsigned int);
-	void (*value)(struct xattr_iter *, unsigned int, char *, unsigned int);
+	int (*entry)(struct xattr_iter *_it, struct erofs_xattr_entry *entry);
+	int (*name)(struct xattr_iter *_it, unsigned int processed, char *buf,
+		    unsigned int len);
+	int (*alloc_buffer)(struct xattr_iter *_it, unsigned int value_sz);
+	void (*value)(struct xattr_iter *_it, unsigned int processed, char *buf,
+		      unsigned int len);
 };
 
 static inline int xattr_iter_fixup(struct xattr_iter *it)
@@ -132,7 +176,7 @@ static inline int xattr_iter_fixup(struct xattr_iter *it)
 
 	it->blkaddr += erofs_blknr(it->ofs);
 
-	it->page = erofs_get_meta_page(it->sb, it->blkaddr, false);
+	it->page = erofs_get_meta_page(it->sb, it->blkaddr);
 	if (IS_ERR(it->page)) {
 		int err = PTR_ERR(it->page);
 
@@ -146,15 +190,15 @@ static inline int xattr_iter_fixup(struct xattr_iter *it)
 }
 
 static int inline_xattr_iter_begin(struct xattr_iter *it,
-	struct inode *inode)
+				   struct inode *inode)
 {
-	struct erofs_vnode *const vi = EROFS_V(inode);
+	struct erofs_inode *const vi = EROFS_I(inode);
 	struct erofs_sb_info *const sbi = EROFS_SB(inode->i_sb);
 	unsigned int xattr_header_sz, inline_xattr_ofs;
 
 	xattr_header_sz = inlinexattr_header_size(inode);
-	if (unlikely(xattr_header_sz >= vi->xattr_isize)) {
-		BUG_ON(xattr_header_sz > vi->xattr_isize);
+	if (xattr_header_sz >= vi->xattr_isize) {
+		DBG_BUGON(xattr_header_sz > vi->xattr_isize);
 		return -ENOATTR;
 	}
 
@@ -163,7 +207,7 @@ static int inline_xattr_iter_begin(struct xattr_iter *it,
 	it->blkaddr = erofs_blknr(iloc(sbi, vi->nid) + inline_xattr_ofs);
 	it->ofs = erofs_blkoff(iloc(sbi, vi->nid) + inline_xattr_ofs);
 
-	it->page = erofs_get_inline_page(inode, it->blkaddr);
+	it->page = erofs_get_meta_page(inode->i_sb, it->blkaddr);
 	if (IS_ERR(it->page))
 		return PTR_ERR(it->page);
 
@@ -176,7 +220,8 @@ static int inline_xattr_iter_begin(struct xattr_iter *it,
  * `ofs' pointing to the next xattr item rather than an arbitrary position.
  */
 static int xattr_foreach(struct xattr_iter *it,
-	const struct xattr_iter_handlers *op, unsigned int *tlimit)
+			 const struct xattr_iter_handlers *op,
+			 unsigned int *tlimit)
 {
 	struct erofs_xattr_entry entry;
 	unsigned int value_sz, processed, slice;
@@ -193,10 +238,14 @@ static int xattr_foreach(struct xattr_iter *it,
 	 *    therefore entry should be in the page
 	 */
 	entry = *(struct erofs_xattr_entry *)(it->kaddr + it->ofs);
-	if (tlimit != NULL) {
-		unsigned int entry_sz = EROFS_XATTR_ENTRY_SIZE(&entry);
+	if (tlimit) {
+		unsigned int entry_sz = erofs_xattr_entry_size(&entry);
 
-		BUG_ON(*tlimit < entry_sz);
+		/* xattr on-disk corruption: xattr entry beyond xattr_isize */
+		if (*tlimit < entry_sz) {
+			DBG_BUGON(1);
+			return -EFSCORRUPTED;
+		}
 		*tlimit -= entry_sz;
 	}
 
@@ -215,7 +264,7 @@ static int xattr_foreach(struct xattr_iter *it,
 
 	while (processed < entry.e_name_len) {
 		if (it->ofs >= EROFS_BLKSIZ) {
-			BUG_ON(it->ofs > EROFS_BLKSIZ);
+			DBG_BUGON(it->ofs > EROFS_BLKSIZ);
 
 			err = xattr_iter_fixup(it);
 			if (err)
@@ -240,7 +289,7 @@ static int xattr_foreach(struct xattr_iter *it,
 	/* 3. handle xattr value */
 	processed = 0;
 
-	if (op->alloc_buffer != NULL) {
+	if (op->alloc_buffer) {
 		err = op->alloc_buffer(it, value_sz);
 		if (err) {
 			it->ofs += value_sz;
@@ -250,7 +299,7 @@ static int xattr_foreach(struct xattr_iter *it,
 
 	while (processed < value_sz) {
 		if (it->ofs >= EROFS_BLKSIZ) {
-			BUG_ON(it->ofs > EROFS_BLKSIZ);
+			DBG_BUGON(it->ofs > EROFS_BLKSIZ);
 
 			err = xattr_iter_fixup(it);
 			if (err)
@@ -280,7 +329,7 @@ struct getxattr_iter {
 };
 
 static int xattr_entrymatch(struct xattr_iter *_it,
-	struct erofs_xattr_entry *entry)
+			    struct erofs_xattr_entry *entry)
 {
 	struct getxattr_iter *it = container_of(_it, struct getxattr_iter, it);
 
@@ -289,7 +338,7 @@ static int xattr_entrymatch(struct xattr_iter *_it,
 }
 
 static int xattr_namematch(struct xattr_iter *_it,
-	unsigned int processed, char *buf, unsigned int len)
+			   unsigned int processed, char *buf, unsigned int len)
 {
 	struct getxattr_iter *it = container_of(_it, struct getxattr_iter, it);
 
@@ -297,17 +346,18 @@ static int xattr_namematch(struct xattr_iter *_it,
 }
 
 static int xattr_checkbuffer(struct xattr_iter *_it,
-	unsigned int value_sz)
+			     unsigned int value_sz)
 {
 	struct getxattr_iter *it = container_of(_it, struct getxattr_iter, it);
 	int err = it->buffer_size < value_sz ? -ERANGE : 0;
 
 	it->buffer_size = value_sz;
-	return it->buffer == NULL ? 1 : err;
+	return !it->buffer ? 1 : err;
 }
 
 static void xattr_copyvalue(struct xattr_iter *_it,
-	unsigned int processed, char *buf, unsigned int len)
+			    unsigned int processed,
+			    char *buf, unsigned int len)
 {
 	struct getxattr_iter *it = container_of(_it, struct getxattr_iter, it);
 
@@ -343,7 +393,7 @@ static int inline_getxattr(struct inode *inode, struct getxattr_iter *it)
 
 static int shared_getxattr(struct inode *inode, struct getxattr_iter *it)
 {
-	struct erofs_vnode *const vi = EROFS_V(inode);
+	struct erofs_inode *const vi = EROFS_I(inode);
 	struct super_block *const sb = inode->i_sb;
 	struct erofs_sb_info *const sbi = EROFS_SB(sb);
 	unsigned int i;
@@ -359,7 +409,7 @@ static int shared_getxattr(struct inode *inode, struct getxattr_iter *it)
 			if (i)
 				xattr_iter_end(&it->it, true);
 
-			it->it.page = erofs_get_meta_page(sb, blkaddr, false);
+			it->it.page = erofs_get_meta_page(sb, blkaddr);
 			if (IS_ERR(it->it.page))
 				return PTR_ERR(it->it.page);
 
@@ -388,13 +438,13 @@ static bool erofs_xattr_trusted_list(struct dentry *dentry)
 }
 
 int erofs_getxattr(struct inode *inode, int index,
-	const char *name,
-	void *buffer, size_t buffer_size)
+		   const char *name,
+		   void *buffer, size_t buffer_size)
 {
 	int ret;
 	struct getxattr_iter it;
 
-	if (unlikely(name == NULL))
+	if (!name)
 		return -EINVAL;
 
 	ret = init_inode_xattrs(inode);
@@ -419,10 +469,9 @@ int erofs_getxattr(struct inode *inode, int index,
 }
 
 static int erofs_xattr_generic_get(const struct xattr_handler *handler,
-		struct dentry *unused, struct inode *inode,
-		const char *name, void *buffer, size_t size)
+				   struct dentry *unused, struct inode *inode,
+				   const char *name, void *buffer, size_t size)
 {
-	struct erofs_vnode *const vi = EROFS_V(inode);
 	struct erofs_sb_info *const sbi = EROFS_I_SB(inode);
 
 	switch (handler->flags) {
@@ -431,17 +480,12 @@ static int erofs_xattr_generic_get(const struct xattr_handler *handler,
 			return -EOPNOTSUPP;
 		break;
 	case EROFS_XATTR_INDEX_TRUSTED:
-		if (!capable(CAP_SYS_ADMIN))
-			return -EPERM;
 		break;
 	case EROFS_XATTR_INDEX_SECURITY:
 		break;
 	default:
 		return -EINVAL;
 	}
-
-	if (!vi->xattr_isize)
-		return -ENOATTR;
 
 	return erofs_getxattr(inode, handler->flags, name, buffer, size);
 }
@@ -490,7 +534,7 @@ struct listxattr_iter {
 };
 
 static int xattr_entrylist(struct xattr_iter *_it,
-	struct erofs_xattr_entry *entry)
+			   struct erofs_xattr_entry *entry)
 {
 	struct listxattr_iter *it =
 		container_of(_it, struct listxattr_iter, it);
@@ -500,14 +544,13 @@ static int xattr_entrylist(struct xattr_iter *_it,
 	const struct xattr_handler *h =
 		erofs_xattr_handler(entry->e_name_index);
 
-	if (h == NULL || (h->list != NULL && !h->list(it->dentry)))
+	if (!h || (h->list && !h->list(it->dentry)))
 		return 1;
 
-	/* Note that at least one of 'prefix' and 'name' should be non-NULL */
-	prefix = h->prefix != NULL ? h->prefix : h->name;
+	prefix = xattr_prefix(h);
 	prefix_len = strlen(prefix);
 
-	if (it->buffer == NULL) {
+	if (!it->buffer) {
 		it->buffer_ofs += prefix_len + entry->e_name_len + 1;
 		return 1;
 	}
@@ -522,7 +565,7 @@ static int xattr_entrylist(struct xattr_iter *_it,
 }
 
 static int xattr_namelist(struct xattr_iter *_it,
-	unsigned int processed, char *buf, unsigned int len)
+			  unsigned int processed, char *buf, unsigned int len)
 {
 	struct listxattr_iter *it =
 		container_of(_it, struct listxattr_iter, it);
@@ -533,7 +576,7 @@ static int xattr_namelist(struct xattr_iter *_it,
 }
 
 static int xattr_skipvalue(struct xattr_iter *_it,
-	unsigned int value_sz)
+			   unsigned int value_sz)
 {
 	struct listxattr_iter *it =
 		container_of(_it, struct listxattr_iter, it);
@@ -571,7 +614,7 @@ static int inline_listxattr(struct listxattr_iter *it)
 static int shared_listxattr(struct listxattr_iter *it)
 {
 	struct inode *const inode = d_inode(it->dentry);
-	struct erofs_vnode *const vi = EROFS_V(inode);
+	struct erofs_inode *const vi = EROFS_I(inode);
 	struct super_block *const sb = inode->i_sb;
 	struct erofs_sb_info *const sbi = EROFS_SB(sb);
 	unsigned int i;
@@ -586,7 +629,7 @@ static int shared_listxattr(struct listxattr_iter *it)
 			if (i)
 				xattr_iter_end(&it->it, true);
 
-			it->it.page = erofs_get_meta_page(sb, blkaddr, false);
+			it->it.page = erofs_get_meta_page(sb, blkaddr);
 			if (IS_ERR(it->it.page))
 				return PTR_ERR(it->it.page);
 
@@ -605,12 +648,14 @@ static int shared_listxattr(struct listxattr_iter *it)
 }
 
 ssize_t erofs_listxattr(struct dentry *dentry,
-	char *buffer, size_t buffer_size)
+			char *buffer, size_t buffer_size)
 {
 	int ret;
 	struct listxattr_iter it;
 
 	ret = init_inode_xattrs(d_inode(dentry));
+	if (ret == -ENOATTR)
+		return 0;
 	if (ret)
 		return ret;
 
@@ -627,3 +672,39 @@ ssize_t erofs_listxattr(struct dentry *dentry,
 	return shared_listxattr(&it);
 }
 
+#ifdef CONFIG_EROFS_FS_POSIX_ACL
+struct posix_acl *erofs_get_acl(struct inode *inode, int type)
+{
+	struct posix_acl *acl;
+	int prefix, rc;
+	char *value = NULL;
+
+	switch (type) {
+	case ACL_TYPE_ACCESS:
+		prefix = EROFS_XATTR_INDEX_POSIX_ACL_ACCESS;
+		break;
+	case ACL_TYPE_DEFAULT:
+		prefix = EROFS_XATTR_INDEX_POSIX_ACL_DEFAULT;
+		break;
+	default:
+		return ERR_PTR(-EINVAL);
+	}
+
+	rc = erofs_getxattr(inode, prefix, "", NULL, 0);
+	if (rc > 0) {
+		value = kmalloc(rc, GFP_KERNEL);
+		if (!value)
+			return ERR_PTR(-ENOMEM);
+		rc = erofs_getxattr(inode, prefix, "", value, rc);
+	}
+
+	if (rc == -ENOATTR)
+		acl = NULL;
+	else if (rc < 0)
+		acl = ERR_PTR(rc);
+	else
+		acl = posix_acl_from_xattr(&init_user_ns, value, rc);
+	kfree(value);
+	return acl;
+}
+#endif

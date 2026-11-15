@@ -17,6 +17,7 @@ struct page;
 struct block_device;
 struct io_context;
 struct cgroup_subsys_state;
+struct bio_crypt_ctx;
 typedef void (bio_end_io_t) (struct bio *);
 
 /*
@@ -182,6 +183,14 @@ struct bio {
 	struct blkcg_gq		*bi_blkg;
 	struct bio_issue	bi_issue;
 #endif
+
+#ifdef CONFIG_BLK_INLINE_ENCRYPTION
+	struct bio_crypt_ctx	*bi_crypt_context;
+#if IS_ENABLED(CONFIG_DM_DEFAULT_KEY)
+	bool			bi_skip_dm_default_key;
+#endif
+#endif
+
 	union {
 #if defined(CONFIG_BLK_DEV_INTEGRITY)
 		struct bio_integrity_payload *bi_integrity; /* data integrity */
@@ -328,6 +337,10 @@ enum req_flag_bits {
 	/* for driver use */
 	__REQ_DRV,
 	__REQ_SWAP,		/* swapping request. */
+
+	/* HPB Flag */
+	__REQ_HPB_PREFER,
+
 	__REQ_NR_BITS,		/* stops here */
 };
 
@@ -350,6 +363,8 @@ enum req_flag_bits {
 
 #define REQ_DRV			(1ULL << __REQ_DRV)
 #define REQ_SWAP		(1ULL << __REQ_SWAP)
+
+#define REQ_HPB_PREFER		(1ULL << __REQ_HPB_PREFER)
 
 #define REQ_FAILFAST_MASK \
 	(REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT | REQ_FAILFAST_DRIVER)
