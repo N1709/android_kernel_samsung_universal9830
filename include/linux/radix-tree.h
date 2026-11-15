@@ -208,6 +208,16 @@ static inline int radix_tree_deref_retry(void *arg)
 }
 
 /**
+ * radix_tree_exceptional_entry	- radix_tree_deref_slot gave exceptional entry?
+ * @arg:	value returned by radix_tree_deref_slot
+ * Returns:	0 if well-aligned pointer, non-0 if exceptional entry.
+ */
+static inline int radix_tree_exceptional_entry(void *arg)
+{
+	return unlikely(radix_tree_is_internal_node(arg));
+}
+
+/**
  * radix_tree_exception	- radix_tree_deref_slot returned either exception?
  * @arg:	value returned by radix_tree_deref_slot
  * Returns:	0 if well-aligned pointer, non-0 if either kind of exception.

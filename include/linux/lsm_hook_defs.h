@@ -200,7 +200,7 @@ LSM_HOOK(int, 0, task_setrlimit, struct task_struct *p, unsigned int resource,
 LSM_HOOK(int, 0, task_setscheduler, struct task_struct *p)
 LSM_HOOK(int, 0, task_getscheduler, struct task_struct *p)
 LSM_HOOK(int, 0, task_movememory, struct task_struct *p)
-LSM_HOOK(int, 0, task_kill, struct task_struct *p, struct siginfo *info,
+LSM_HOOK(int, 0, task_kill, struct task_struct *p, struct kernel_siginfo *info,
 	 int sig, const struct cred *cred)
 LSM_HOOK(int, -ENOSYS, task_prctl, int option, unsigned long arg2,
 	 unsigned long arg3, unsigned long arg4, unsigned long arg5)
