@@ -255,6 +255,16 @@ do { \
 
 #endif /* CONFIG_PREEMPT_COUNT */
 
+/*
+ * v4.20 has no migrate_disable()/migrate_enable().  Non-RT kernels
+ * implement them as preempt_disable()/preempt_enable(), which is what
+ * the vendor BPF backport relies on.
+ */
+#ifndef migrate_disable
+#define migrate_disable()	preempt_disable()
+#define migrate_enable()	preempt_enable()
+#endif
+
 #ifdef MODULE
 /*
  * Modules have no business playing preemption tricks.

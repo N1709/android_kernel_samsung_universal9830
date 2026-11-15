@@ -813,8 +813,6 @@ struct bpf_prog_aux {
 	void *jit_data; /* JIT specific data. arch dependent */
 	struct bpf_jit_poke_descriptor *poke_tab;
 	u32 size_poke_tab;
-	struct latch_tree_node ksym_tnode;
-	struct list_head ksym_lnode;
 	struct bpf_ksym ksym;
 	const struct bpf_prog_ops *ops;
 	struct bpf_map **used_maps;
@@ -1093,7 +1091,7 @@ int bpf_prog_array_copy(struct bpf_prog_array *old_array,
 		struct bpf_prog *_prog;			\
 		struct bpf_prog_array *_array;		\
 		u32 _ret = 1;				\
-		preempt_disable();			\
+		migrate_disable();			\
 		rcu_read_lock();			\
 		_array = rcu_dereference(array);	\
 		if (unlikely(check_non_null && !_array))\
@@ -1112,7 +1110,7 @@ int bpf_prog_array_copy(struct bpf_prog_array *old_array,
 		}					\
 _out:							\
 		rcu_read_unlock();			\
-		preempt_enable();			\
+		migrate_enable();			\
 		_ret;					\
 	 })
 
@@ -1146,7 +1144,7 @@ _out:							\
 		u32 ret;				\
 		u32 _ret = 1;				\
 		u32 _cn = 0;				\
-		preempt_disable();			\
+		migrate_disable();			\
 		rcu_read_lock();			\
 		_array = rcu_dereference(array);	\
 		_item = &_array->items[0];		\
@@ -1160,7 +1158,7 @@ _out:							\
 			_item++;			\
 		}					\
 		rcu_read_unlock();			\
-		preempt_enable();			\
+		migrate_enable();			\
 		if (_ret)				\
 			_ret = (_cn ? NET_XMIT_CN : NET_XMIT_SUCCESS);	\
 		else					\
@@ -1192,7 +1190,7 @@ extern struct mutex bpf_stats_enabled_mutex;
  */
 static inline void bpf_disable_instrumentation(void)
 {
-	preempt_disable();
+	migrate_disable();
 	if (IS_ENABLED(CONFIG_PREEMPT_RT))
 		this_cpu_inc(bpf_prog_active);
 	else
@@ -1205,7 +1203,7 @@ static inline void bpf_enable_instrumentation(void)
 		this_cpu_dec(bpf_prog_active);
 	else
 		__this_cpu_dec(bpf_prog_active);
-	preempt_enable();
+	migrate_enable();
 }
 
 extern const struct file_operations bpf_map_fops;

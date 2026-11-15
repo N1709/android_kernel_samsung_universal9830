@@ -121,6 +121,7 @@
 #include <linux/prefetch.h>
 
 #include <linux/uaccess.h>
+#include <linux/sockptr.h>
 
 #include <linux/netdevice.h>
 #include <net/protocol.h>
@@ -1283,7 +1284,8 @@ int sock_getsockopt(struct socket *sock, int level, int optname,
 		break;
 
 	case SO_PEERSEC:
-		return security_socket_getpeersec_stream(sock, optval, optlen, len);
+		return security_socket_getpeersec_stream(sock, USER_SOCKPTR(optval),
+							 USER_SOCKPTR(optlen), len);
 
 	case SO_MARK:
 		v.val = sk->sk_mark;
