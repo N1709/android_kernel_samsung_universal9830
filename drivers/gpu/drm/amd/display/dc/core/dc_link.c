@@ -332,7 +332,7 @@ bool dc_link_is_dp_sink_present(struct dc_link *link)
 {
 	enum gpio_result gpio_result;
 	uint32_t clock_pin = 0;
-	uint8_t retry = 0;
+
 	struct ddc *ddc;
 
 	enum connector_id connector_id =
@@ -356,27 +356,16 @@ bool dc_link_is_dp_sink_present(struct dc_link *link)
 
 	if (GPIO_RESULT_OK != dal_ddc_open(
 		ddc, GPIO_MODE_INPUT, GPIO_DDC_CONFIG_TYPE_MODE_I2C)) {
-		dal_ddc_close(ddc);
+		dal_gpio_destroy_ddc(&ddc);
 
 		return present;
 	}
 
-	/*
-	 * Read GPIO: DP sink is present if both clock and data pins are zero
-	 *
-	 * [W/A] plug-unplug DP cable, sometimes customer board has
-	 * one short pulse on clk_pin(1V, < 1ms). DP will be config to HDMI/DVI
-	 * then monitor can't br light up. Add retry 3 times
-	 * But in real passive dongle, it need additional 3ms to detect
-	 */
-	do {
-		gpio_result = dal_gpio_get_value(ddc->pin_clock, &clock_pin);
-		ASSERT(gpio_result == GPIO_RESULT_OK);
-		if (clock_pin)
-			udelay(1000);
-		else
-			break;
-	} while (retry++ < 3);
+	/* Read GPIO: DP sink is present if both clock and data pins are zero */
+	/* [anaumov] in DAL2, there was no check for GPIO failure */
+
+	gpio_result = dal_gpio_get_value(ddc->pin_clock, &clock_pin);
+	ASSERT(gpio_result == GPIO_RESULT_OK);
 
 	present = (gpio_result == GPIO_RESULT_OK) && !clock_pin;
 
@@ -786,24 +775,6 @@ bool dc_link_detect(struct dc_link *link, enum dc_detect_reason reason)
 			    dc_is_dvi_signal(link->connector_signal)) {
 				if (prev_sink != NULL)
 					dc_sink_release(prev_sink);
-				link_disconnect_sink(link);
-
-				return false;
-			}
-			/*
-			 * Abort detection for DP connectors if we have
-			 * no EDID and connector is active converter
-			 * as there are no display downstream
-			 *
-			 */
-			if (dc_is_dp_sst_signal(link->connector_signal) &&
-				(link->dpcd_caps.dongle_type ==
-						DISPLAY_DONGLE_DP_VGA_CONVERTER ||
-				link->dpcd_caps.dongle_type ==
-						DISPLAY_DONGLE_DP_DVI_CONVERTER)) {
-				if (prev_sink)
-					dc_sink_release(prev_sink);
-				link_disconnect_sink(link);
 
 				return false;
 			}
@@ -816,7 +787,8 @@ bool dc_link_detect(struct dc_link *link, enum dc_detect_reason reason)
 			same_edid = is_same_edid(&prev_sink->dc_edid, &sink->dc_edid);
 
 		if (link->connector_signal == SIGNAL_TYPE_DISPLAY_PORT &&
-			sink_caps.transaction_type == DDC_TRANSACTION_TYPE_I2C_OVER_AUX) {
+			sink_caps.transaction_type == DDC_TRANSACTION_TYPE_I2C_OVER_AUX &&
+			reason != DETECT_REASON_HPDRX) {
 			/*
 			 * TODO debug why Dell 2413 doesn't like
 			 *  two link trainings
@@ -1178,11 +1150,6 @@ static bool construct(
 
 	if (link->ddc == NULL) {
 		DC_ERROR("Failed to create ddc_service!\n");
-		goto ddc_create_fail;
-	}
-
-	if (!link->ddc->ddc_pin) {
-		DC_ERROR("Failed to get I2C info for connector!\n");
 		goto ddc_create_fail;
 	}
 
@@ -1642,7 +1609,8 @@ static void write_i2c_retimer_setting(
 				slave_address, buffer[0], buffer[1], i2c_success?1:0);
 
 			if (!i2c_success)
-				goto i2c_write_fail;
+				/* Write failure */
+				ASSERT(i2c_success);
 
 			/* Based on DP159 specs, APPLY_RX_TX_CHANGE bit in 0x0A
 			 * needs to be set to 1 on every 0xA-0xC write.
@@ -1660,7 +1628,8 @@ static void write_i2c_retimer_setting(
 						pipe_ctx->stream->sink->link->ddc,
 						slave_address, &offset, 1, &value, 1);
 					if (!i2c_success)
-						goto i2c_write_fail;
+						/* Write failure */
+						ASSERT(i2c_success);
 				}
 
 				buffer[0] = offset;
@@ -1672,7 +1641,8 @@ static void write_i2c_retimer_setting(
 					offset = 0x%x, reg_val = 0x%x, i2c_success = %d\n",
 					slave_address, buffer[0], buffer[1], i2c_success?1:0);
 				if (!i2c_success)
-					goto i2c_write_fail;
+					/* Write failure */
+					ASSERT(i2c_success);
 			}
 		}
 	}
@@ -1692,7 +1662,8 @@ static void write_i2c_retimer_setting(
 					slave_address, buffer[0], buffer[1], i2c_success?1:0);
 
 				if (!i2c_success)
-					goto i2c_write_fail;
+					/* Write failure */
+					ASSERT(i2c_success);
 
 				/* Based on DP159 specs, APPLY_RX_TX_CHANGE bit in 0x0A
 				 * needs to be set to 1 on every 0xA-0xC write.
@@ -1710,7 +1681,8 @@ static void write_i2c_retimer_setting(
 								pipe_ctx->stream->sink->link->ddc,
 								slave_address, &offset, 1, &value, 1);
 						if (!i2c_success)
-							goto i2c_write_fail;
+							/* Write failure */
+							ASSERT(i2c_success);
 					}
 
 					buffer[0] = offset;
@@ -1722,7 +1694,8 @@ static void write_i2c_retimer_setting(
 						offset = 0x%x, reg_val = 0x%x, i2c_success = %d\n",
 						slave_address, buffer[0], buffer[1], i2c_success?1:0);
 					if (!i2c_success)
-						goto i2c_write_fail;
+						/* Write failure */
+						ASSERT(i2c_success);
 				}
 			}
 		}
@@ -1740,7 +1713,8 @@ static void write_i2c_retimer_setting(
 				offset = 0x%x, reg_val = 0x%x, i2c_success = %d\n",
 				slave_address, buffer[0], buffer[1], i2c_success?1:0);
 		if (!i2c_success)
-			goto i2c_write_fail;
+			/* Write failure */
+			ASSERT(i2c_success);
 
 		/* Write offset 0x00 to 0x23 */
 		buffer[0] = 0x00;
@@ -1751,7 +1725,8 @@ static void write_i2c_retimer_setting(
 			offset = 0x%x, reg_val = 0x%x, i2c_success = %d\n",
 			slave_address, buffer[0], buffer[1], i2c_success?1:0);
 		if (!i2c_success)
-			goto i2c_write_fail;
+			/* Write failure */
+			ASSERT(i2c_success);
 
 		/* Write offset 0xff to 0x00 */
 		buffer[0] = 0xff;
@@ -1762,14 +1737,10 @@ static void write_i2c_retimer_setting(
 			offset = 0x%x, reg_val = 0x%x, i2c_success = %d\n",
 			slave_address, buffer[0], buffer[1], i2c_success?1:0);
 		if (!i2c_success)
-			goto i2c_write_fail;
+			/* Write failure */
+			ASSERT(i2c_success);
 
 	}
-
-	return;
-
-i2c_write_fail:
-	DC_LOG_DEBUG("Set retimer failed");
 }
 
 static void write_i2c_default_retimer_setting(
@@ -1794,7 +1765,8 @@ static void write_i2c_default_retimer_setting(
 		offset = 0x%x, reg_val = 0x%x, i2c_success = %d\n",
 		slave_address, buffer[0], buffer[1], i2c_success?1:0);
 	if (!i2c_success)
-		goto i2c_write_fail;
+		/* Write failure */
+		ASSERT(i2c_success);
 
 	/* Write offset 0x0A to 0x17 */
 	buffer[0] = 0x0A;
@@ -1805,7 +1777,8 @@ static void write_i2c_default_retimer_setting(
 		offset = 0x%x, reg_val = 0x%x, i2c_success = %d\n",
 		slave_address, buffer[0], buffer[1], i2c_success?1:0);
 	if (!i2c_success)
-		goto i2c_write_fail;
+		/* Write failure */
+		ASSERT(i2c_success);
 
 	/* Write offset 0x0B to 0xDA or 0xD8 */
 	buffer[0] = 0x0B;
@@ -1816,7 +1789,8 @@ static void write_i2c_default_retimer_setting(
 		offset = 0x%x, reg_val = 0x%x, i2c_success = %d\n",
 		slave_address, buffer[0], buffer[1], i2c_success?1:0);
 	if (!i2c_success)
-		goto i2c_write_fail;
+		/* Write failure */
+		ASSERT(i2c_success);
 
 	/* Write offset 0x0A to 0x17 */
 	buffer[0] = 0x0A;
@@ -1827,7 +1801,8 @@ static void write_i2c_default_retimer_setting(
 		offset = 0x%x, reg_val= 0x%x, i2c_success = %d\n",
 		slave_address, buffer[0], buffer[1], i2c_success?1:0);
 	if (!i2c_success)
-		goto i2c_write_fail;
+		/* Write failure */
+		ASSERT(i2c_success);
 
 	/* Write offset 0x0C to 0x1D or 0x91 */
 	buffer[0] = 0x0C;
@@ -1838,7 +1813,8 @@ static void write_i2c_default_retimer_setting(
 		offset = 0x%x, reg_val = 0x%x, i2c_success = %d\n",
 		slave_address, buffer[0], buffer[1], i2c_success?1:0);
 	if (!i2c_success)
-		goto i2c_write_fail;
+		/* Write failure */
+		ASSERT(i2c_success);
 
 	/* Write offset 0x0A to 0x17 */
 	buffer[0] = 0x0A;
@@ -1849,7 +1825,8 @@ static void write_i2c_default_retimer_setting(
 		offset = 0x%x, reg_val = 0x%x, i2c_success = %d\n",
 		slave_address, buffer[0], buffer[1], i2c_success?1:0);
 	if (!i2c_success)
-		goto i2c_write_fail;
+		/* Write failure */
+		ASSERT(i2c_success);
 
 
 	if (is_vga_mode) {
@@ -1864,7 +1841,8 @@ static void write_i2c_default_retimer_setting(
 			offset = 0x%x, reg_val = 0x%x, i2c_success = %d\n",
 			slave_address, buffer[0], buffer[1], i2c_success?1:0);
 		if (!i2c_success)
-			goto i2c_write_fail;
+			/* Write failure */
+			ASSERT(i2c_success);
 
 		/* Write offset 0x00 to 0x23 */
 		buffer[0] = 0x00;
@@ -1875,7 +1853,8 @@ static void write_i2c_default_retimer_setting(
 			offset = 0x%x, reg_val= 0x%x, i2c_success = %d\n",
 			slave_address, buffer[0], buffer[1], i2c_success?1:0);
 		if (!i2c_success)
-			goto i2c_write_fail;
+			/* Write failure */
+			ASSERT(i2c_success);
 
 		/* Write offset 0xff to 0x00 */
 		buffer[0] = 0xff;
@@ -1886,13 +1865,9 @@ static void write_i2c_default_retimer_setting(
 			offset = 0x%x, reg_val= 0x%x, i2c_success = %d end here\n",
 			slave_address, buffer[0], buffer[1], i2c_success?1:0);
 		if (!i2c_success)
-			goto i2c_write_fail;
+			/* Write failure */
+			ASSERT(i2c_success);
 	}
-
-	return;
-
-i2c_write_fail:
-	DC_LOG_DEBUG("Set default retimer failed");
 }
 
 static void write_i2c_redriver_setting(
@@ -1921,7 +1896,8 @@ static void write_i2c_redriver_setting(
 		slave_address, buffer[3], buffer[4], buffer[5], buffer[6], i2c_success?1:0);
 
 	if (!i2c_success)
-		DC_LOG_DEBUG("Set redriver failed");
+		/* Write failure */
+		ASSERT(i2c_success);
 }
 
 static void enable_link_hdmi(struct pipe_ctx *pipe_ctx)
@@ -2080,7 +2056,7 @@ static bool dp_active_dongle_validate_timing(
 		break;
 	}
 
-	if (dpcd_caps->dongle_type != DISPLAY_DONGLE_DP_HDMI_CONVERTER ||
+	if (dongle_caps->dongle_type != DISPLAY_DONGLE_DP_HDMI_CONVERTER ||
 		dongle_caps->extendedCapValid == false)
 		return true;
 
@@ -2149,7 +2125,7 @@ enum dc_status dc_link_validate_mode_timing(
 	/* A hack to avoid failing any modes for EDID override feature on
 	 * topology change such as lower quality cable for DP or different dongle
 	 */
-	if (link->remote_sinks[0] && link->remote_sinks[0]->sink_signal == SIGNAL_TYPE_VIRTUAL)
+	if (link->remote_sinks[0])
 		return DC_OK;
 
 	/* Passive Dongle */
@@ -2641,10 +2617,10 @@ void core_link_disable_stream(struct pipe_ctx *pipe_ctx, int option)
 {
 	struct dc  *core_dc = pipe_ctx->stream->ctx->dc;
 
-	core_dc->hwss.blank_stream(pipe_ctx);
-
 	if (pipe_ctx->stream->signal == SIGNAL_TYPE_DISPLAY_PORT_MST)
 		deallocate_mst_payload(pipe_ctx);
+
+	core_dc->hwss.blank_stream(pipe_ctx);
 
 	core_dc->hwss.disable_stream(pipe_ctx, option);
 

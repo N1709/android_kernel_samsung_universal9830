@@ -651,19 +651,19 @@ static int pktgen_if_show(struct seq_file *seq, void *v)
 	seq_puts(seq, "     Flags: ");
 
 	for (i = 0; i < NR_PKT_FLAGS; i++) {
-		if (i == FLOW_SEQ_SHIFT)
+		if (i == F_FLOW_SEQ)
 			if (!pkt_dev->cflows)
 				continue;
 
-		if (pkt_dev->flags & (1 << i)) {
+		if (pkt_dev->flags & (1 << i))
 			seq_printf(seq, "%s  ", pkt_flag_names[i]);
-#ifdef CONFIG_XFRM
-			if (i == IPSEC_SHIFT && pkt_dev->spi)
-				seq_printf(seq, "spi:%u  ", pkt_dev->spi);
-#endif
-		} else if (i == FLOW_SEQ_SHIFT) {
+		else if (i == F_FLOW_SEQ)
 			seq_puts(seq, "FLOW_RND  ");
-		}
+
+#ifdef CONFIG_XFRM
+		if (i == F_IPSEC && pkt_dev->spi)
+			seq_printf(seq, "spi:%u", pkt_dev->spi);
+#endif
 	}
 
 	seq_puts(seq, "\n");
@@ -811,10 +811,6 @@ static ssize_t get_labels(const char __user *buffer, struct pktgen_dev *pkt_dev)
 	pkt_dev->nr_labels = 0;
 	do {
 		__u32 tmp;
-
-		if (n >= MAX_MPLS_LABELS)
-			return -E2BIG;
-
 		len = hex32_arg(&buffer[i], 8, &tmp);
 		if (len <= 0)
 			return len;
@@ -826,6 +822,8 @@ static ssize_t get_labels(const char __user *buffer, struct pktgen_dev *pkt_dev)
 			return -EFAULT;
 		i++;
 		n++;
+		if (n >= MAX_MPLS_LABELS)
+			return -E2BIG;
 	} while (c == ',');
 
 	pkt_dev->nr_labels = n;
@@ -1776,8 +1774,8 @@ static ssize_t pktgen_thread_write(struct file *file,
 	i = len;
 
 	/* Read variable name */
-	max = min(sizeof(name) - 1, count - i);
-	len = strn_len(&user_buffer[i], max);
+
+	len = strn_len(&user_buffer[i], sizeof(name) - 1);
 	if (len < 0)
 		return len;
 
@@ -1807,8 +1805,7 @@ static ssize_t pktgen_thread_write(struct file *file,
 	if (!strcmp(name, "add_device")) {
 		char f[32];
 		memset(f, 0, 32);
-		max = min(sizeof(f) - 1, count - i);
-		len = strn_len(&user_buffer[i], max);
+		len = strn_len(&user_buffer[i], sizeof(f) - 1);
 		if (len < 0) {
 			ret = len;
 			goto out;
@@ -3068,13 +3065,7 @@ static int pktgen_wait_thread_run(struct pktgen_thread *t)
 {
 	while (thread_is_running(t)) {
 
-		/* note: 't' will still be around even after the unlock/lock
-		 * cycle because pktgen_thread threads are only cleared at
-		 * net exit
-		 */
-		mutex_unlock(&pktgen_thread_lock);
 		msleep_interruptible(100);
-		mutex_lock(&pktgen_thread_lock);
 
 		if (signal_pending(current))
 			goto signal;
@@ -3089,10 +3080,6 @@ static int pktgen_wait_all_threads_run(struct pktgen_net *pn)
 	struct pktgen_thread *t;
 	int sig = 1;
 
-	/* prevent from racing with rmmod */
-	if (!try_module_get(THIS_MODULE))
-		return sig;
-
 	mutex_lock(&pktgen_thread_lock);
 
 	list_for_each_entry(t, &pn->pktgen_threads, th_list) {
@@ -3106,7 +3093,6 @@ static int pktgen_wait_all_threads_run(struct pktgen_net *pn)
 			t->control |= (T_STOP);
 
 	mutex_unlock(&pktgen_thread_lock);
-	module_put(THIS_MODULE);
 	return sig;
 }
 
@@ -3474,7 +3460,7 @@ static int pktgen_thread_worker(void *arg)
 	struct pktgen_dev *pkt_dev = NULL;
 	int cpu = t->cpu;
 
-	WARN_ON(smp_processor_id() != cpu);
+	BUG_ON(smp_processor_id() != cpu);
 
 	init_waitqueue_head(&t->queue);
 	complete(&t->start_done);

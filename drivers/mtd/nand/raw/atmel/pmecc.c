@@ -146,7 +146,6 @@ struct atmel_pmecc_caps {
 	int nstrengths;
 	int el_offset;
 	bool correct_erased_chunks;
-	bool clk_ctrl;
 };
 
 struct atmel_pmecc {
@@ -366,7 +365,7 @@ atmel_pmecc_create_user(struct atmel_pmecc *pmecc,
 	size = ALIGN(size, sizeof(s32));
 	size += (req->ecc.strength + 1) * sizeof(s32) * 3;
 
-	user = devm_kzalloc(pmecc->dev, size, GFP_KERNEL);
+	user = kzalloc(size, GFP_KERNEL);
 	if (!user)
 		return ERR_PTR(-ENOMEM);
 
@@ -384,8 +383,10 @@ atmel_pmecc_create_user(struct atmel_pmecc *pmecc,
 	user->delta = user->dmu + req->ecc.strength + 1;
 
 	gf_tables = atmel_pmecc_get_gf_tables(req);
-	if (IS_ERR(gf_tables))
+	if (IS_ERR(gf_tables)) {
+		kfree(user);
 		return ERR_CAST(gf_tables);
+	}
 
 	user->gf_tables = gf_tables;
 
@@ -409,6 +410,12 @@ atmel_pmecc_create_user(struct atmel_pmecc *pmecc,
 	return user;
 }
 EXPORT_SYMBOL_GPL(atmel_pmecc_create_user);
+
+void atmel_pmecc_destroy_user(struct atmel_pmecc_user *user)
+{
+	kfree(user);
+}
+EXPORT_SYMBOL_GPL(atmel_pmecc_destroy_user);
 
 static int get_strength(struct atmel_pmecc_user *user)
 {
@@ -850,10 +857,6 @@ static struct atmel_pmecc *atmel_pmecc_create(struct platform_device *pdev,
 	if (IS_ERR(pmecc->regs.errloc))
 		return ERR_CAST(pmecc->regs.errloc);
 
-	/* pmecc data setup time */
-	if (caps->clk_ctrl)
-		writel(PMECC_CLK_133MHZ, pmecc->regs.base + ATMEL_PMECC_CLK);
-
 	/* Disable all interrupts before registering the PMECC handler. */
 	writel(0xffffffff, pmecc->regs.base + ATMEL_PMECC_IDR);
 	atmel_pmecc_reset(pmecc);
@@ -873,32 +876,23 @@ static struct atmel_pmecc *atmel_pmecc_get_by_node(struct device *userdev,
 {
 	struct platform_device *pdev;
 	struct atmel_pmecc *pmecc, **ptr;
-	int ret;
 
 	pdev = of_find_device_by_node(np);
-	if (!pdev)
+	if (!pdev || !platform_get_drvdata(pdev))
 		return ERR_PTR(-EPROBE_DEFER);
-	pmecc = platform_get_drvdata(pdev);
-	if (!pmecc) {
-		ret = -EPROBE_DEFER;
-		goto err_put_device;
-	}
 
 	ptr = devres_alloc(devm_atmel_pmecc_put, sizeof(*ptr), GFP_KERNEL);
-	if (!ptr) {
-		ret = -ENOMEM;
-		goto err_put_device;
-	}
+	if (!ptr)
+		return ERR_PTR(-ENOMEM);
+
+	get_device(&pdev->dev);
+	pmecc = platform_get_drvdata(pdev);
 
 	*ptr = pmecc;
 
 	devres_add(userdev, ptr);
 
 	return pmecc;
-
-err_put_device:
-	put_device(&pdev->dev);
-	return ERR_PTR(ret);
 }
 
 static const int atmel_pmecc_strengths[] = { 2, 4, 8, 12, 24, 32 };
@@ -907,7 +901,6 @@ static struct atmel_pmecc_caps at91sam9g45_caps = {
 	.strengths = atmel_pmecc_strengths,
 	.nstrengths = 5,
 	.el_offset = 0x8c,
-	.clk_ctrl = true,
 };
 
 static struct atmel_pmecc_caps sama5d4_caps = {

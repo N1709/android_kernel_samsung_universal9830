@@ -365,19 +365,18 @@ static void crypto_morus640_process_crypt(struct morus640_state *state,
 					  const struct morus640_ops *ops)
 {
 	struct skcipher_walk walk;
+	u8 *dst;
+	const u8 *src;
 
 	ops->skcipher_walk_init(&walk, req, false);
 
 	while (walk.nbytes) {
-		unsigned int nbytes = walk.nbytes;
+		src = walk.src.virt.addr;
+		dst = walk.dst.virt.addr;
 
-		if (nbytes < walk.total)
-			nbytes = round_down(nbytes, walk.stride);
+		ops->crypt_chunk(state, dst, src, walk.nbytes);
 
-		ops->crypt_chunk(state, walk.dst.virt.addr, walk.src.virt.addr,
-				 nbytes);
-
-		skcipher_walk_done(&walk, walk.nbytes - nbytes);
+		skcipher_walk_done(&walk, 0);
 	}
 }
 

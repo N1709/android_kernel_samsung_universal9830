@@ -183,10 +183,6 @@ enum node_stat_item {
 	NR_DIRTIED,		/* page dirtyings since bootup */
 	NR_WRITTEN,		/* page writings since bootup */
 	NR_KERNEL_MISC_RECLAIMABLE,	/* reclaimable non-slab kernel pages */
-#ifdef CONFIG_KZEROD
-	ZERO_PAGE_ALLOC_TOTAL,		/* zero page allocations (kzerod) */
-	ZERO_PAGE_ALLOC_PREZERO,	/* zero page hits in the prezero pool */
-#endif
 	NR_VM_NODE_STAT_ITEMS
 };
 

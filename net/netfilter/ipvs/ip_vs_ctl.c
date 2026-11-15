@@ -43,7 +43,6 @@
 #ifdef CONFIG_IP_VS_IPV6
 #include <net/ipv6.h>
 #include <net/ip6_route.h>
-#include <net/netfilter/ipv6/nf_defrag_ipv6.h>
 #endif
 #include <net/route.h>
 #include <net/sock.h>
@@ -98,6 +97,7 @@ static bool __ip_vs_addr_is_local_v6(struct net *net,
 static void update_defense_level(struct netns_ipvs *ipvs)
 {
 	struct sysinfo i;
+	static int old_secure_tcp = 0;
 	int availmem;
 	int nomem;
 	int to_change = -1;
@@ -178,35 +178,35 @@ static void update_defense_level(struct netns_ipvs *ipvs)
 	spin_lock(&ipvs->securetcp_lock);
 	switch (ipvs->sysctl_secure_tcp) {
 	case 0:
-		if (ipvs->old_secure_tcp >= 2)
+		if (old_secure_tcp >= 2)
 			to_change = 0;
 		break;
 	case 1:
 		if (nomem) {
-			if (ipvs->old_secure_tcp < 2)
+			if (old_secure_tcp < 2)
 				to_change = 1;
 			ipvs->sysctl_secure_tcp = 2;
 		} else {
-			if (ipvs->old_secure_tcp >= 2)
+			if (old_secure_tcp >= 2)
 				to_change = 0;
 		}
 		break;
 	case 2:
 		if (nomem) {
-			if (ipvs->old_secure_tcp < 2)
+			if (old_secure_tcp < 2)
 				to_change = 1;
 		} else {
-			if (ipvs->old_secure_tcp >= 2)
+			if (old_secure_tcp >= 2)
 				to_change = 0;
 			ipvs->sysctl_secure_tcp = 1;
 		}
 		break;
 	case 3:
-		if (ipvs->old_secure_tcp < 2)
+		if (old_secure_tcp < 2)
 			to_change = 1;
 		break;
 	}
-	ipvs->old_secure_tcp = ipvs->sysctl_secure_tcp;
+	old_secure_tcp = ipvs->sysctl_secure_tcp;
 	if (to_change >= 0)
 		ip_vs_protocol_timeout_change(ipvs,
 					      ipvs->sysctl_secure_tcp > 1);
@@ -900,17 +900,11 @@ ip_vs_new_dest(struct ip_vs_service *svc, struct ip_vs_dest_user_kern *udest,
 
 #ifdef CONFIG_IP_VS_IPV6
 	if (udest->af == AF_INET6) {
-		int ret;
-
 		atype = ipv6_addr_type(&udest->addr.in6);
 		if ((!(atype & IPV6_ADDR_UNICAST) ||
 			atype & IPV6_ADDR_LINKLOCAL) &&
 			!__ip_vs_addr_is_local_v6(svc->ipvs->net, &udest->addr.in6))
 			return -EINVAL;
-
-		ret = nf_defrag_ipv6_enable(svc->ipvs->net);
-		if (ret)
-			return ret;
 	} else
 #endif
 	{
@@ -1203,8 +1197,7 @@ ip_vs_add_service(struct netns_ipvs *ipvs, struct ip_vs_service_user_kern *u,
 	struct ip_vs_service *svc = NULL;
 
 	/* increase the module use count */
-	if (!ip_vs_use_count_inc())
-		return -ENOPROTOOPT;
+	ip_vs_use_count_inc();
 
 	/* Lookup the scheduler by 'u->sched_name' */
 	if (strcmp(u->sched_name, "none")) {
@@ -1235,10 +1228,6 @@ ip_vs_add_service(struct netns_ipvs *ipvs, struct ip_vs_service_user_kern *u,
 			ret = -EINVAL;
 			goto out_err;
 		}
-
-		ret = nf_defrag_ipv6_enable(ipvs->net);
-		if (ret)
-			goto out_err;
 	}
 #endif
 
@@ -1269,7 +1258,7 @@ ip_vs_add_service(struct netns_ipvs *ipvs, struct ip_vs_service_user_kern *u,
 	ip_vs_addr_copy(svc->af, &svc->addr, &u->addr);
 	svc->port = u->port;
 	svc->fwmark = u->fwmark;
-	svc->flags = u->flags & ~IP_VS_SVC_F_HASHED;
+	svc->flags = u->flags;
 	svc->timeout = u->timeout * HZ;
 	svc->netmask = u->netmask;
 	svc->ipvs = ipvs;
@@ -1656,30 +1645,23 @@ static int ip_vs_zero_all(struct netns_ipvs *ipvs)
 #ifdef CONFIG_SYSCTL
 
 static int zero;
-static int one = 1;
 static int three = 3;
 
 static int
 proc_do_defense_mode(struct ctl_table *table, int write,
-		     void *buffer, size_t *lenp, loff_t *ppos)
+		     void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	struct netns_ipvs *ipvs = table->extra2;
 	int *valp = table->data;
 	int val = *valp;
 	int rc;
 
-	struct ctl_table tmp = {
-		.data = &val,
-		.maxlen = sizeof(int),
-		.mode = table->mode,
-	};
-
-	rc = proc_dointvec(&tmp, write, buffer, lenp, ppos);
+	rc = proc_dointvec(table, write, buffer, lenp, ppos);
 	if (write && (*valp != val)) {
-		if (val < 0 || val > 3) {
-			rc = -EINVAL;
-		} else {
+		if ((*valp < 0) || (*valp > 3)) {
+			/* Restore the correct value */
 			*valp = val;
+		} else {
 			update_defense_level(ipvs);
 		}
 	}
@@ -1688,52 +1670,56 @@ proc_do_defense_mode(struct ctl_table *table, int write,
 
 static int
 proc_do_sync_threshold(struct ctl_table *table, int write,
-		       void *buffer, size_t *lenp, loff_t *ppos)
+		       void __user *buffer, size_t *lenp, loff_t *ppos)
 {
-	struct netns_ipvs *ipvs = table->extra2;
 	int *valp = table->data;
 	int val[2];
 	int rc;
-	struct ctl_table tmp = {
-		.data = &val,
-		.maxlen = table->maxlen,
-		.mode = table->mode,
-	};
 
-	mutex_lock(&ipvs->sync_mutex);
+	/* backup the value first */
 	memcpy(val, valp, sizeof(val));
-	rc = proc_dointvec(&tmp, write, buffer, lenp, ppos);
-	if (write) {
-		if (val[0] < 0 || val[1] < 0 ||
-		    (val[0] >= val[1] && val[1]))
-			rc = -EINVAL;
-		else
-			memcpy(valp, val, sizeof(val));
+
+	rc = proc_dointvec(table, write, buffer, lenp, ppos);
+	if (write && (valp[0] < 0 || valp[1] < 0 ||
+	    (valp[0] >= valp[1] && valp[1]))) {
+		/* Restore the correct value */
+		memcpy(valp, val, sizeof(val));
 	}
-	mutex_unlock(&ipvs->sync_mutex);
 	return rc;
 }
 
 static int
-proc_do_sync_ports(struct ctl_table *table, int write,
-		   void *buffer, size_t *lenp, loff_t *ppos)
+proc_do_sync_mode(struct ctl_table *table, int write,
+		     void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	int *valp = table->data;
 	int val = *valp;
 	int rc;
 
-	struct ctl_table tmp = {
-		.data = &val,
-		.maxlen = sizeof(int),
-		.mode = table->mode,
-	};
-
-	rc = proc_dointvec(&tmp, write, buffer, lenp, ppos);
+	rc = proc_dointvec(table, write, buffer, lenp, ppos);
 	if (write && (*valp != val)) {
-		if (val < 1 || !is_power_of_2(val))
-			rc = -EINVAL;
-		else
+		if ((*valp < 0) || (*valp > 1)) {
+			/* Restore the correct value */
 			*valp = val;
+		}
+	}
+	return rc;
+}
+
+static int
+proc_do_sync_ports(struct ctl_table *table, int write,
+		   void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int *valp = table->data;
+	int val = *valp;
+	int rc;
+
+	rc = proc_dointvec(table, write, buffer, lenp, ppos);
+	if (write && (*valp != val)) {
+		if (*valp < 1 || !is_power_of_2(*valp)) {
+			/* Restore the correct value */
+			*valp = val;
+		}
 	}
 	return rc;
 }
@@ -1793,9 +1779,7 @@ static struct ctl_table vs_vars[] = {
 		.procname	= "sync_version",
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &zero,
-		.extra2		= &one,
+		.proc_handler	= proc_do_sync_mode,
 	},
 	{
 		.procname	= "sync_ports",
@@ -2237,18 +2221,6 @@ static int ip_vs_set_timeout(struct netns_ipvs *ipvs, struct ip_vs_timeout_user 
 		  u->udp_timeout);
 
 #ifdef CONFIG_IP_VS_PROTO_TCP
-	if (u->tcp_timeout < 0 || u->tcp_timeout > (INT_MAX / HZ) ||
-	    u->tcp_fin_timeout < 0 || u->tcp_fin_timeout > (INT_MAX / HZ)) {
-		return -EINVAL;
-	}
-#endif
-
-#ifdef CONFIG_IP_VS_PROTO_UDP
-	if (u->udp_timeout < 0 || u->udp_timeout > (INT_MAX / HZ))
-		return -EINVAL;
-#endif
-
-#ifdef CONFIG_IP_VS_PROTO_TCP
 	if (u->tcp_timeout) {
 		pd = ip_vs_proto_data_get(ipvs, IPPROTO_TCP);
 		pd->timeout_table[IP_VS_TCP_S_ESTABLISHED]
@@ -2368,6 +2340,9 @@ do_ip_vs_set_ctl(struct sock *sk, int cmd, void __user *user, unsigned int len)
 	if (copy_from_user(arg, user, len) != 0)
 		return -EFAULT;
 
+	/* increase the module use count */
+	ip_vs_use_count_inc();
+
 	/* Handle daemons since they have another lock */
 	if (cmd == IP_VS_SO_SET_STARTDAEMON ||
 	    cmd == IP_VS_SO_SET_STOPDAEMON) {
@@ -2380,13 +2355,15 @@ do_ip_vs_set_ctl(struct sock *sk, int cmd, void __user *user, unsigned int len)
 			ret = -EINVAL;
 			if (strscpy(cfg.mcast_ifn, dm->mcast_ifn,
 				    sizeof(cfg.mcast_ifn)) <= 0)
-				return ret;
+				goto out_dec;
 			cfg.syncid = dm->syncid;
 			ret = start_sync_thread(ipvs, &cfg, dm->state);
 		} else {
+			mutex_lock(&ipvs->sync_mutex);
 			ret = stop_sync_thread(ipvs, dm->state);
+			mutex_unlock(&ipvs->sync_mutex);
 		}
-		return ret;
+		goto out_dec;
 	}
 
 	mutex_lock(&__ip_vs_mutex);
@@ -2397,10 +2374,6 @@ do_ip_vs_set_ctl(struct sock *sk, int cmd, void __user *user, unsigned int len)
 	} else if (cmd == IP_VS_SO_SET_TIMEOUT) {
 		/* Set timeout values for (tcp tcpfin udp) */
 		ret = ip_vs_set_timeout(ipvs, (struct ip_vs_timeout_user *)arg);
-		goto out_unlock;
-	} else if (!len) {
-		/* No more commands with len == 0 below */
-		ret = -EINVAL;
 		goto out_unlock;
 	}
 
@@ -2478,10 +2451,17 @@ do_ip_vs_set_ctl(struct sock *sk, int cmd, void __user *user, unsigned int len)
 		break;
 	case IP_VS_SO_SET_DELDEST:
 		ret = ip_vs_del_dest(svc, &udest);
+		break;
+	default:
+		ret = -EINVAL;
 	}
 
   out_unlock:
 	mutex_unlock(&__ip_vs_mutex);
+  out_dec:
+	/* decrease the module use count */
+	ip_vs_use_count_dec();
+
 	return ret;
 }
 
@@ -2739,13 +2719,13 @@ do_ip_vs_get_ctl(struct sock *sk, int cmd, void __user *user, int *len)
 	case IP_VS_SO_GET_SERVICES:
 	{
 		struct ip_vs_get_services *get;
-		size_t size;
+		int size;
 
 		get = (struct ip_vs_get_services *)arg;
 		size = sizeof(*get) +
 			sizeof(struct ip_vs_service_entry) * get->num_services;
 		if (*len != size) {
-			pr_err("length: %u != %zu\n", *len, size);
+			pr_err("length: %u != %u\n", *len, size);
 			ret = -EINVAL;
 			goto out;
 		}
@@ -2781,13 +2761,13 @@ do_ip_vs_get_ctl(struct sock *sk, int cmd, void __user *user, int *len)
 	case IP_VS_SO_GET_DESTS:
 	{
 		struct ip_vs_get_dests *get;
-		size_t size;
+		int size;
 
 		get = (struct ip_vs_get_dests *)arg;
 		size = sizeof(*get) +
 			sizeof(struct ip_vs_dest_entry) * get->num_dests;
 		if (*len != size) {
-			pr_err("length: %u != %zu\n", *len, size);
+			pr_err("length: %u != %u\n", *len, size);
 			ret = -EINVAL;
 			goto out;
 		}
@@ -3489,8 +3469,10 @@ static int ip_vs_genl_del_daemon(struct netns_ipvs *ipvs, struct nlattr **attrs)
 	if (!attrs[IPVS_DAEMON_ATTR_STATE])
 		return -EINVAL;
 
+	mutex_lock(&ipvs->sync_mutex);
 	ret = stop_sync_thread(ipvs,
 			       nla_get_u32(attrs[IPVS_DAEMON_ATTR_STATE]));
+	mutex_unlock(&ipvs->sync_mutex);
 	return ret;
 }
 
@@ -3947,7 +3929,6 @@ static int __net_init ip_vs_control_net_init_sysctl(struct netns_ipvs *ipvs)
 	ipvs->sysctl_sync_threshold[0] = DEFAULT_SYNC_THRESHOLD;
 	ipvs->sysctl_sync_threshold[1] = DEFAULT_SYNC_PERIOD;
 	tbl[idx].data = &ipvs->sysctl_sync_threshold;
-	tbl[idx].extra2 = ipvs;
 	tbl[idx++].maxlen = sizeof(ipvs->sysctl_sync_threshold);
 	ipvs->sysctl_sync_refresh_period = DEFAULT_SYNC_REFRESH_PERIOD;
 	tbl[idx++].data = &ipvs->sysctl_sync_refresh_period;
@@ -3961,11 +3942,6 @@ static int __net_init ip_vs_control_net_init_sysctl(struct netns_ipvs *ipvs)
 	tbl[idx++].data = &ipvs->sysctl_conn_reuse_mode;
 	tbl[idx++].data = &ipvs->sysctl_schedule_icmp;
 	tbl[idx++].data = &ipvs->sysctl_ignore_tunneled;
-#ifdef CONFIG_IP_VS_DEBUG
-	/* Global sysctls must be ro in non-init netns */
-	if (!net_eq(net, &init_net))
-		tbl[idx++].mode = 0444;
-#endif
 
 	ipvs->sysctl_hdr = register_net_sysctl(net, "net/ipv4/vs", tbl);
 	if (ipvs->sysctl_hdr == NULL) {

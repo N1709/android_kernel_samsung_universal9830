@@ -73,7 +73,7 @@ static void etnaviv_core_dump_header(struct core_dump_iterator *iter,
 	hdr->file_size = cpu_to_le32(data_end - iter->data);
 
 	iter->hdr++;
-	iter->data += le32_to_cpu(hdr->file_size);
+	iter->data += hdr->file_size;
 }
 
 static void etnaviv_core_dump_registers(struct core_dump_iterator *iter,
@@ -81,15 +81,10 @@ static void etnaviv_core_dump_registers(struct core_dump_iterator *iter,
 {
 	struct etnaviv_dump_registers *reg = iter->data;
 	unsigned int i;
-	u32 read_addr;
 
 	for (i = 0; i < ARRAY_SIZE(etnaviv_dump_registers); i++, reg++) {
-		read_addr = etnaviv_dump_registers[i];
-		if (read_addr >= VIVS_PM_POWER_CONTROLS &&
-		    read_addr <= VIVS_PM_PULSE_EATER)
-			read_addr = gpu_fix_power_address(gpu, read_addr);
-		reg->reg = cpu_to_le32(etnaviv_dump_registers[i]);
-		reg->value = cpu_to_le32(gpu_read(gpu, read_addr));
+		reg->reg = etnaviv_dump_registers[i];
+		reg->value = gpu_read(gpu, etnaviv_dump_registers[i]);
 	}
 
 	etnaviv_core_dump_header(iter, ETDUMP_BUF_REG, reg);
@@ -128,8 +123,6 @@ void etnaviv_core_dump(struct etnaviv_gpu *gpu)
 	if (!etnaviv_dump_core)
 		return;
 	etnaviv_dump_core = false;
-
-	mutex_lock(&gpu->mmu->lock);
 
 	mmu_size = etnaviv_iommu_dump_size(gpu->mmu);
 
@@ -170,10 +163,9 @@ void etnaviv_core_dump(struct etnaviv_gpu *gpu)
 	file_size += sizeof(*iter.hdr) * n_obj;
 
 	/* Allocate the file in vmalloc memory, it's likely to be big */
-	iter.start = __vmalloc(file_size, GFP_KERNEL | __GFP_NOWARN |
-			__GFP_NORETRY);
+	iter.start = __vmalloc(file_size, GFP_KERNEL | __GFP_NOWARN | __GFP_NORETRY,
+			       PAGE_KERNEL);
 	if (!iter.start) {
-		mutex_unlock(&gpu->mmu->lock);
 		dev_warn(gpu->dev, "failed to allocate devcoredump file\n");
 		return;
 	}
@@ -222,10 +214,10 @@ void etnaviv_core_dump(struct etnaviv_gpu *gpu)
 		mutex_lock(&obj->lock);
 		pages = etnaviv_gem_get_pages(obj);
 		mutex_unlock(&obj->lock);
-		if (!IS_ERR(pages)) {
+		if (pages) {
 			int j;
 
-			iter.hdr->data[0] = cpu_to_le32((bomap - bomap_start));
+			iter.hdr->data[0] = bomap - bomap_start;
 
 			for (j = 0; j < obj->base.size >> PAGE_SHIFT; j++)
 				*bomap++ = cpu_to_le64(page_to_phys(*pages++));
@@ -240,8 +232,6 @@ void etnaviv_core_dump(struct etnaviv_gpu *gpu)
 		etnaviv_core_dump_header(&iter, ETDUMP_BUF_BO, iter.data +
 					 obj->base.size);
 	}
-
-	mutex_unlock(&gpu->mmu->lock);
 
 	etnaviv_core_dump_header(&iter, ETDUMP_BUF_END, iter.data);
 

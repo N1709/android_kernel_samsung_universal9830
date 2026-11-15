@@ -298,21 +298,6 @@ enum ocfs2_mount_options
 #define OCFS2_OSB_ERROR_FS	0x0004
 #define OCFS2_DEFAULT_ATIME_QUANTUM	60
 
-enum ocfs2_recovery_state {
-	OCFS2_REC_ENABLED = 0,
-	OCFS2_REC_QUOTA_WANT_DISABLE,
-	/*
-	 * Must be OCFS2_REC_QUOTA_WANT_DISABLE + 1 for
-	 * ocfs2_recovery_disable_quota() to work.
-	 */
-	OCFS2_REC_QUOTA_DISABLED,
-	OCFS2_REC_WANT_DISABLE,
-	/*
-	 * Must be OCFS2_REC_WANT_DISABLE + 1 for ocfs2_recovery_exit() to work
-	 */
-	OCFS2_REC_DISABLED,
-};
-
 struct ocfs2_journal;
 struct ocfs2_slot_info;
 struct ocfs2_recovery_map;
@@ -353,8 +338,8 @@ struct ocfs2_super
 	spinlock_t osb_lock;
 	u32 s_next_generation;
 	unsigned long osb_flags;
-	u16 s_inode_steal_slot;
-	u16 s_meta_steal_slot;
+	s16 s_inode_steal_slot;
+	s16 s_meta_steal_slot;
 	atomic_t s_num_inodes_stolen;
 	atomic_t s_num_meta_stolen;
 
@@ -375,7 +360,7 @@ struct ocfs2_super
 	struct ocfs2_recovery_map *recovery_map;
 	struct ocfs2_replay_map *replay_map;
 	struct task_struct *recovery_thread_task;
-	enum ocfs2_recovery_state recovery_state;
+	int disable_recovery;
 	wait_queue_head_t checkpoint_event;
 	struct ocfs2_journal *journal;
 	unsigned long osb_commit_interval;
@@ -421,7 +406,6 @@ struct ocfs2_super
 	struct ocfs2_lock_res osb_super_lockres;
 	struct ocfs2_lock_res osb_rename_lockres;
 	struct ocfs2_lock_res osb_nfs_sync_lockres;
-	struct rw_semaphore nfs_sync_rwlock;
 	struct ocfs2_lock_res osb_trim_fs_lockres;
 	struct ocfs2_dlm_debug *osb_dlm_debug;
 

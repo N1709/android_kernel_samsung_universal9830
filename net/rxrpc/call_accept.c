@@ -26,11 +26,6 @@
 #include <net/ip.h>
 #include "ar-internal.h"
 
-static void rxrpc_dummy_notify(struct sock *sk, struct rxrpc_call *call,
-			       unsigned long user_call_ID)
-{
-}
-
 /*
  * Preallocate a single service call, connection and peer and, if possible,
  * give them a user ID and attach the user's side of the ID to them.
@@ -93,7 +88,7 @@ static int rxrpc_service_prealloc_one(struct rxrpc_sock *rx,
 		smp_store_release(&b->conn_backlog_head,
 				  (head + 1) & (size - 1));
 
-		trace_rxrpc_conn(conn->debug_id, rxrpc_conn_new_service,
+		trace_rxrpc_conn(conn, rxrpc_conn_new_service,
 				 atomic_read(&conn->usage), here);
 	}
 
@@ -211,7 +206,6 @@ void rxrpc_discard_prealloc(struct rxrpc_sock *rx)
 	tail = b->peer_backlog_tail;
 	while (CIRC_CNT(head, tail, size) > 0) {
 		struct rxrpc_peer *peer = b->peer_backlog[tail];
-		rxrpc_put_local(peer->local);
 		kfree(peer);
 		tail = (tail + 1) & (size - 1);
 	}
@@ -238,8 +232,6 @@ void rxrpc_discard_prealloc(struct rxrpc_sock *rx)
 		if (rx->discard_new_call) {
 			_debug("discard %lx", call->user_call_ID);
 			rx->discard_new_call(call, call->user_call_ID);
-			if (call->notify_rx)
-				call->notify_rx = rxrpc_dummy_notify;
 			rxrpc_put_call(call, rxrpc_call_put_kernel);
 		}
 		rxrpc_call_completed(call);
@@ -266,9 +258,6 @@ static struct rxrpc_call *rxrpc_alloc_incoming_call(struct rxrpc_sock *rx,
 	unsigned short call_head, conn_head, peer_head;
 	unsigned short call_tail, conn_tail, peer_tail;
 	unsigned short call_count, conn_count;
-
-	if (!b)
-		return NULL;
 
 	/* #calls >= #conns >= #peers must hold true. */
 	call_head = smp_load_acquire(&b->call_backlog_head);

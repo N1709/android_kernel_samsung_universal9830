@@ -576,29 +576,6 @@ extern int hashdist;		/* Distribute hashes across NUMA nodes? */
 #define hashdist (0)
 #endif
 
-/*
- * Samsung memory-size accounting.  Implemented in mm/memblock.c.
- */
-enum memsize_kernel_type {
-	MEMSIZE_KERNEL_KERNEL = 0,
-	MEMSIZE_KERNEL_PAGING,
-	MEMSIZE_KERNEL_LOGBUF,
-	MEMSIZE_KERNEL_PIDHASH,
-	MEMSIZE_KERNEL_VFSHASH,
-	MEMSIZE_KERNEL_MM_INIT,
-	MEMSIZE_KERNEL_OTHERS,
-	MEMSIZE_KERNEL_STOP,
-};
-
-void set_memsize_kernel_type(enum memsize_kernel_type type);
-void set_memsize_reserved_name(const char *name);
-void unset_memsize_reserved_name(void);
-void free_memsize_reserved(phys_addr_t free_base, phys_addr_t free_size);
-void record_memsize_size_only(enum memsize_kernel_type type, long size);
-void record_memsize_reserved(const char *name, phys_addr_t base,
-			     phys_addr_t size, bool nomap, bool reusable);
-void record_memsize_memory_hole(void);
-
 #ifdef CONFIG_MEMTEST
 extern void early_memtest(phys_addr_t start, phys_addr_t end);
 #else

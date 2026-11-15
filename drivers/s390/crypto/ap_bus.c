@@ -248,8 +248,7 @@ static inline int ap_test_config(unsigned int *field, unsigned int nr)
 static inline int ap_test_config_card_id(unsigned int id)
 {
 	if (!ap_configuration)	/* QCI not supported */
-		/* only ids 0...3F may be probed */
-		return id < 0x40 ? 1 : 0;
+		return 1;
 	return ap_test_config(ap_configuration->apm, id);
 }
 
@@ -915,7 +914,7 @@ static int hex2bitmap(const char *str, unsigned long *bitmap, int bits)
  */
 static int modify_bitmap(const char *str, unsigned long *bitmap, int bits)
 {
-	unsigned long a, i, z;
+	int a, i, z;
 	char *np, sign;
 
 	/* bits needs to be a multiple of 8 */

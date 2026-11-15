@@ -71,7 +71,6 @@
  * Cannon Lake-LP (PCH)		0x9da3	32	hard	yes	yes	yes
  * Cedar Fork (PCH)		0x18df	32	hard	yes	yes	yes
  * Ice Lake-LP (PCH)		0x34a3	32	hard	yes	yes	yes
- * Comet Lake (PCH)		0x02a3	32	hard	yes	yes	yes
  *
  * Features supported by this driver:
  * Software PEC				no
@@ -241,7 +240,6 @@
 #define PCI_DEVICE_ID_INTEL_LEWISBURG_SSKU_SMBUS	0xa223
 #define PCI_DEVICE_ID_INTEL_KABYLAKE_PCH_H_SMBUS	0xa2a3
 #define PCI_DEVICE_ID_INTEL_CANNONLAKE_H_SMBUS		0xa323
-#define PCI_DEVICE_ID_INTEL_COMETLAKE_SMBUS		0x02a3
 
 struct i801_mux_config {
 	char *gpio_chip;
@@ -384,9 +382,11 @@ static int i801_check_post(struct i801_priv *priv, int status)
 		dev_err(&priv->pci_dev->dev, "Transaction timeout\n");
 		/* try to stop the current command */
 		dev_dbg(&priv->pci_dev->dev, "Terminating the current operation\n");
-		outb_p(SMBHSTCNT_KILL, SMBHSTCNT(priv));
+		outb_p(inb_p(SMBHSTCNT(priv)) | SMBHSTCNT_KILL,
+		       SMBHSTCNT(priv));
 		usleep_range(1000, 2000);
-		outb_p(0, SMBHSTCNT(priv));
+		outb_p(inb_p(SMBHSTCNT(priv)) & (~SMBHSTCNT_KILL),
+		       SMBHSTCNT(priv));
 
 		/* Check if it worked */
 		status = inb_p(SMBHSTSTS(priv));
@@ -712,11 +712,15 @@ static int i801_block_transaction_byte_by_byte(struct i801_priv *priv,
 		return i801_check_post(priv, status);
 	}
 
-	if (len == 1 && read_write == I2C_SMBUS_READ)
-		smbcmd |= SMBHSTCNT_LAST_BYTE;
-	outb_p(smbcmd | SMBHSTCNT_START, SMBHSTCNT(priv));
-
 	for (i = 1; i <= len; i++) {
+		if (i == len && read_write == I2C_SMBUS_READ)
+			smbcmd |= SMBHSTCNT_LAST_BYTE;
+		outb_p(smbcmd, SMBHSTCNT(priv));
+
+		if (i == 1)
+			outb_p(inb(SMBHSTCNT(priv)) | SMBHSTCNT_START,
+			       SMBHSTCNT(priv));
+
 		status = i801_wait_byte_done(priv);
 		if (status)
 			goto exit;
@@ -739,12 +743,9 @@ static int i801_block_transaction_byte_by_byte(struct i801_priv *priv,
 			data->block[0] = len;
 		}
 
-		if (read_write == I2C_SMBUS_READ) {
+		/* Retrieve/store value in SMBBLKDAT */
+		if (read_write == I2C_SMBUS_READ)
 			data->block[i] = inb_p(SMBBLKDAT(priv));
-			if (i == len - 1)
-				outb_p(smbcmd | SMBHSTCNT_LAST_BYTE, SMBHSTCNT(priv));
-		}
-
 		if (read_write == I2C_SMBUS_WRITE && i+1 <= len)
 			outb_p(data->block[i+1], SMBBLKDAT(priv));
 
@@ -773,11 +774,6 @@ static int i801_block_transaction(struct i801_priv *priv,
 	int result = 0;
 	unsigned char hostc;
 
-	if (read_write == I2C_SMBUS_READ && command == I2C_SMBUS_BLOCK_DATA)
-		data->block[0] = I2C_SMBUS_BLOCK_MAX;
-	else if (data->block[0] < 1 || data->block[0] > I2C_SMBUS_BLOCK_MAX)
-		return -EPROTO;
-
 	if (command == I2C_SMBUS_I2C_BLOCK_DATA) {
 		if (read_write == I2C_SMBUS_WRITE) {
 			/* set I2C_EN bit in configuration register */
@@ -789,6 +785,16 @@ static int i801_block_transaction(struct i801_priv *priv,
 				"I2C block read is unsupported!\n");
 			return -EOPNOTSUPP;
 		}
+	}
+
+	if (read_write == I2C_SMBUS_WRITE
+	 || command == I2C_SMBUS_I2C_BLOCK_DATA) {
+		if (data->block[0] < 1)
+			data->block[0] = 1;
+		if (data->block[0] > I2C_SMBUS_BLOCK_MAX)
+			data->block[0] = I2C_SMBUS_BLOCK_MAX;
+	} else {
+		data->block[0] = 32;	/* max for SMBus block reads */
 	}
 
 	/* Experience has shown that the block buffer can only be used for
@@ -1032,14 +1038,13 @@ static const struct pci_device_id i801_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_CANNONLAKE_H_SMBUS) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_CANNONLAKE_LP_SMBUS) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ICELAKE_LP_SMBUS) },
-	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_COMETLAKE_SMBUS) },
 	{ 0, }
 };
 
 MODULE_DEVICE_TABLE(pci, i801_ids);
 
 #if defined CONFIG_X86 && defined CONFIG_DMI
-static unsigned char apanel_addr __ro_after_init;
+static unsigned char apanel_addr;
 
 /* Scan the system ROM for the signature "FJKEYINF" */
 static __init const void __iomem *bios_signature(const void __iomem *bios)
@@ -1498,16 +1503,6 @@ static inline int i801_acpi_probe(struct i801_priv *priv) { return 0; }
 static inline void i801_acpi_remove(struct i801_priv *priv) { }
 #endif
 
-static unsigned char i801_setup_hstcfg(struct i801_priv *priv)
-{
-	unsigned char hstcfg = priv->original_hstcfg;
-
-	hstcfg &= ~SMBHSTCFG_I2C_EN;	/* SMBus timing */
-	hstcfg |= SMBHSTCFG_HST_EN;
-	pci_write_config_byte(priv->pci_dev, SMBHSTCFG, hstcfg);
-	return hstcfg;
-}
-
 static int i801_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	unsigned char temp;
@@ -1539,7 +1534,6 @@ static int i801_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	case PCI_DEVICE_ID_INTEL_DNV_SMBUS:
 	case PCI_DEVICE_ID_INTEL_KABYLAKE_PCH_H_SMBUS:
 	case PCI_DEVICE_ID_INTEL_ICELAKE_LP_SMBUS:
-	case PCI_DEVICE_ID_INTEL_COMETLAKE_SMBUS:
 		priv->features |= FEATURE_I2C_BLOCK_READ;
 		priv->features |= FEATURE_IRQ;
 		priv->features |= FEATURE_SMBUS_PEC;
@@ -1613,10 +1607,14 @@ static int i801_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		return err;
 	}
 
-	pci_read_config_byte(priv->pci_dev, SMBHSTCFG, &priv->original_hstcfg);
-	temp = i801_setup_hstcfg(priv);
-	if (!(priv->original_hstcfg & SMBHSTCFG_HST_EN))
+	pci_read_config_byte(priv->pci_dev, SMBHSTCFG, &temp);
+	priv->original_hstcfg = temp;
+	temp &= ~SMBHSTCFG_I2C_EN;	/* SMBus timing */
+	if (!(temp & SMBHSTCFG_HST_EN)) {
 		dev_info(&dev->dev, "Enabling SMBus device\n");
+		temp |= SMBHSTCFG_HST_EN;
+	}
+	pci_write_config_byte(priv->pci_dev, SMBHSTCFG, temp);
 
 	if (temp & SMBHSTCFG_SMB_SMI_EN) {
 		dev_dbg(&dev->dev, "SMBus using interrupt SMI#\n");
@@ -1674,18 +1672,10 @@ static int i801_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	i801_add_tco(priv);
 
-	/*
-	 * adapter.name is used by platform code to find the main I801 adapter
-	 * to instantiante i2c_clients, do not change.
-	 */
 	snprintf(priv->adapter.name, sizeof(priv->adapter.name),
-		 "SMBus %s adapter at %04lx",
-		 (priv->features & FEATURE_IDF) ? "I801 IDF" : "I801",
-		 priv->smba);
-
+		"SMBus I801 adapter at %04lx", priv->smba);
 	err = i2c_add_adapter(&priv->adapter);
 	if (err) {
-		platform_device_unregister(priv->tco_pdev);
 		i801_acpi_remove(priv);
 		return err;
 	}
@@ -1698,7 +1688,6 @@ static int i801_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	pci_set_drvdata(dev, priv);
 
-	dev_pm_set_driver_flags(&dev->dev, DPM_FLAG_NEVER_SKIP);
 	pm_runtime_set_autosuspend_delay(&dev->dev, 1000);
 	pm_runtime_use_autosuspend(&dev->dev);
 	pm_runtime_put_autosuspend(&dev->dev);
@@ -1752,7 +1741,6 @@ static int i801_resume(struct device *dev)
 	struct pci_dev *pci_dev = to_pci_dev(dev);
 	struct i801_priv *priv = pci_get_drvdata(pci_dev);
 
-	i801_setup_hstcfg(priv);
 	i801_enable_host_notify(&priv->adapter);
 
 	return 0;

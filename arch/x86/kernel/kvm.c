@@ -457,7 +457,6 @@ static void __send_ipi_mask(const struct cpumask *mask, int vector)
 #else
 	u64 ipi_bitmap = 0;
 #endif
-	long ret;
 
 	if (cpumask_empty(mask))
 		return;
@@ -480,12 +479,11 @@ static void __send_ipi_mask(const struct cpumask *mask, int vector)
 		} else if (apic_id < min && max - apic_id < KVM_IPI_CLUSTER_SIZE) {
 			ipi_bitmap <<= min - apic_id;
 			min = apic_id;
-		} else if (apic_id > min && apic_id < min + KVM_IPI_CLUSTER_SIZE) {
+		} else if (apic_id < min + KVM_IPI_CLUSTER_SIZE) {
 			max = apic_id < max ? max : apic_id;
 		} else {
-			ret = kvm_hypercall4(KVM_HC_SEND_IPI, (unsigned long)ipi_bitmap,
+			kvm_hypercall4(KVM_HC_SEND_IPI, (unsigned long)ipi_bitmap,
 				(unsigned long)(ipi_bitmap >> BITS_PER_LONG), min, icr);
-			WARN_ONCE(ret < 0, "KVM: failed to send PV IPI: %ld", ret);
 			min = max = apic_id;
 			ipi_bitmap = 0;
 		}
@@ -493,9 +491,8 @@ static void __send_ipi_mask(const struct cpumask *mask, int vector)
 	}
 
 	if (ipi_bitmap) {
-		ret = kvm_hypercall4(KVM_HC_SEND_IPI, (unsigned long)ipi_bitmap,
+		kvm_hypercall4(KVM_HC_SEND_IPI, (unsigned long)ipi_bitmap,
 			(unsigned long)(ipi_bitmap >> BITS_PER_LONG), min, icr);
-		WARN_ONCE(ret < 0, "KVM: failed to send PV IPI: %ld", ret);
 	}
 
 	local_irq_restore(flags);
@@ -830,7 +827,6 @@ asm(
 "cmpb	$0, " __stringify(KVM_STEAL_TIME_preempted) "+steal_time(%rax);"
 "setne	%al;"
 "ret;"
-".size __raw_callee_save___kvm_vcpu_is_preempted, .-__raw_callee_save___kvm_vcpu_is_preempted;"
 ".popsection");
 
 #endif

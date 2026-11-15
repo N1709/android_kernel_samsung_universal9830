@@ -105,7 +105,6 @@ struct mv88e6xxx_info {
 	u16 prod_num;
 	const char *name;
 	unsigned int num_databases;
-	unsigned int num_macs;
 	unsigned int num_ports;
 	unsigned int num_internal_phys;
 	unsigned int num_gpio;
@@ -301,11 +300,6 @@ struct mv88e6xxx_mdio_bus {
 };
 
 struct mv88e6xxx_ops {
-	/* Switch Setup Errata, called early in the switch setup to
-	 * allow any errata actions to be performed
-	 */
-	int (*setup_errata)(struct mv88e6xxx_chip *chip);
-
 	int (*ieee_pri_map)(struct mv88e6xxx_chip *chip);
 	int (*ip_pri_map)(struct mv88e6xxx_chip *chip);
 
@@ -558,11 +552,6 @@ static inline bool mv88e6xxx_has_pvt(struct mv88e6xxx_chip *chip)
 static inline unsigned int mv88e6xxx_num_databases(struct mv88e6xxx_chip *chip)
 {
 	return chip->info->num_databases;
-}
-
-static inline unsigned int mv88e6xxx_num_macs(struct  mv88e6xxx_chip *chip)
-{
-	return chip->info->num_macs;
 }
 
 static inline unsigned int mv88e6xxx_num_ports(struct mv88e6xxx_chip *chip)

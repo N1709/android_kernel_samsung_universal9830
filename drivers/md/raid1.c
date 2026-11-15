@@ -434,23 +434,19 @@ static void raid1_end_write_request(struct bio *bio)
 		    /* We never try FailFast to WriteMostly devices */
 		    !test_bit(WriteMostly, &rdev->flags)) {
 			md_error(r1_bio->mddev, rdev);
-		}
-
-		/*
-		 * When the device is faulty, it is not necessary to
-		 * handle write error.
-		 * For failfast, this is the only remaining device,
-		 * We need to retry the write without FailFast.
-		 */
-		if (!test_bit(Faulty, &rdev->flags))
+			if (!test_bit(Faulty, &rdev->flags))
+				/* This is the only remaining device,
+				 * We need to retry the write without
+				 * FailFast
+				 */
+				set_bit(R1BIO_WriteError, &r1_bio->state);
+			else {
+				/* Finished with this branch */
+				r1_bio->bios[mirror] = NULL;
+				to_put = bio;
+			}
+		} else
 			set_bit(R1BIO_WriteError, &r1_bio->state);
-		else {
-			/* Fail the request */
-			set_bit(R1BIO_Degraded, &r1_bio->state);
-			/* Finished with this branch */
-			r1_bio->bios[mirror] = NULL;
-			to_put = bio;
-		}
 	} else {
 		/*
 		 * Set R1BIO_Uptodate in our master bio, so that we
@@ -1539,9 +1535,10 @@ static bool raid1_make_request(struct mddev *mddev, struct bio *bio)
 {
 	sector_t sectors;
 
-	if (unlikely(bio->bi_opf & REQ_PREFLUSH)
-	    && md_flush_request(mddev, bio))
+	if (unlikely(bio->bi_opf & REQ_PREFLUSH)) {
+		md_flush_request(mddev, bio);
 		return true;
+	}
 
 	/*
 	 * There is a limit to the maximum size, but
@@ -1785,9 +1782,6 @@ static int raid1_remove_disk(struct mddev *mddev, struct md_rdev *rdev)
 	int number = rdev->raid_disk;
 	struct raid1_info *p = conf->mirrors + number;
 
-	if (unlikely(number >= conf->raid_disks))
-		goto abort;
-
 	if (rdev != p->rdev)
 		p = conf->mirrors + conf->raid_disks + number;
 
@@ -1869,20 +1863,6 @@ static void end_sync_read(struct bio *bio)
 		reschedule_retry(r1_bio);
 }
 
-static void abort_sync_write(struct mddev *mddev, struct r1bio *r1_bio)
-{
-	sector_t sync_blocks = 0;
-	sector_t s = r1_bio->sector;
-	long sectors_to_go = r1_bio->sectors;
-
-	/* make sure these bits don't get cleared. */
-	do {
-		md_bitmap_end_sync(mddev->bitmap, s, &sync_blocks, 1);
-		s += sync_blocks;
-		sectors_to_go -= sync_blocks;
-	} while (sectors_to_go > 0);
-}
-
 static void end_sync_write(struct bio *bio)
 {
 	int uptodate = !bio->bi_status;
@@ -1894,7 +1874,15 @@ static void end_sync_write(struct bio *bio)
 	struct md_rdev *rdev = conf->mirrors[find_bio_disk(r1_bio, bio)].rdev;
 
 	if (!uptodate) {
-		abort_sync_write(mddev, r1_bio);
+		sector_t sync_blocks = 0;
+		sector_t s = r1_bio->sector;
+		long sectors_to_go = r1_bio->sectors;
+		/* make sure these bits doesn't get cleared. */
+		do {
+			md_bitmap_end_sync(mddev->bitmap, s, &sync_blocks, 1);
+			s += sync_blocks;
+			sectors_to_go -= sync_blocks;
+		} while (sectors_to_go > 0);
 		set_bit(WriteErrorSeen, &rdev->flags);
 		if (!test_and_set_bit(WantReplacement, &rdev->flags))
 			set_bit(MD_RECOVERY_NEEDED, &
@@ -2184,10 +2172,8 @@ static void sync_request_write(struct mddev *mddev, struct r1bio *r1_bio)
 		     (i == r1_bio->read_disk ||
 		      !test_bit(MD_RECOVERY_SYNC, &mddev->recovery))))
 			continue;
-		if (test_bit(Faulty, &conf->mirrors[i].rdev->flags)) {
-			abort_sync_write(mddev, r1_bio);
+		if (test_bit(Faulty, &conf->mirrors[i].rdev->flags))
 			continue;
-		}
 
 		bio_set_op_attrs(wbio, REQ_OP_WRITE, 0);
 		if (test_bit(FailFast, &conf->mirrors[i].rdev->flags))
@@ -2761,7 +2747,7 @@ static sector_t raid1_sync_request(struct mddev *mddev, sector_t sector_nr,
 				write_targets++;
 			}
 		}
-		if (rdev && bio->bi_end_io) {
+		if (bio->bi_end_io) {
 			atomic_inc(&rdev->nr_pending);
 			bio->bi_iter.bi_sector = sector_nr + rdev->data_offset;
 			bio_set_dev(bio, rdev->bdev);
@@ -3109,14 +3095,6 @@ static int raid1_run(struct mddev *mddev)
 		    !test_bit(In_sync, &conf->mirrors[i].rdev->flags) ||
 		    test_bit(Faulty, &conf->mirrors[i].rdev->flags))
 			mddev->degraded++;
-	/*
-	 * RAID1 needs at least one disk in active
-	 */
-	if (conf->raid_disks - mddev->degraded < 1) {
-		md_unregister_thread(&conf->thread);
-		ret = -EINVAL;
-		goto abort;
-	}
 
 	if (conf->raid_disks - mddev->degraded == 1)
 		mddev->recovery_cp = MaxSector;
@@ -3150,12 +3128,8 @@ static int raid1_run(struct mddev *mddev)
 	ret =  md_integrity_register(mddev);
 	if (ret) {
 		md_unregister_thread(&mddev->thread);
-		goto abort;
+		raid1_free(mddev, conf);
 	}
-	return 0;
-
-abort:
-	raid1_free(mddev, conf);
 	return ret;
 }
 
@@ -3279,7 +3253,6 @@ static int raid1_reshape(struct mddev *mddev)
 	/* ok, everything is stopped */
 	oldpool = conf->r1bio_pool;
 	conf->r1bio_pool = newpool;
-	init_waitqueue_head(&conf->r1bio_pool.wait);
 
 	for (d = d2 = 0; d < conf->raid_disks; d++) {
 		struct md_rdev *rdev = conf->mirrors[d].rdev;

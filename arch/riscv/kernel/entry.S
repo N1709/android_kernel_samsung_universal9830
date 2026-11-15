@@ -170,13 +170,9 @@ ENTRY(handle_exception)
 	move a0, sp /* pt_regs */
 	tail do_IRQ
 1:
-	/* Exceptions run with interrupts enabled or disabled
-	   depending on the state of sstatus.SR_SPIE */
-	andi t0, s1, SR_SPIE
-	beqz t0, 1f
+	/* Exceptions run with interrupts enabled */
 	csrs sstatus, SR_SIE
 
-1:
 	/* Handle syscalls */
 	li t0, EXC_SYSCALL
 	beq s4, t0, handle_syscall
@@ -361,7 +357,6 @@ ENTRY(__switch_to)
 ENDPROC(__switch_to)
 
 	.section ".rodata"
-	.align LGREG
 	/* Exception vector table */
 ENTRY(excp_vect_table)
 	RISCV_PTR do_trap_insn_misaligned

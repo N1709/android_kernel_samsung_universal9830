@@ -137,10 +137,10 @@ static bool acpi_nondev_subnode_ok(acpi_handle scope,
 	return acpi_nondev_subnode_data_ok(handle, link, list, parent);
 }
 
-static bool acpi_add_nondev_subnodes(acpi_handle scope,
-				     const union acpi_object *links,
-				     struct list_head *list,
-				     struct fwnode_handle *parent)
+static int acpi_add_nondev_subnodes(acpi_handle scope,
+				    const union acpi_object *links,
+				    struct list_head *list,
+				    struct fwnode_handle *parent)
 {
 	bool ret = false;
 	int i;
@@ -611,7 +611,6 @@ acpi_fwnode_get_named_child_node(const struct fwnode_handle *fwnode,
  * @index: Index of the reference to return
  * @num_args: Maximum number of arguments after each reference
  * @args: Location to store the returned reference with optional arguments
- *	  (may be NULL)
  *
  * Find property with @name, verifify that it is a package containing at least
  * one object reference and if so, store the ACPI device object pointer to the
@@ -664,14 +663,11 @@ int __acpi_node_get_property_reference(const struct fwnode_handle *fwnode,
 	 */
 	if (obj->type == ACPI_TYPE_LOCAL_REFERENCE) {
 		if (index)
-			return -ENOENT;
+			return -EINVAL;
 
 		ret = acpi_bus_get_device(obj->reference.handle, &device);
 		if (ret)
 			return ret == -ENODEV ? -EINVAL : ret;
-
-		if (!args)
-			return 0;
 
 		args->fwnode = acpi_fwnode_handle(device);
 		args->nargs = 0;
@@ -769,6 +765,9 @@ static int acpi_data_prop_read_single(const struct acpi_device_data *data,
 	const union acpi_object *obj;
 	int ret;
 
+	if (!val)
+		return -EINVAL;
+
 	if (proptype >= DEV_PROP_U8 && proptype <= DEV_PROP_U64) {
 		ret = acpi_data_get_property(data, propname, ACPI_TYPE_INTEGER, &obj);
 		if (ret)
@@ -778,43 +777,28 @@ static int acpi_data_prop_read_single(const struct acpi_device_data *data,
 		case DEV_PROP_U8:
 			if (obj->integer.value > U8_MAX)
 				return -EOVERFLOW;
-
-			if (val)
-				*(u8 *)val = obj->integer.value;
-
+			*(u8 *)val = obj->integer.value;
 			break;
 		case DEV_PROP_U16:
 			if (obj->integer.value > U16_MAX)
 				return -EOVERFLOW;
-
-			if (val)
-				*(u16 *)val = obj->integer.value;
-
+			*(u16 *)val = obj->integer.value;
 			break;
 		case DEV_PROP_U32:
 			if (obj->integer.value > U32_MAX)
 				return -EOVERFLOW;
-
-			if (val)
-				*(u32 *)val = obj->integer.value;
-
+			*(u32 *)val = obj->integer.value;
 			break;
 		default:
-			if (val)
-				*(u64 *)val = obj->integer.value;
-
+			*(u64 *)val = obj->integer.value;
 			break;
 		}
-
-		if (!val)
-			return 1;
 	} else if (proptype == DEV_PROP_STRING) {
 		ret = acpi_data_get_property(data, propname, ACPI_TYPE_STRING, &obj);
 		if (ret)
 			return ret;
 
-		if (val)
-			*(char **)val = obj->string.pointer;
+		*(char **)val = obj->string.pointer;
 
 		return 1;
 	} else {
@@ -828,7 +812,7 @@ int acpi_dev_prop_read_single(struct acpi_device *adev, const char *propname,
 {
 	int ret;
 
-	if (!adev || !val)
+	if (!adev)
 		return -EINVAL;
 
 	ret = acpi_data_prop_read_single(&adev->data, propname, proptype, val);
@@ -922,20 +906,10 @@ static int acpi_data_prop_read(const struct acpi_device_data *data,
 	const union acpi_object *items;
 	int ret;
 
-	if (nval == 1 || !val) {
+	if (val && nval == 1) {
 		ret = acpi_data_prop_read_single(data, propname, proptype, val);
-		/*
-		 * The overflow error means that the property is there and it is
-		 * single-value, but its type does not match, so return.
-		 */
-		if (ret >= 0 || ret == -EOVERFLOW)
+		if (ret >= 0)
 			return ret;
-
-		/*
-		 * Reading this property as a single-value one failed, but its
-		 * value may still be represented as one-element array, so
-		 * continue.
-		 */
 	}
 
 	ret = acpi_data_get_property_array(data, propname, ACPI_TYPE_ANY, &obj);
@@ -1046,14 +1020,6 @@ struct fwnode_handle *acpi_get_next_subnode(const struct fwnode_handle *fwnode,
 		const struct acpi_data_node *data = to_acpi_data_node(fwnode);
 		struct acpi_data_node *dn;
 
-		/*
-		 * We can have a combination of device and data nodes, e.g. with
-		 * hierarchical _DSD properties. Make sure the adev pointer is
-		 * restored before going through data nodes, otherwise we will
-		 * be looking for data_nodes below the last device found instead
-		 * of the common fwnode shared by device_nodes and data_nodes.
-		 */
-		adev = to_acpi_device_node(fwnode);
 		if (adev)
 			head = &adev->data.subnodes;
 		else if (data)

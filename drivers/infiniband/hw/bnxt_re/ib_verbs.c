@@ -151,7 +151,7 @@ int bnxt_re_query_device(struct ib_device *ibdev,
 
 	ib_attr->vendor_id = rdev->en_dev->pdev->vendor;
 	ib_attr->vendor_part_id = rdev->en_dev->pdev->device;
-	ib_attr->hw_ver = rdev->en_dev->pdev->revision;
+	ib_attr->hw_ver = rdev->en_dev->pdev->subsystem_device;
 	ib_attr->max_qp = dev_attr->max_qp;
 	ib_attr->max_qp_wr = dev_attr->max_qp_wqes;
 	ib_attr->device_cap_flags =
@@ -1446,7 +1446,7 @@ struct ib_srq *bnxt_re_create_srq(struct ib_pd *ib_pd,
 			dev_err(rdev_to_dev(rdev), "SRQ copy to udata failed!");
 			bnxt_qplib_destroy_srq(&rdev->qplib_res,
 					       &srq->qplib_srq);
-			goto fail;
+			goto exit;
 		}
 	}
 	if (nq)
@@ -1475,7 +1475,7 @@ int bnxt_re_modify_srq(struct ib_srq *ib_srq, struct ib_srq_attr *srq_attr,
 	switch (srq_attr_mask) {
 	case IB_SRQ_MAX_WR:
 		/* SRQ resize is not supported */
-		return -EINVAL;
+		break;
 	case IB_SRQ_LIMIT:
 		/* Change the SRQ threshold */
 		if (srq_attr->srq_limit > srq->qplib_srq.max_wqe)
@@ -1490,12 +1490,13 @@ int bnxt_re_modify_srq(struct ib_srq *ib_srq, struct ib_srq_attr *srq_attr,
 		/* On success, update the shadow */
 		srq->srq_limit = srq_attr->srq_limit;
 		/* No need to Build and send response back to udata */
-		return 0;
+		break;
 	default:
 		dev_err(rdev_to_dev(rdev),
 			"Unsupported srq_attr_mask 0x%x", srq_attr_mask);
 		return -EINVAL;
 	}
+	return 0;
 }
 
 int bnxt_re_query_srq(struct ib_srq *ib_srq, struct ib_srq_attr *srq_attr)
@@ -1698,20 +1699,18 @@ int bnxt_re_modify_qp(struct ib_qp *ib_qp, struct ib_qp_attr *qp_attr,
 		}
 	}
 
-	if (qp_attr->qp_state == IB_QPS_RTR) {
-		enum ib_mtu qpmtu;
-
-		qpmtu = iboe_get_mtu(rdev->netdev->mtu);
-		if (qp_attr_mask & IB_QP_PATH_MTU) {
-			if (ib_mtu_enum_to_int(qp_attr->path_mtu) >
-			    ib_mtu_enum_to_int(qpmtu))
-				return -EINVAL;
-			qpmtu = qp_attr->path_mtu;
-		}
-
-		qp->qplib_qp.modify_flags |= CMDQ_MODIFY_QP_MODIFY_MASK_PATH_MTU;
-		qp->qplib_qp.path_mtu = __from_ib_mtu(qpmtu);
-		qp->qplib_qp.mtu = ib_mtu_enum_to_int(qpmtu);
+	if (qp_attr_mask & IB_QP_PATH_MTU) {
+		qp->qplib_qp.modify_flags |=
+				CMDQ_MODIFY_QP_MODIFY_MASK_PATH_MTU;
+		qp->qplib_qp.path_mtu = __from_ib_mtu(qp_attr->path_mtu);
+		qp->qplib_qp.mtu = ib_mtu_enum_to_int(qp_attr->path_mtu);
+	} else if (qp_attr->qp_state == IB_QPS_RTR) {
+		qp->qplib_qp.modify_flags |=
+			CMDQ_MODIFY_QP_MODIFY_MASK_PATH_MTU;
+		qp->qplib_qp.path_mtu =
+			__from_ib_mtu(iboe_get_mtu(rdev->netdev->mtu));
+		qp->qplib_qp.mtu =
+			ib_mtu_enum_to_int(iboe_get_mtu(rdev->netdev->mtu));
 	}
 
 	if (qp_attr_mask & IB_QP_TIMEOUT) {
@@ -1838,7 +1837,6 @@ int bnxt_re_query_qp(struct ib_qp *ib_qp, struct ib_qp_attr *qp_attr,
 		goto out;
 	}
 	qp_attr->qp_state = __to_ib_qp_state(qplib_qp->state);
-	qp_attr->cur_qp_state = __to_ib_qp_state(qplib_qp->cur_qp_state);
 	qp_attr->en_sqd_async_notify = qplib_qp->en_sqd_async_notify ? 1 : 0;
 	qp_attr->qp_access_flags = __to_ib_access_flags(qplib_qp->access);
 	qp_attr->pkey_index = qplib_qp->pkey_index;
@@ -2113,7 +2111,7 @@ static int bnxt_re_build_send_wqe(struct bnxt_re_qp *qp,
 		break;
 	case IB_WR_SEND_WITH_IMM:
 		wqe->type = BNXT_QPLIB_SWQE_TYPE_SEND_WITH_IMM;
-		wqe->send.imm_data = be32_to_cpu(wr->ex.imm_data);
+		wqe->send.imm_data = wr->ex.imm_data;
 		break;
 	case IB_WR_SEND_WITH_INV:
 		wqe->type = BNXT_QPLIB_SWQE_TYPE_SEND_WITH_INV;
@@ -2143,7 +2141,7 @@ static int bnxt_re_build_rdma_wqe(const struct ib_send_wr *wr,
 		break;
 	case IB_WR_RDMA_WRITE_WITH_IMM:
 		wqe->type = BNXT_QPLIB_SWQE_TYPE_RDMA_WRITE_WITH_IMM;
-		wqe->rdma.imm_data = be32_to_cpu(wr->ex.imm_data);
+		wqe->rdma.imm_data = wr->ex.imm_data;
 		break;
 	case IB_WR_RDMA_READ:
 		wqe->type = BNXT_QPLIB_SWQE_TYPE_RDMA_READ;
@@ -3034,19 +3032,6 @@ static void bnxt_re_process_res_rawqp1_wc(struct ib_wc *wc,
 	wc->wc_flags |= IB_WC_GRH;
 }
 
-static bool bnxt_re_check_if_vlan_valid(struct bnxt_re_dev *rdev,
-					u16 vlan_id)
-{
-	/*
-	 * Check if the vlan is configured in the host.  If not configured, it
-	 * can be a transparent VLAN. So dont report the vlan id.
-	 */
-	if (!__vlan_find_dev_deep_rcu(rdev->netdev,
-				      htons(ETH_P_8021Q), vlan_id))
-		return false;
-	return true;
-}
-
 static bool bnxt_re_is_vlan_pkt(struct bnxt_qplib_cqe *orig_cqe,
 				u16 *vid, u8 *sl)
 {
@@ -3111,15 +3096,13 @@ static void bnxt_re_process_res_shadow_qp_wc(struct bnxt_re_qp *qp,
 	wc->byte_len = orig_cqe->length;
 	wc->qp = &qp1_qp->ib_qp;
 
-	wc->ex.imm_data = cpu_to_be32(orig_cqe->immdata);
+	wc->ex.imm_data = orig_cqe->immdata;
 	wc->src_qp = orig_cqe->src_qp;
 	memcpy(wc->smac, orig_cqe->smac, ETH_ALEN);
 	if (bnxt_re_is_vlan_pkt(orig_cqe, &vlan_id, &sl)) {
-		if (bnxt_re_check_if_vlan_valid(rdev, vlan_id)) {
-			wc->vlan_id = vlan_id;
-			wc->sl = sl;
-			wc->wc_flags |= IB_WC_WITH_VLAN;
-		}
+		wc->vlan_id = vlan_id;
+		wc->sl = sl;
+		wc->wc_flags |= IB_WC_WITH_VLAN;
 	}
 	wc->port_num = 1;
 	wc->vendor_err = orig_cqe->status;
@@ -3232,10 +3215,7 @@ int bnxt_re_poll_cq(struct ib_cq *ib_cq, int num_entries, struct ib_wc *wc)
 				continue;
 			}
 			wc->qp = &qp->ib_qp;
-			if (cqe->flags & CQ_RES_RC_FLAGS_IMM)
-				wc->ex.imm_data = cpu_to_be32(cqe->immdata);
-			else
-				wc->ex.invalidate_rkey = cqe->invrkey;
+			wc->ex.imm_data = cqe->immdata;
 			wc->src_qp = cqe->src_qp;
 			memcpy(wc->smac, cqe->smac, ETH_ALEN);
 			wc->port_num = 1;
@@ -3388,10 +3368,8 @@ int bnxt_re_dereg_mr(struct ib_mr *ib_mr)
 	int rc;
 
 	rc = bnxt_qplib_free_mrw(&rdev->qplib_res, &mr->qplib_mr);
-	if (rc) {
+	if (rc)
 		dev_err(rdev_to_dev(rdev), "Dereg MR failed: %#x\n", rc);
-		return rc;
-	}
 
 	if (mr->pages) {
 		rc = bnxt_qplib_free_fast_reg_page_list(&rdev->qplib_res,

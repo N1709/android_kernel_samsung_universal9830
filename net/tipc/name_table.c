@@ -812,7 +812,7 @@ static int __tipc_nl_add_nametable_publ(struct tipc_nl_msg *msg,
 		list_for_each_entry(p, &sr->all_publ, all_publ)
 			if (p->key == *last_key)
 				break;
-		if (list_entry_is_head(p, &sr->all_publ, all_publ))
+		if (p->key != *last_key)
 			return -EPIPE;
 	} else {
 		p = list_first_entry(&sr->all_publ,
@@ -909,8 +909,7 @@ static int tipc_nl_service_list(struct net *net, struct tipc_nl_msg *msg,
 	for (; i < TIPC_NAMETBL_SIZE; i++) {
 		head = &tn->nametbl->services[i];
 
-		if (*last_type ||
-		    (!i && *last_key && (*last_lower == *last_key))) {
+		if (*last_type) {
 			service = tipc_service_find(net, *last_type);
 			if (!service)
 				return -EPIPE;

@@ -148,17 +148,19 @@ static void ip_cmsg_recv_security(struct msghdr *msg, struct sk_buff *skb)
 
 static void ip_cmsg_recv_dstaddr(struct msghdr *msg, struct sk_buff *skb)
 {
-	__be16 _ports[2], *ports;
 	struct sockaddr_in sin;
+	__be16 *ports;
+	int end;
+
+	end = skb_transport_offset(skb) + 4;
+	if (end > 0 && !pskb_may_pull(skb, end))
+		return;
 
 	/* All current transport protocols have the port numbers in the
 	 * first four bytes of the transport header and this function is
 	 * written with this assumption in mind.
 	 */
-	ports = skb_header_pointer(skb, skb_transport_offset(skb),
-				   sizeof(_ports), &_ports);
-	if (!ports)
-		return;
+	ports = (__be16 *)skb_transport_header(skb);
 
 	sin.sin_family = AF_INET;
 	sin.sin_addr.s_addr = ip_hdr(skb)->daddr;
@@ -316,14 +318,7 @@ int ip_cmsg_send(struct sock *sk, struct msghdr *msg, struct ipcm_cookie *ipc,
 			ipc->tos = val;
 			ipc->priority = rt_tos2priority(ipc->tos);
 			break;
-		case IP_PROTOCOL:
-			if (cmsg->cmsg_len != CMSG_LEN(sizeof(int)))
-				return -EINVAL;
-			val = *(int *)CMSG_DATA(cmsg);
-			if (val < 1 || val > 255)
-				return -EINVAL;
-			ipc->protocol = val;
-			break;
+
 		default:
 			return -EINVAL;
 		}
@@ -350,9 +345,7 @@ int ip_ra_control(struct sock *sk, unsigned char on,
 		return -EINVAL;
 
 	new_ra = on ? kmalloc(sizeof(*new_ra), GFP_KERNEL) : NULL;
-	if (on && !new_ra)
-		return -ENOMEM;
-	
+
 	mutex_lock(&net->ipv4.ra_mutex);
 	for (rap = &net->ipv4.ra_chain;
 	     (ra = rcu_dereference_protected(*rap,
@@ -1530,9 +1523,6 @@ static int do_ip_getsockopt(struct sock *sk, int level, int optname,
 		break;
 	case IP_MINTTL:
 		val = inet->min_ttl;
-		break;
-	case IP_PROTOCOL:
-		val = inet_sk(sk)->inet_num;
 		break;
 	default:
 		release_sock(sk);

@@ -115,7 +115,7 @@ static void hv_stimer0_isr(void)
 
 	hv_cpu = this_cpu_ptr(hv_context.cpu_context);
 	hv_cpu->clk_evt->event_handler(hv_cpu->clk_evt);
-	add_interrupt_randomness(stimer0_vector);
+	add_interrupt_randomness(stimer0_vector, 0);
 }
 
 static int hv_ce_set_next_event(unsigned long delta,
@@ -411,6 +411,7 @@ int hv_synic_cleanup(unsigned int cpu)
 
 		clockevents_unbind_device(hv_cpu->clk_evt, cpu);
 		hv_ce_shutdown(hv_cpu->clk_evt);
+		put_cpu_ptr(hv_cpu);
 	}
 
 	hv_get_synint_state(VMBUS_MESSAGE_SINT, shared_sint.as_uint64);

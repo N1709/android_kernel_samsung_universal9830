@@ -29,10 +29,18 @@
 
 static struct workqueue_struct *strp_wq;
 
+struct _strp_msg {
+	/* Internal cb structure. struct strp_msg must be first for passing
+	 * to upper layer.
+	 */
+	struct strp_msg strp;
+	int accum_len;
+};
+
 static inline struct _strp_msg *_strp_msg(struct sk_buff *skb)
 {
 	return (struct _strp_msg *)((void *)skb->cb +
-		offsetof(struct sk_skb_cb, strp));
+		offsetof(struct qdisc_skb_cb, data));
 }
 
 /* Lower lock held */
@@ -132,11 +140,13 @@ static int __strp_recv(read_descriptor_t *desc, struct sk_buff *orig_skb,
 			/* We are going to append to the frags_list of head.
 			 * Need to unshare the frag_list.
 			 */
-			err = skb_unclone(head, GFP_ATOMIC);
-			if (err) {
-				STRP_STATS_INCR(strp->stats.mem_fail);
-				desc->error = err;
-				return 0;
+			if (skb_has_frag_list(head)) {
+				err = skb_unclone(head, GFP_ATOMIC);
+				if (err) {
+					STRP_STATS_INCR(strp->stats.mem_fail);
+					desc->error = err;
+					return 0;
+				}
 			}
 
 			if (unlikely(skb_shinfo(head)->frag_list)) {

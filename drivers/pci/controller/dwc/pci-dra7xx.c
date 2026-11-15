@@ -26,7 +26,6 @@
 #include <linux/types.h>
 #include <linux/mfd/syscon.h>
 #include <linux/regmap.h>
-#include <linux/gpio/consumer.h>
 
 #include "../../pci.h"
 #include "pcie-designware.h"
@@ -390,22 +389,9 @@ static int dra7xx_pcie_raise_irq(struct dw_pcie_ep *ep, u8 func_no,
 	return 0;
 }
 
-static const struct pci_epc_features dra7xx_pcie_epc_features = {
-	.linkup_notifier = true,
-	.msi_capable = true,
-	.msix_capable = false,
-};
-
-static const struct pci_epc_features*
-dra7xx_pcie_get_features(struct dw_pcie_ep *ep)
-{
-	return &dra7xx_pcie_epc_features;
-}
-
 static struct dw_pcie_ep_ops pcie_ep_ops = {
 	.ep_init = dra7xx_pcie_ep_init,
 	.raise_irq = dra7xx_pcie_raise_irq,
-	.get_features = dra7xx_pcie_get_features,
 };
 
 static int __init dra7xx_add_pcie_ep(struct dra7xx_pcie *dra7xx,

@@ -42,7 +42,7 @@
 #include <trace/events/xen.h>
 
 #include <asm/page.h>
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 #include <asm/smap.h>
 #include <asm/nospec-branch.h>
 
@@ -205,9 +205,6 @@ xen_single_call(unsigned int call,
 {
 	__HYPERCALL_DECLS;
 	__HYPERCALL_5ARG(a1, a2, a3, a4, a5);
-
-	if (call >= PAGE_SIZE / sizeof(hypercall_page[0]))
-		return -EINVAL;
 
 	asm volatile(CALL_NOSPEC
 		     : __HYPERCALL_5PARAM

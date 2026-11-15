@@ -2234,8 +2234,10 @@ static struct pxafb_mach_info *of_pxafb_of_mach_info(struct device *dev)
 	if (!info)
 		return ERR_PTR(-ENOMEM);
 	ret = of_get_pxafb_mode_info(dev, info);
-	if (ret)
+	if (ret) {
+		kfree(info->modes);
 		return ERR_PTR(ret);
+	}
 
 	/*
 	 * On purpose, neither lccrX registers nor video memory size can be
@@ -2437,7 +2439,6 @@ static int pxafb_remove(struct platform_device *dev)
 	info = &fbi->fb;
 
 	pxafb_overlay_exit(fbi);
-	cancel_work_sync(&fbi->task);
 	unregister_framebuffer(info);
 
 	pxafb_disable_controller(fbi);
@@ -2447,8 +2448,8 @@ static int pxafb_remove(struct platform_device *dev)
 
 	free_pages_exact(fbi->video_mem, fbi->video_mem_size);
 
-	dma_free_coherent(&dev->dev, fbi->dma_buff_size, fbi->dma_buff,
-			  fbi->dma_buff_phys);
+	dma_free_wc(&dev->dev, fbi->dma_buff_size, fbi->dma_buff,
+		    fbi->dma_buff_phys);
 
 	return 0;
 }

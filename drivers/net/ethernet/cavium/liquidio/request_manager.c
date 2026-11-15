@@ -139,7 +139,7 @@ int octeon_init_instr_queue(struct octeon_device *oct,
 	oct->io_qmask.iq |= BIT_ULL(iq_no);
 
 	/* Set the 32B/64B mode for each input queue */
-	oct->io_qmask.iq64B |= ((u64)(conf->instr_type == 64) << iq_no);
+	oct->io_qmask.iq64B |= ((conf->instr_type == 64) << iq_no);
 	iq->iqcmd_64B = (conf->instr_type == 64);
 
 	oct->fn_list.setup_iq_regs(oct, iq_no);
@@ -239,10 +239,8 @@ int octeon_setup_iq(struct octeon_device *oct,
 	}
 
 	oct->num_iqs++;
-	if (oct->fn_list.enable_io_queues(oct)) {
-		octeon_delete_instr_queue(oct, iq_no);
+	if (oct->fn_list.enable_io_queues(oct))
 		return 1;
-	}
 
 	return 0;
 }

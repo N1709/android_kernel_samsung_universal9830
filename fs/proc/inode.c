@@ -34,27 +34,21 @@ static void proc_evict_inode(struct inode *inode)
 {
 	struct proc_dir_entry *de;
 	struct ctl_table_header *head;
-	struct proc_inode *ei = PROC_I(inode);
 
 	truncate_inode_pages_final(&inode->i_data);
 	clear_inode(inode);
 
 	/* Stop tracking associated processes */
-	if (ei->pid) {
-		put_pid(ei->pid);
-		ei->pid = NULL;
-	}
+	put_pid(PROC_I(inode)->pid);
 
 	/* Let go of any associated proc directory entry */
-	de = ei->pde;
-	if (de) {
+	de = PDE(inode);
+	if (de)
 		pde_put(de);
-		ei->pde = NULL;
-	}
 
-	head = ei->sysctl;
+	head = PROC_I(inode)->sysctl;
 	if (head) {
-		WRITE_ONCE(ei->sysctl, NULL);
+		RCU_INIT_POINTER(PROC_I(inode)->sysctl, NULL);
 		proc_sys_evict_inode(inode, head);
 	}
 }
@@ -457,7 +451,7 @@ const struct inode_operations proc_link_inode_operations = {
 
 struct inode *proc_get_inode(struct super_block *sb, struct proc_dir_entry *de)
 {
-	struct inode *inode = new_inode(sb);
+	struct inode *inode = new_inode_pseudo(sb);
 
 	if (inode) {
 		inode->i_ino = de->low_ino;
@@ -497,13 +491,17 @@ struct inode *proc_get_inode(struct super_block *sb, struct proc_dir_entry *de)
 	return inode;
 }
 
-int proc_fill_super(struct super_block *s)
+int proc_fill_super(struct super_block *s, void *data, int silent)
 {
+	struct pid_namespace *ns = get_pid_ns(s->s_fs_info);
 	struct inode *root_inode;
 	int ret;
 
+	if (!proc_parse_options(data, ns))
+		return -EINVAL;
+
 	/* User space would break if executables or devices appear on proc */
-	s->s_iflags |= SB_I_USERNS_VISIBLE | SB_I_NODEV;
+	s->s_iflags |= SB_I_USERNS_VISIBLE | SB_I_NOEXEC | SB_I_NODEV;
 	s->s_flags |= SB_NODIRATIME | SB_NOSUID | SB_NOEXEC;
 	s->s_blocksize = 1024;
 	s->s_blocksize_bits = 10;

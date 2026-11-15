@@ -66,9 +66,6 @@ struct driver_private {
  *	probed first.
  * @device - pointer back to the struct device that this structure is
  * associated with.
- * @dead - This device is currently either in the process of or has been
- *	removed from the system. Any asynchronous events scheduled for this
- *	device should exit without taking any action.
  *
  * Nothing outside of the driver core should ever touch these fields.
  */
@@ -79,7 +76,6 @@ struct device_private {
 	struct klist_node knode_bus;
 	struct list_head deferred_probe;
 	struct device *device;
-	u8 dead:1;
 };
 #define to_device_private_parent(obj)	\
 	container_of(obj, struct device_private, knode_parent)
@@ -134,7 +130,6 @@ extern char *make_class_name(const char *name, struct kobject *kobj);
 extern int devres_release_all(struct device *dev);
 extern void device_block_probing(void);
 extern void device_unblock_probing(void);
-extern void driver_deferred_probe_force_trigger(void);
 
 /* /sys/devices directory */
 extern struct kset *devices_kset;

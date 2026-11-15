@@ -39,13 +39,11 @@ struct vm_area_struct;
 #define ___GFP_ACCOUNT		0x100000u
 #define ___GFP_DIRECT_RECLAIM	0x200000u
 #define ___GFP_KSWAPD_RECLAIM	0x400000u
-#define ___GFP_NOCMA		0x800000u
 #ifdef CONFIG_LOCKDEP
-#define ___GFP_NOLOCKDEP	0x1000000u
+#define ___GFP_NOLOCKDEP	0x800000u
 #else
 #define ___GFP_NOLOCKDEP	0
 #endif
-#define ___GFP_CMA		0x1000000u
 /* If the above are modified, __GFP_BITS_SHIFT may need updating */
 
 /*
@@ -59,7 +57,6 @@ struct vm_area_struct;
 #define __GFP_HIGHMEM	((__force gfp_t)___GFP_HIGHMEM)
 #define __GFP_DMA32	((__force gfp_t)___GFP_DMA32)
 #define __GFP_MOVABLE	((__force gfp_t)___GFP_MOVABLE)  /* ZONE_MOVABLE allowed */
-#define __GFP_CMA	((__force gfp_t)___GFP_CMA)
 #define GFP_ZONEMASK	(__GFP_DMA|__GFP_HIGHMEM|__GFP_DMA32|__GFP_MOVABLE)
 
 /**
@@ -220,11 +217,8 @@ struct vm_area_struct;
 #define __GFP_NOLOCKDEP ((__force gfp_t)___GFP_NOLOCKDEP)
 
 /* Room for N __GFP_FOO bits */
-#define __GFP_BITS_SHIFT (24 + IS_ENABLED(CONFIG_LOCKDEP))
+#define __GFP_BITS_SHIFT (23 + IS_ENABLED(CONFIG_LOCKDEP))
 #define __GFP_BITS_MASK ((__force gfp_t)((1 << __GFP_BITS_SHIFT) - 1))
-
-/* __GFP_NOCMA indicates that CMA allocation must not be allowed */
-#define __GFP_NOCMA	((__force gfp_t)___GFP_NOCMA)
 
 /**
  * DOC: Useful GFP flag combinations
@@ -329,29 +323,6 @@ static inline int gfpflags_to_migratetype(const gfp_t gfp_flags)
 static inline bool gfpflags_allow_blocking(const gfp_t gfp_flags)
 {
 	return !!(gfp_flags & __GFP_DIRECT_RECLAIM);
-}
-
-/**
- * gfpflags_normal_context - is gfp_flags a normal sleepable context?
- * @gfp_flags: gfp_flags to test
- *
- * Test whether @gfp_flags indicates that the allocation is from the
- * %current context and allowed to sleep.
- *
- * An allocation being allowed to block doesn't mean it owns the %current
- * context.  When direct reclaim path tries to allocate memory, the
- * allocation context is nested inside whatever %current was doing at the
- * time of the original allocation.  The nested allocation may be allowed
- * to block but modifying anything %current owns can corrupt the outer
- * context's expectations.
- *
- * %true result from this function indicates that the allocation context
- * can sleep and use anything that's associated with %current.
- */
-static inline bool gfpflags_normal_context(const gfp_t gfp_flags)
-{
-	return (gfp_flags & (__GFP_DIRECT_RECLAIM | __GFP_MEMALLOC)) ==
-		__GFP_DIRECT_RECLAIM;
 }
 
 #ifdef CONFIG_HIGHMEM
@@ -529,11 +500,6 @@ static inline struct page *alloc_pages_node(int nid, gfp_t gfp_mask,
 	return __alloc_pages_node(nid, gfp_mask, order);
 }
 
-#ifdef CONFIG_KZEROD
-extern struct page *alloc_zeroed_page(void);
-extern unsigned long kzerod_get_zeroed_size(void);
-#endif
-
 #ifdef CONFIG_NUMA
 extern struct page *alloc_pages_current(gfp_t gfp_mask, unsigned order);
 
@@ -619,15 +585,6 @@ static inline bool pm_suspended_storage(void)
 }
 #endif /* CONFIG_PM_SLEEP */
 
-/*
- * Check if the gfp flags allow compaction - GFP_NOIO is a really
- * tricky context because the migration might require IO.
- */
-static inline bool gfp_compaction_allowed(gfp_t gfp_mask)
-{
-	return IS_ENABLED(CONFIG_COMPACTION) && (gfp_mask & __GFP_IO);
-}
-
 #if (defined(CONFIG_MEMORY_ISOLATION) && defined(CONFIG_COMPACTION)) || defined(CONFIG_CMA)
 /* The below functions must be run on a range from a single zone. */
 extern int alloc_contig_range(unsigned long start, unsigned long end,
@@ -639,24 +596,5 @@ extern void free_contig_range(unsigned long pfn, unsigned nr_pages);
 /* CMA stuff */
 extern void init_cma_reserved_pageblock(struct page *page);
 #endif
-
-#ifdef CONFIG_HPA
-int alloc_pages_highorder_except(int order, struct page **pages, int nents,
-				 phys_addr_t exception_areas[][2],
-				 int nr_exception);
-#else
-static inline int alloc_pages_highorder_except(int order,
-					       struct page **pages, int nents,
-					       phys_addr_t exception_areas[][2],
-					       int nr_exception)
-{
-	return -ENOENT;
-}
-#endif
-static inline int alloc_pages_highorder(int order, struct page **pages,
-					int nents)
-{
-	return alloc_pages_highorder_except(order, pages, nents, NULL, 0);
-}
 
 #endif /* __LINUX_GFP_H */

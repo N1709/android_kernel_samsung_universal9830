@@ -499,11 +499,7 @@
 
 /* Bitfields in TISUBN */
 #define GEM_SUBNSINCR_OFFSET			0
-#define GEM_SUBNSINCRL_OFFSET			24
-#define GEM_SUBNSINCRL_SIZE			8
-#define GEM_SUBNSINCRH_OFFSET			0
-#define GEM_SUBNSINCRH_SIZE			16
-#define GEM_SUBNSINCR_SIZE			24
+#define GEM_SUBNSINCR_SIZE			16
 
 /* Bitfields in TI */
 #define GEM_NSINCR_OFFSET			0
@@ -647,7 +643,6 @@
 #define MACB_CAPS_JUMBO				0x00000020
 #define MACB_CAPS_GEM_HAS_PTP			0x00000040
 #define MACB_CAPS_BD_RD_PREFETCH		0x00000080
-#define MACB_CAPS_NEEDS_RSTONUBR		0x00000100
 #define MACB_CAPS_FIFO_MODE			0x10000000
 #define MACB_CAPS_GIGABIT_MODE_AVAILABLE	0x20000000
 #define MACB_CAPS_SG_DISABLED			0x40000000
@@ -1168,8 +1163,6 @@ struct macb {
 	struct clk		*tx_clk;
 	struct clk		*rx_clk;
 	struct net_device	*dev;
-	/* Protects hw_stats and ethtool_stats */
-	spinlock_t		stats_lock;
 	union {
 		struct macb_stats	macb;
 		struct gem_stats	gem;
@@ -1221,8 +1214,6 @@ struct macb {
 
 	int	rx_bd_rd_prefetch;
 	int	tx_bd_rd_prefetch;
-
-	u32	rx_intr_mask;
 };
 
 #ifdef CONFIG_MACB_USE_HWSTAMP

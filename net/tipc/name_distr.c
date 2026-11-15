@@ -223,8 +223,7 @@ static void tipc_publ_purge(struct net *net, struct publication *publ, u32 addr)
 		       publ->key);
 	}
 
-	if (p)
-		kfree_rcu(p, rcu);
+	kfree_rcu(p, rcu);
 }
 
 /**
@@ -290,7 +289,7 @@ static bool tipc_update_nametbl(struct net *net, struct distr_item *i,
 		pr_warn_ratelimited("Failed to remove binding %u,%u from %x\n",
 				    type, lower, node);
 	} else {
-		pr_warn_ratelimited("Unknown name table message received\n");
+		pr_warn("Unrecognized name table message received\n");
 	}
 	return false;
 }

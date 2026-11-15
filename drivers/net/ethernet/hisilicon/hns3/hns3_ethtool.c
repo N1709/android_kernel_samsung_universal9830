@@ -160,21 +160,18 @@ static void hns3_lb_check_skb_data(struct hns3_enet_ring *ring,
 {
 	struct hns3_enet_tqp_vector *tqp_vector = ring->tqp_vector;
 	unsigned char *packet = skb->data;
-	u32 len = skb_headlen(skb);
 	u32 i;
 
-	len = min_t(u32, len, HNS3_NIC_LB_TEST_PACKET_SIZE);
-
-	for (i = 0; i < len; i++)
+	for (i = 0; i < skb->len; i++)
 		if (packet[i] != (unsigned char)(i & 0xff))
 			break;
 
 	/* The packet is correctly received */
-	if (i == HNS3_NIC_LB_TEST_PACKET_SIZE)
+	if (i == skb->len)
 		tqp_vector->rx_group.total_packets++;
 	else
 		print_hex_dump(KERN_ERR, "selftest:", DUMP_PREFIX_OFFSET, 16, 1,
-			       skb->data, len, true);
+			       skb->data, skb->len, true);
 
 	dev_kfree_skb_any(skb);
 }
@@ -243,13 +240,11 @@ static int hns3_lp_run_test(struct net_device *ndev, enum hnae3_loop mode)
 
 		skb_get(skb);
 		tx_ret = hns3_nic_net_xmit(skb, ndev);
-		if (tx_ret == NETDEV_TX_OK) {
+		if (tx_ret == NETDEV_TX_OK)
 			good_cnt++;
-		} else {
-			kfree_skb(skb);
+		else
 			netdev_err(ndev, "hns3_lb_run_test xmit failed: %d\n",
 				   tx_ret);
-		}
 	}
 	if (good_cnt != HNS3_NIC_LB_TEST_PKT_NUM) {
 		ret_val = HNS3_NIC_LB_TEST_TX_CNT_ERR;

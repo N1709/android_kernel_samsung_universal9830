@@ -121,7 +121,6 @@ static inline void CS_UNLOCK(void __iomem *addr)
 		writel_relaxed(CORESIGHT_UNLOCK, addr + CORESIGHT_LAR);
 		/* Make sure everyone has seen this */
 		mb();
-		isb();
 	} while (0);
 }
 
@@ -148,7 +147,6 @@ void coresight_disable_path(struct list_head *path);
 int coresight_enable_path(struct list_head *path, u32 mode, void *sink_data);
 struct coresight_device *coresight_get_sink(struct list_head *path);
 struct coresight_device *coresight_get_enabled_sink(bool reset);
-struct coresight_device *coresight_get_sink_by_id(u32 id);
 struct list_head *coresight_build_path(struct coresight_device *csdev,
 				       struct coresight_device *sink);
 void coresight_release_path(struct list_head *path);

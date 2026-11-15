@@ -57,7 +57,7 @@
 
 #include <trace/events/xen.h>
 
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 #include <asm/tlbflush.h>
 #include <asm/fixmap.h>
 #include <asm/mmu_context.h>
@@ -842,7 +842,6 @@ void xen_mm_pin_all(void)
 {
 	struct page *page;
 
-	spin_lock(&init_mm.page_table_lock);
 	spin_lock(&pgd_lock);
 
 	list_for_each_entry(page, &pgd_list, lru) {
@@ -853,7 +852,6 @@ void xen_mm_pin_all(void)
 	}
 
 	spin_unlock(&pgd_lock);
-	spin_unlock(&init_mm.page_table_lock);
 }
 
 static int __init xen_mark_pinned(struct mm_struct *mm, struct page *page,
@@ -963,7 +961,6 @@ void xen_mm_unpin_all(void)
 {
 	struct page *page;
 
-	spin_lock(&init_mm.page_table_lock);
 	spin_lock(&pgd_lock);
 
 	list_for_each_entry(page, &pgd_list, lru) {
@@ -975,7 +972,6 @@ void xen_mm_unpin_all(void)
 	}
 
 	spin_unlock(&pgd_lock);
-	spin_unlock(&init_mm.page_table_lock);
 }
 
 static void xen_activate_mm(struct mm_struct *prev, struct mm_struct *next)
@@ -2118,10 +2114,10 @@ void __init xen_relocate_p2m(void)
 				pt = early_memremap(pt_phys, PAGE_SIZE);
 				clear_page(pt);
 				for (idx_pte = 0;
-				     idx_pte < min(n_pte, PTRS_PER_PTE);
-				     idx_pte++) {
-					pt[idx_pte] = pfn_pte(p2m_pfn,
-							      PAGE_KERNEL);
+						idx_pte < min(n_pte, PTRS_PER_PTE);
+						idx_pte++) {
+					set_pte(pt + idx_pte,
+							pfn_pte(p2m_pfn, PAGE_KERNEL));
 					p2m_pfn++;
 				}
 				n_pte -= PTRS_PER_PTE;
@@ -2129,7 +2125,8 @@ void __init xen_relocate_p2m(void)
 				make_lowmem_page_readonly(__va(pt_phys));
 				pin_pagetable_pfn(MMUEXT_PIN_L1_TABLE,
 						PFN_DOWN(pt_phys));
-				pmd[idx_pt] = __pmd(_PAGE_TABLE | pt_phys);
+				set_pmd(pmd + idx_pt,
+						__pmd(_PAGE_TABLE | pt_phys));
 				pt_phys += PAGE_SIZE;
 			}
 			n_pt -= PTRS_PER_PMD;
@@ -2137,7 +2134,7 @@ void __init xen_relocate_p2m(void)
 			make_lowmem_page_readonly(__va(pmd_phys));
 			pin_pagetable_pfn(MMUEXT_PIN_L2_TABLE,
 					PFN_DOWN(pmd_phys));
-			pud[idx_pmd] = __pud(_PAGE_TABLE | pmd_phys);
+			set_pud(pud + idx_pmd, __pud(_PAGE_TABLE | pmd_phys));
 			pmd_phys += PAGE_SIZE;
 		}
 		n_pmd -= PTRS_PER_PUD;
@@ -2607,6 +2604,12 @@ int xen_create_contiguous_region(phys_addr_t pstart, unsigned int order,
 	unsigned long  flags;
 	int            success;
 	unsigned long vstart = (unsigned long)phys_to_virt(pstart);
+
+	/*
+	 * Currently an auto-translated guest will not perform I/O, nor will
+	 * it require PAE page directories below 4GB. Therefore any calls to
+	 * this function are redundant and can be ignored.
+	 */
 
 	if (unlikely(order > MAX_CONTIG_ORDER))
 		return -ENOMEM;

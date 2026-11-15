@@ -535,10 +535,8 @@ static int shadow_scb(struct kvm_vcpu *vcpu, struct vsie_page *vsie_page)
 	if (test_kvm_cpu_feat(vcpu->kvm, KVM_S390_VM_CPU_FEAT_CEI))
 		scb_s->eca |= scb_o->eca & ECA_CEI;
 	/* Epoch Extension */
-	if (test_kvm_facility(vcpu->kvm, 139)) {
+	if (test_kvm_facility(vcpu->kvm, 139))
 		scb_s->ecd |= scb_o->ecd & ECD_MEF;
-		scb_s->epdx = scb_o->epdx;
-	}
 
 	/* etoken */
 	if (test_kvm_facility(vcpu->kvm, 156))
@@ -1199,7 +1197,6 @@ static int vsie_run(struct kvm_vcpu *vcpu, struct vsie_page *vsie_page)
 		scb_s->iprcc = PGM_ADDRESSING;
 		scb_s->pgmilc = 4;
 		scb_s->gpsw.addr = __rewind_psw(scb_s->gpsw, 4);
-		rc = 1;
 	}
 	return rc;
 }
@@ -1221,14 +1218,8 @@ static struct vsie_page *get_vsie_page(struct kvm *kvm, unsigned long addr)
 	page = radix_tree_lookup(&kvm->arch.vsie.addr_to_page, addr >> 9);
 	rcu_read_unlock();
 	if (page) {
-		if (page_ref_inc_return(page) == 2) {
-			if (page->index == addr)
-				return page_to_virt(page);
-			/*
-			 * We raced with someone reusing + putting this vsie
-			 * page before we grabbed it.
-			 */
-		}
+		if (page_ref_inc_return(page) == 2)
+			return page_to_virt(page);
 		page_ref_dec(page);
 	}
 
@@ -1258,20 +1249,15 @@ static struct vsie_page *get_vsie_page(struct kvm *kvm, unsigned long addr)
 			kvm->arch.vsie.next++;
 			kvm->arch.vsie.next %= nr_vcpus;
 		}
-		if (page->index != ULONG_MAX)
-			radix_tree_delete(&kvm->arch.vsie.addr_to_page,
-					  page->index >> 9);
+		radix_tree_delete(&kvm->arch.vsie.addr_to_page, page->index >> 9);
 	}
-	/* Mark it as invalid until it resides in the tree. */
-	page->index = ULONG_MAX;
-
-	/* Double use of the same address or allocation failure. */
+	page->index = addr;
+	/* double use of the same address */
 	if (radix_tree_insert(&kvm->arch.vsie.addr_to_page, addr >> 9, page)) {
 		page_ref_dec(page);
 		mutex_unlock(&kvm->arch.vsie.mutex);
 		return NULL;
 	}
-	page->index = addr;
 	mutex_unlock(&kvm->arch.vsie.mutex);
 
 	vsie_page = page_to_virt(page);
@@ -1364,9 +1350,7 @@ void kvm_s390_vsie_destroy(struct kvm *kvm)
 		vsie_page = page_to_virt(page);
 		release_gmap_shadow(vsie_page);
 		/* free the radix tree entry */
-		if (page->index != ULONG_MAX)
-			radix_tree_delete(&kvm->arch.vsie.addr_to_page,
-					  page->index >> 9);
+		radix_tree_delete(&kvm->arch.vsie.addr_to_page, page->index >> 9);
 		__free_page(page);
 	}
 	kvm->arch.vsie.page_count = 0;

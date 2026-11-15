@@ -93,10 +93,6 @@ MODULE_DESCRIPTION("sysfs interface to BIOS iBFT information");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(IBFT_ISCSI_VERSION);
 
-#ifndef CONFIG_ISCSI_IBFT_FIND
-struct acpi_table_ibft *ibft_addr;
-#endif
-
 struct ibft_hdr {
 	u8 id;
 	u8 version;
@@ -320,10 +316,7 @@ static ssize_t ibft_attr_show_nic(void *data, int type, char *buf)
 		str += sprintf_ipaddr(str, nic->ip_addr);
 		break;
 	case ISCSI_BOOT_ETH_SUBNET_MASK:
-		if (nic->subnet_mask_prefix > 32)
-			val = cpu_to_be32(~0);
-		else
-			val = cpu_to_be32(~((1 << (32-nic->subnet_mask_prefix))-1));
+		val = cpu_to_be32(~((1 << (32-nic->subnet_mask_prefix))-1));
 		str += sprintf(str, "%pI4", &val);
 		break;
 	case ISCSI_BOOT_ETH_PREFIX_LEN:
@@ -549,7 +542,6 @@ static umode_t __init ibft_check_tgt_for(void *data, int type)
 	case ISCSI_BOOT_TGT_NIC_ASSOC:
 	case ISCSI_BOOT_TGT_CHAP_TYPE:
 		rc = S_IRUGO;
-		break;
 	case ISCSI_BOOT_TGT_NAME:
 		if (tgt->tgt_name_len)
 			rc = S_IRUGO;

@@ -84,7 +84,6 @@
 	.globl name ASM_NL \
 	ALIGN ASM_NL \
 	name:
-
 #endif
 #endif /* LINKER_SCRIPT */
 

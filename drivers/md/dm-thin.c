@@ -257,7 +257,6 @@ struct pool {
 
 	spinlock_t lock;
 	struct bio_list deferred_flush_bios;
-	struct bio_list deferred_flush_completions;
 	struct list_head prepared_mappings;
 	struct list_head prepared_discards;
 	struct list_head prepared_discards_pt2;
@@ -957,39 +956,6 @@ static void process_prepared_mapping_fail(struct dm_thin_new_mapping *m)
 	mempool_free(m, &m->tc->pool->mapping_pool);
 }
 
-static void complete_overwrite_bio(struct thin_c *tc, struct bio *bio)
-{
-	struct pool *pool = tc->pool;
-	unsigned long flags;
-
-	/*
-	 * If the bio has the REQ_FUA flag set we must commit the metadata
-	 * before signaling its completion.
-	 */
-	if (!bio_triggers_commit(tc, bio)) {
-		bio_endio(bio);
-		return;
-	}
-
-	/*
-	 * Complete bio with an error if earlier I/O caused changes to the
-	 * metadata that can't be committed, e.g, due to I/O errors on the
-	 * metadata device.
-	 */
-	if (dm_thin_aborted_changes(tc->td)) {
-		bio_io_error(bio);
-		return;
-	}
-
-	/*
-	 * Batch together any bios that trigger commits and then issue a
-	 * single commit for them in process_deferred_bios().
-	 */
-	spin_lock_irqsave(&pool->lock, flags);
-	bio_list_add(&pool->deferred_flush_completions, bio);
-	spin_unlock_irqrestore(&pool->lock, flags);
-}
-
 static void process_prepared_mapping(struct dm_thin_new_mapping *m)
 {
 	struct thin_c *tc = m->tc;
@@ -1022,7 +988,7 @@ static void process_prepared_mapping(struct dm_thin_new_mapping *m)
 	 */
 	if (bio) {
 		inc_remap_and_issue_cell(tc, m->cell, m->data_block);
-		complete_overwrite_bio(tc, bio);
+		bio_endio(bio);
 	} else {
 		inc_all_io_entry(tc->pool, m->cell->holder);
 		remap_and_issue(tc, m->cell->holder, m->data_block);
@@ -1082,7 +1048,7 @@ static void passdown_double_checking_shared_status(struct dm_thin_new_mapping *m
 	 * passdown we have to check that these blocks are now unused.
 	 */
 	int r = 0;
-	bool shared = true;
+	bool used = true;
 	struct thin_c *tc = m->tc;
 	struct pool *pool = tc->pool;
 	dm_block_t b = m->data_block, e, end = m->data_block + m->virt_end - m->virt_begin;
@@ -1092,11 +1058,11 @@ static void passdown_double_checking_shared_status(struct dm_thin_new_mapping *m
 	while (b != end) {
 		/* find start of unmapped run */
 		for (; b < end; b++) {
-			r = dm_pool_block_is_shared(pool->pmd, b, &shared);
+			r = dm_pool_block_is_used(pool->pmd, b, &used);
 			if (r)
 				goto out;
 
-			if (!shared)
+			if (!used)
 				break;
 		}
 
@@ -1105,11 +1071,11 @@ static void passdown_double_checking_shared_status(struct dm_thin_new_mapping *m
 
 		/* find end of run */
 		for (e = b + 1; e != end; e++) {
-			r = dm_pool_block_is_shared(pool->pmd, e, &shared);
+			r = dm_pool_block_is_used(pool->pmd, e, &used);
 			if (r)
 				goto out;
 
-			if (shared)
+			if (used)
 				break;
 		}
 
@@ -2222,7 +2188,6 @@ static void process_thin_deferred_bios(struct thin_c *tc)
 			throttle_work_update(&pool->throttle);
 			dm_pool_issue_prefetches(pool->pmd);
 		}
-		cond_resched();
 	}
 	blk_finish_plug(&plug);
 }
@@ -2306,7 +2271,6 @@ static void process_thin_deferred_cells(struct thin_c *tc)
 			else
 				pool->process_cell(tc, cell);
 		}
-		cond_resched();
 	} while (!list_empty(&cells));
 }
 
@@ -2323,9 +2287,10 @@ static struct thin_c *get_first_thin(struct pool *pool)
 	struct thin_c *tc = NULL;
 
 	rcu_read_lock();
-	tc = list_first_or_null_rcu(&pool->active_thins, struct thin_c, list);
-	if (tc)
+	if (!list_empty(&pool->active_thins)) {
+		tc = list_entry_rcu(pool->active_thins.next, struct thin_c, list);
 		thin_get(tc);
+	}
 	rcu_read_unlock();
 
 	return tc;
@@ -2352,7 +2317,7 @@ static void process_deferred_bios(struct pool *pool)
 {
 	unsigned long flags;
 	struct bio *bio;
-	struct bio_list bios, bio_completions;
+	struct bio_list bios;
 	struct thin_c *tc;
 
 	tc = get_first_thin(pool);
@@ -2363,35 +2328,25 @@ static void process_deferred_bios(struct pool *pool)
 	}
 
 	/*
-	 * If there are any deferred flush bios, we must commit the metadata
-	 * before issuing them or signaling their completion.
+	 * If there are any deferred flush bios, we must commit
+	 * the metadata before issuing them.
 	 */
 	bio_list_init(&bios);
-	bio_list_init(&bio_completions);
-
 	spin_lock_irqsave(&pool->lock, flags);
 	bio_list_merge(&bios, &pool->deferred_flush_bios);
 	bio_list_init(&pool->deferred_flush_bios);
-
-	bio_list_merge(&bio_completions, &pool->deferred_flush_completions);
-	bio_list_init(&pool->deferred_flush_completions);
 	spin_unlock_irqrestore(&pool->lock, flags);
 
-	if (bio_list_empty(&bios) && bio_list_empty(&bio_completions) &&
+	if (bio_list_empty(&bios) &&
 	    !(dm_pool_changed_this_transaction(pool->pmd) && need_commit_due_to_time(pool)))
 		return;
 
 	if (commit(pool)) {
-		bio_list_merge(&bios, &bio_completions);
-
 		while ((bio = bio_list_pop(&bios)))
 			bio_io_error(bio);
 		return;
 	}
 	pool->last_commit_jiffies = jiffies;
-
-	while ((bio = bio_list_pop(&bio_completions)))
-		bio_endio(bio);
 
 	while ((bio = bio_list_pop(&bios)))
 		generic_make_request(bio);
@@ -2466,7 +2421,6 @@ static void pool_work_wait(struct pool_work *pw, struct pool *pool,
 	init_completion(&pw->complete);
 	queue_work(pool->wq, &pw->worker);
 	wait_for_completion(&pw->complete);
-	destroy_work_on_stack(&pw->worker);
 }
 
 /*----------------------------------------------------------------*/
@@ -2923,8 +2877,6 @@ static void __pool_destroy(struct pool *pool)
 	dm_bio_prison_destroy(pool->prison);
 	dm_kcopyd_client_destroy(pool->copier);
 
-	cancel_delayed_work_sync(&pool->waker);
-	cancel_delayed_work_sync(&pool->no_space_timeout);
 	if (pool->wq)
 		destroy_workqueue(pool->wq);
 
@@ -3002,7 +2954,6 @@ static struct pool *pool_create(struct mapped_device *pool_md,
 	INIT_DELAYED_WORK(&pool->no_space_timeout, do_no_space_timeout);
 	spin_lock_init(&pool->lock);
 	bio_list_init(&pool->deferred_flush_bios);
-	bio_list_init(&pool->deferred_flush_completions);
 	INIT_LIST_HEAD(&pool->prepared_mappings);
 	INIT_LIST_HEAD(&pool->prepared_discards);
 	INIT_LIST_HEAD(&pool->prepared_discards_pt2);
@@ -3287,13 +3238,6 @@ static int pool_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	as.argc = argc;
 	as.argv = argv;
 
-	/* make sure metadata and data are different devices */
-	if (!strcmp(argv[0], argv[1])) {
-		ti->error = "Error setting metadata or data device";
-		r = -EINVAL;
-		goto out_unlock;
-	}
-
 	/*
 	 * Set default pool features.
 	 */
@@ -3551,28 +3495,20 @@ static int pool_preresume(struct dm_target *ti)
 	 */
 	r = bind_control_target(pool, ti);
 	if (r)
-		goto out;
+		return r;
 
 	r = maybe_resize_data_dev(ti, &need_commit1);
 	if (r)
-		goto out;
+		return r;
 
 	r = maybe_resize_metadata_dev(ti, &need_commit2);
 	if (r)
-		goto out;
+		return r;
 
 	if (need_commit1 || need_commit2)
 		(void) commit(pool);
-out:
-	/*
-	 * When a thin-pool is PM_FAIL, it cannot be rebuilt if
-	 * bio is in deferred list. Therefore need to return 0
-	 * to allow pool_resume() to flush IO.
-	 */
-	if (r && get_pool_mode(pool) == PM_FAIL)
-		r = 0;
 
-	return r;
+	return 0;
 }
 
 static void pool_suspend_active_thins(struct pool *pool)
@@ -4186,12 +4122,6 @@ static int thin_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	tc->sort_bio_list = RB_ROOT;
 
 	if (argc == 3) {
-		if (!strcmp(argv[0], argv[2])) {
-			ti->error = "Error setting origin device";
-			r = -EINVAL;
-			goto bad_origin_dev;
-		}
-
 		r = dm_get_device(ti, argv[2], FMODE_READ, &origin_dev);
 		if (r) {
 			ti->error = "Error opening origin device";

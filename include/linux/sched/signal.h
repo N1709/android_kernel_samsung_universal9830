@@ -8,9 +8,6 @@
 #include <linux/sched/jobctl.h>
 #include <linux/sched/task.h>
 #include <linux/cred.h>
-#include <linux/android_kabi.h>
-#include <linux/mm.h>
-#include <asm/ptrace.h>
 
 /*
  * Types defining task->signal and task->sighand and APIs using them:
@@ -235,10 +232,6 @@ struct signal_struct {
 	struct mutex cred_guard_mutex;	/* guard against foreign influences on
 					 * credential calculations
 					 * (notably. ptrace) */
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 } __randomize_layout;
 
 /*
@@ -380,20 +373,6 @@ static inline int signal_pending_state(long state, struct task_struct *p)
 }
 
 /*
- * This should only be used in fault handlers to decide whether we
- * should stop the current fault routine to handle the signals
- * instead, especially with the case where we've got interrupted with
- * a VM_FAULT_RETRY.
- */
-static inline bool fault_signal_pending(vm_fault_t fault_flags,
-					struct pt_regs *regs)
-{
-	return unlikely((fault_flags & VM_FAULT_RETRY) &&
-			(fatal_signal_pending(current) ||
-			 (user_mode(regs) && signal_pending(current))));
-}
-
-/*
  * Reevaluate whether the task has signals pending delivery.
  * Wake the task if so.
  * This is required every time the blocked sigset_t changes.
@@ -438,19 +417,9 @@ static inline void set_restore_sigmask(void)
 	set_thread_flag(TIF_RESTORE_SIGMASK);
 	WARN_ON(!test_thread_flag(TIF_SIGPENDING));
 }
-
-static inline void clear_tsk_restore_sigmask(struct task_struct *tsk)
-{
-	clear_tsk_thread_flag(tsk, TIF_RESTORE_SIGMASK);
-}
-
 static inline void clear_restore_sigmask(void)
 {
 	clear_thread_flag(TIF_RESTORE_SIGMASK);
-}
-static inline bool test_tsk_restore_sigmask(struct task_struct *tsk)
-{
-	return test_tsk_thread_flag(tsk, TIF_RESTORE_SIGMASK);
 }
 static inline bool test_restore_sigmask(void)
 {
@@ -469,10 +438,6 @@ static inline void set_restore_sigmask(void)
 	current->restore_sigmask = true;
 	WARN_ON(!test_thread_flag(TIF_SIGPENDING));
 }
-static inline void clear_tsk_restore_sigmask(struct task_struct *tsk)
-{
-	tsk->restore_sigmask = false;
-}
 static inline void clear_restore_sigmask(void)
 {
 	current->restore_sigmask = false;
@@ -480,10 +445,6 @@ static inline void clear_restore_sigmask(void)
 static inline bool test_restore_sigmask(void)
 {
 	return current->restore_sigmask;
-}
-static inline bool test_tsk_restore_sigmask(struct task_struct *tsk)
-{
-	return tsk->restore_sigmask;
 }
 static inline bool test_and_clear_restore_sigmask(void)
 {

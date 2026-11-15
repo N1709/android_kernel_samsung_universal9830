@@ -5,7 +5,6 @@
 
 #include <linux/fs.h>
 #include <linux/mount.h>
-#include <linux/pseudo_fs.h>
 #include <linux/magic.h>
 #include "btrfs-tests.h"
 #include "../ctree.h"
@@ -23,31 +22,23 @@ static const struct super_operations btrfs_test_super_ops = {
 	.destroy_inode	= btrfs_test_destroy_inode,
 };
 
-
-static int btrfs_test_init_fs_context(struct fs_context *fc)
+static struct dentry *btrfs_test_mount(struct file_system_type *fs_type,
+				       int flags, const char *dev_name,
+				       void *data)
 {
-	struct pseudo_fs_context *ctx = init_pseudo(fc, BTRFS_TEST_MAGIC);
-	if (!ctx)
-		return -ENOMEM;
-	ctx->ops = &btrfs_test_super_ops;
-	return 0;
+	return mount_pseudo(fs_type, "btrfs_test:", &btrfs_test_super_ops,
+			    NULL, BTRFS_TEST_MAGIC);
 }
 
 static struct file_system_type test_type = {
 	.name		= "btrfs_test_fs",
-	.init_fs_context = btrfs_test_init_fs_context,
+	.mount		= btrfs_test_mount,
 	.kill_sb	= kill_anon_super,
 };
 
 struct inode *btrfs_new_test_inode(void)
 {
-	struct inode *inode;
-
-	inode = new_inode(test_mnt->mnt_sb);
-	if (inode)
-		inode_init_owner(inode, NULL, S_IFREG);
-
-	return inode;
+	return new_inode(test_mnt->mnt_sb);
 }
 
 static int btrfs_init_test_fs(void)
@@ -111,6 +102,7 @@ struct btrfs_fs_info *btrfs_alloc_dummy_fs_info(u32 nodesize, u32 sectorsize)
 	spin_lock_init(&fs_info->qgroup_op_lock);
 	spin_lock_init(&fs_info->super_lock);
 	spin_lock_init(&fs_info->fs_roots_radix_lock);
+	spin_lock_init(&fs_info->tree_mod_seq_lock);
 	mutex_init(&fs_info->qgroup_ioctl_lock);
 	mutex_init(&fs_info->qgroup_rescan_lock);
 	rwlock_init(&fs_info->tree_mod_log_lock);
@@ -177,7 +169,7 @@ void btrfs_free_dummy_fs_info(struct btrfs_fs_info *fs_info)
 
 void btrfs_free_dummy_root(struct btrfs_root *root)
 {
-	if (IS_ERR_OR_NULL(root))
+	if (!root)
 		return;
 	/* Will be freed by btrfs_free_fs_roots */
 	if (WARN_ON(test_bit(BTRFS_ROOT_IN_RADIX, &root->state)))

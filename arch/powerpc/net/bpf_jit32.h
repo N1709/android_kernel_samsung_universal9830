@@ -101,12 +101,12 @@ DECLARE_LOAD_FUNC(sk_load_byte_msh);
 #ifdef CONFIG_SMP
 #ifdef CONFIG_PPC64
 #define PPC_BPF_LOAD_CPU(r)		\
-	do { BUILD_BUG_ON(sizeof_field(struct paca_struct, paca_index) != 2);	\
+	do { BUILD_BUG_ON(FIELD_SIZEOF(struct paca_struct, paca_index) != 2);	\
 		PPC_LHZ_OFFS(r, 13, offsetof(struct paca_struct, paca_index));	\
 	} while (0)
 #else
 #define PPC_BPF_LOAD_CPU(r)     \
-	do { BUILD_BUG_ON(sizeof_field(struct thread_info, cpu) != 4);		\
+	do { BUILD_BUG_ON(FIELD_SIZEOF(struct thread_info, cpu) != 4);		\
 		PPC_LHZ_OFFS(r, (1 & ~(THREAD_SIZE - 1)),			\
 				offsetof(struct thread_info, cpu));		\
 	} while(0)
@@ -122,10 +122,6 @@ DECLARE_LOAD_FUNC(sk_load_byte_msh);
 #else
 #define PPC_NTOHS_OFFS(r, base, i)	PPC_LHZ_OFFS(r, base, i)
 #endif
-
-#define PPC_BPF_LL(r, base, i) do { PPC_LWZ(r, base, i); } while(0)
-#define PPC_BPF_STL(r, base, i) do { PPC_STW(r, base, i); } while(0)
-#define PPC_BPF_STLU(r, base, i) do { PPC_STWU(r, base, i); } while(0)
 
 #define SEEN_DATAREF 0x10000 /* might call external helpers */
 #define SEEN_XREG    0x20000 /* X reg is used */

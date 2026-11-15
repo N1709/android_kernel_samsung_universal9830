@@ -43,7 +43,6 @@ struct etnaviv_file_private {
 
 struct etnaviv_drm_private {
 	int num_gpus;
-	struct device_dma_parameters dma_parms;
 	struct etnaviv_gpu *gpu[ETNA_MAX_PIPES];
 
 	/* list of GEM objects: */
@@ -106,6 +105,17 @@ static inline size_t size_vstruct(size_t nelem, size_t elem_size, size_t base)
 	if (elem_size && nelem > (SIZE_MAX - base) / elem_size)
 		return 0;
 	return base + nelem * elem_size;
+}
+
+/* returns true if fence a comes after fence b */
+static inline bool fence_after(u32 a, u32 b)
+{
+	return (s32)(a - b) > 0;
+}
+
+static inline bool fence_after_eq(u32 a, u32 b)
+{
+	return (s32)(a - b) >= 0;
 }
 
 /*

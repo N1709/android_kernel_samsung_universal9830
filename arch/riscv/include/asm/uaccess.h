@@ -260,7 +260,7 @@ do {								\
 	might_fault();						\
 	access_ok(VERIFY_READ, __p, sizeof(*__p)) ?		\
 		__get_user((x), __p) :				\
-		((x) = (__force __typeof__(x))0, -EFAULT);	\
+		((x) = 0, -EFAULT);				\
 })
 
 #define __put_user_asm(insn, x, ptr, err)			\
@@ -307,7 +307,7 @@ do {								\
 		"	.balign 4\n"				\
 		"4:\n"						\
 		"	li %0, %6\n"				\
-		"	jump 3b, %1\n"				\
+		"	jump 2b, %1\n"				\
 		"	.previous\n"				\
 		"	.section __ex_table,\"a\"\n"		\
 		"	.balign " RISCV_SZPTR "\n"			\

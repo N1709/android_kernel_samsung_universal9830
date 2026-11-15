@@ -114,7 +114,6 @@ typedef void (busy_iter_fn)(struct blk_mq_hw_ctx *, struct request *, void *,
 typedef void (busy_tag_iter_fn)(struct request *, void *, bool);
 typedef int (poll_fn)(struct blk_mq_hw_ctx *, unsigned int);
 typedef int (map_queues_fn)(struct blk_mq_tag_set *set);
-typedef void (cleanup_rq_fn)(struct request *);
 
 
 struct blk_mq_ops {
@@ -166,12 +165,6 @@ struct blk_mq_ops {
 	/* Called from inside blk_get_request() */
 	void (*initialize_rq_fn)(struct request *rq);
 
-	/*
-	 * Called before freeing one request which isn't completed yet,
-	 * and usually for freeing the driver private data
-	 */
-	cleanup_rq_fn		*cleanup_rq;
-
 	map_queues_fn		*map_queues;
 
 #ifdef CONFIG_BLK_DEBUG_FS
@@ -188,13 +181,7 @@ enum {
 	BLK_MQ_F_TAG_SHARED	= 1 << 1,
 	BLK_MQ_F_SG_MERGE	= 1 << 2,
 	BLK_MQ_F_BLOCKING	= 1 << 5,
-	/* Do not allow an I/O scheduler to be configured. */
 	BLK_MQ_F_NO_SCHED	= 1 << 6,
-	/*
-	 * Select 'none' during queue registration in case of a single hwq
-	 * or shared hwqs instead of 'mq-deadline'.
-	 */
-	BLK_MQ_F_NO_SCHED_BY_DEFAULT	= 1 << 7,
 	BLK_MQ_F_ALLOC_POLICY_START_BIT = 8,
 	BLK_MQ_F_ALLOC_POLICY_BITS = 1,
 
@@ -340,11 +327,5 @@ static inline void *blk_mq_rq_to_pdu(struct request *rq)
 #define hctx_for_each_ctx(hctx, ctx, i)					\
 	for ((i) = 0; (i) < (hctx)->nr_ctx &&				\
 	     ({ ctx = (hctx)->ctxs[(i)]; 1; }); (i)++)
-
-static inline void blk_mq_cleanup_rq(struct request *rq)
-{
-	if (rq->q->mq_ops->cleanup_rq)
-		rq->q->mq_ops->cleanup_rq(rq);
-}
 
 #endif

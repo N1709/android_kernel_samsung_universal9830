@@ -767,10 +767,8 @@ static int __init _init_clkctrl_providers(void)
 
 	for_each_matching_node(np, ti_clkctrl_match_table) {
 		ret = _setup_clkctrl_provider(np);
-		if (ret) {
-			of_node_put(np);
+		if (ret)
 			break;
-		}
 	}
 
 	return ret;
@@ -2415,7 +2413,7 @@ static int __init _init(struct omap_hwmod *oh, void *data)
  * a stub; implementing this properly requires iclk autoidle usecounting in
  * the clock code.   No return value.
  */
-static void _setup_iclk_autoidle(struct omap_hwmod *oh)
+static void __init _setup_iclk_autoidle(struct omap_hwmod *oh)
 {
 	struct omap_hwmod_ocp_if *os;
 
@@ -2446,9 +2444,9 @@ static void _setup_iclk_autoidle(struct omap_hwmod *oh)
  * reset.  Returns 0 upon success or a negative error code upon
  * failure.
  */
-static int _setup_reset(struct omap_hwmod *oh)
+static int __init _setup_reset(struct omap_hwmod *oh)
 {
-	int r = 0;
+	int r;
 
 	if (oh->_state != _HWMOD_STATE_INITIALIZED)
 		return -EINVAL;
@@ -2507,7 +2505,7 @@ static int _setup_reset(struct omap_hwmod *oh)
  *
  * No return value.
  */
-static void _setup_postsetup(struct omap_hwmod *oh)
+static void __init _setup_postsetup(struct omap_hwmod *oh)
 {
 	u8 postsetup_state;
 

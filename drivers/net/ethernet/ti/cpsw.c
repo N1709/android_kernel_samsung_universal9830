@@ -961,8 +961,8 @@ static irqreturn_t cpsw_rx_interrupt(int irq, void *dev_id)
 {
 	struct cpsw_common *cpsw = dev_id;
 
-	writel(0, &cpsw->wr_regs->rx_en);
 	cpdma_ctlr_eoi(cpsw->dma, CPDMA_EOI_RX);
+	writel(0, &cpsw->wr_regs->rx_en);
 
 	if (cpsw->quirk_irq) {
 		disable_irq_nosync(cpsw->irqs_table[0]);
@@ -2990,7 +2990,7 @@ static void cpsw_get_ringparam(struct net_device *ndev,
 	struct cpsw_common *cpsw = priv->cpsw;
 
 	/* not supported */
-	ering->tx_max_pending = descs_pool_size - CPSW_MAX_QUEUES;
+	ering->tx_max_pending = 0;
 	ering->tx_pending = cpdma_get_num_tx_descs(cpsw->dma);
 	ering->rx_max_pending = descs_pool_size - CPSW_MAX_QUEUES;
 	ering->rx_pending = cpdma_get_num_rx_descs(cpsw->dma);

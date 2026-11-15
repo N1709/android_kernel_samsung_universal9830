@@ -1857,6 +1857,7 @@ static void atmci_tasklet_func(unsigned long priv)
 				atmci_writel(host, ATMCI_IER, ATMCI_NOTBUSY);
 				state = STATE_WAITING_NOTBUSY;
 			} else if (host->mrq->stop) {
+				atmci_writel(host, ATMCI_IER, ATMCI_CMDRDY);
 				atmci_send_stop_cmd(host, data);
 				state = STATE_SENDING_STOP;
 			} else {
@@ -1889,6 +1890,8 @@ static void atmci_tasklet_func(unsigned long priv)
 				 * command to send.
 				 */
 				if (host->mrq->stop) {
+					atmci_writel(host, ATMCI_IER,
+					             ATMCI_CMDRDY);
 					atmci_send_stop_cmd(host, data);
 					state = STATE_SENDING_STOP;
 				} else {
@@ -1951,14 +1954,13 @@ static void atmci_tasklet_func(unsigned long priv)
 			}
 
 			atmci_request_end(host, host->mrq);
-			goto unlock; /* atmci_request_end() sets host->state */
+			state = STATE_IDLE;
 			break;
 		}
 	} while (state != prev_state);
 
 	host->state = state;
 
-unlock:
 	spin_unlock(&host->lock);
 }
 
@@ -2259,7 +2261,6 @@ static int atmci_init_slot(struct atmel_mci *host,
 {
 	struct mmc_host			*mmc;
 	struct atmel_mci_slot		*slot;
-	int ret;
 
 	mmc = mmc_alloc_host(sizeof(struct atmel_mci_slot), &host->pdev->dev);
 	if (!mmc)
@@ -2340,13 +2341,11 @@ static int atmci_init_slot(struct atmel_mci *host,
 
 	host->slot[id] = slot;
 	mmc_regulator_get_supply(mmc);
-	ret = mmc_add_host(mmc);
-	if (ret) {
-		mmc_free_host(mmc);
-		return ret;
-	}
+	mmc_add_host(mmc);
 
 	if (gpio_is_valid(slot->detect_pin)) {
+		int ret;
+
 		timer_setup(&slot->detect_timer, atmci_detect_change, 0);
 
 		ret = request_irq(gpio_to_irq(slot->detect_pin),
@@ -2540,10 +2539,8 @@ static int atmci_probe(struct platform_device *pdev)
 	/* Get MCI capabilities and set operations according to it */
 	atmci_get_cap(host);
 	ret = atmci_configure_dma(host);
-	if (ret == -EPROBE_DEFER) {
-		clk_disable_unprepare(host->mck);
+	if (ret == -EPROBE_DEFER)
 		goto err_dma_probe_defer;
-	}
 	if (ret == 0) {
 		host->prepare_data = &atmci_prepare_data_dma;
 		host->submit_data = &atmci_submit_data_dma;

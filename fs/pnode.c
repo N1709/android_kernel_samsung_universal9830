@@ -129,11 +129,10 @@ void change_mnt_propagation(struct mount *mnt, int type)
 	if (type != MS_SLAVE) {
 		list_del_init(&mnt->mnt_slave);
 		mnt->mnt_master = NULL;
-		if (type == MS_UNBINDABLE) {
+		if (type == MS_UNBINDABLE)
 			mnt->mnt.mnt_flags |= MNT_UNBINDABLE;
-		} else {
+		else
 			mnt->mnt.mnt_flags &= ~MNT_UNBINDABLE;
-		}
 	}
 }
 
@@ -246,7 +245,7 @@ static int propagate_one(struct mount *m)
 		}
 		do {
 			struct mount *parent = last_source->mnt_parent;
-			if (peers(last_source, first_source))
+			if (last_source == first_source)
 				break;
 			done = parent->mnt_master == p;
 			if (done && peers(n, parent))
@@ -267,13 +266,14 @@ static int propagate_one(struct mount *m)
 	if (IS_ERR(child))
 		return PTR_ERR(child);
 	child->mnt.mnt_flags &= ~MNT_LOCKED;
-	read_seqlock_excl(&mount_lock);
 	mnt_set_mountpoint(m, mp, child);
-	if (m->mnt_master != dest_master)
-		SET_MNT_MARK(m->mnt_master);
-	read_sequnlock_excl(&mount_lock);
 	last_dest = m;
 	last_source = child;
+	if (m->mnt_master != dest_master) {
+		read_seqlock_excl(&mount_lock);
+		SET_MNT_MARK(m->mnt_master);
+		read_sequnlock_excl(&mount_lock);
+	}
 	hlist_add_head(&child->mnt_hash, list);
 	return count_mounts(m->mnt_ns, child);
 }
@@ -607,4 +607,3 @@ int propagate_umount(struct list_head *list)
 
 	return 0;
 }
-

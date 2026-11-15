@@ -91,7 +91,6 @@ int mlx4_en_alloc_tx_queue_per_tc(struct net_device *dev, u8 tc)
 	struct mlx4_en_dev *mdev = priv->mdev;
 	struct mlx4_en_port_profile new_prof;
 	struct mlx4_en_priv *tmp;
-	int total_count;
 	int port_up = 0;
 	int err = 0;
 
@@ -105,14 +104,6 @@ int mlx4_en_alloc_tx_queue_per_tc(struct net_device *dev, u8 tc)
 				      MLX4_EN_NUM_UP_HIGH;
 	new_prof.tx_ring_num[TX] = new_prof.num_tx_rings_p_up *
 				   new_prof.num_up;
-	total_count = new_prof.tx_ring_num[TX] + new_prof.tx_ring_num[TX_XDP];
-	if (total_count > MAX_TX_RINGS) {
-		err = -EINVAL;
-		en_err(priv,
-		       "Total number of TX and XDP rings (%d) exceeds the maximum supported (%d)\n",
-		       total_count, MAX_TX_RINGS);
-		goto out;
-	}
 	err = mlx4_en_try_alloc_resources(priv, tmp, &new_prof, true);
 	if (err)
 		goto out;
@@ -370,9 +361,6 @@ mlx4_en_filter_rfs(struct net_device *net_dev, const struct sk_buff *skb,
 	__be16 dst_port;
 	int nhoff = skb_network_offset(skb);
 	int ret = 0;
-
-	if (skb->encapsulation)
-		return -EPROTONOSUPPORT;
 
 	if (skb->protocol != htons(ETH_P_IP))
 		return -EPROTONOSUPPORT;
@@ -1175,9 +1163,9 @@ static void mlx4_en_do_uc_filter(struct mlx4_en_priv *priv,
 				mlx4_unregister_mac(mdev->dev, priv->port, mac);
 
 				hlist_del_rcu(&entry->hlist);
+				kfree_rcu(entry, rcu);
 				en_dbg(DRV, priv, "Removed MAC %pM on port:%d\n",
 				       entry->mac, priv->port);
-				kfree_rcu(entry, rcu);
 				++removed;
 			}
 		}
@@ -1386,10 +1374,8 @@ static void mlx4_en_tx_timeout(struct net_device *dev)
 	}
 
 	priv->port_stats.tx_timeout++;
-	if (!test_and_set_bit(MLX4_EN_STATE_FLAG_RESTARTING, &priv->state)) {
-		en_dbg(DRV, priv, "Scheduling port restart\n");
-		queue_work(mdev->workqueue, &priv->restart_task);
-	}
+	en_dbg(DRV, priv, "Scheduling watchdog\n");
+	queue_work(mdev->workqueue, &priv->watchdog_task);
 }
 
 
@@ -1743,7 +1729,6 @@ int mlx4_en_start_port(struct net_device *dev)
 				mlx4_en_deactivate_cq(priv, cq);
 				goto tx_err;
 			}
-			clear_bit(MLX4_EN_TX_RING_STATE_RECOVERING, &tx_ring->state);
 			if (t != TX_XDP) {
 				tx_ring->tx_queue = netdev_get_tx_queue(dev, i);
 				tx_ring->recycle_ring = NULL;
@@ -1840,7 +1825,6 @@ int mlx4_en_start_port(struct net_device *dev)
 		local_bh_enable();
 	}
 
-	clear_bit(MLX4_EN_STATE_FLAG_RESTARTING, &priv->state);
 	netif_tx_start_all_queues(dev);
 	netif_device_attach(dev);
 
@@ -2011,7 +1995,7 @@ void mlx4_en_stop_port(struct net_device *dev, int detach)
 static void mlx4_en_restart(struct work_struct *work)
 {
 	struct mlx4_en_priv *priv = container_of(work, struct mlx4_en_priv,
-						 restart_task);
+						 watchdog_task);
 	struct mlx4_en_dev *mdev = priv->mdev;
 	struct net_device *dev = priv->dev;
 
@@ -2281,14 +2265,9 @@ int mlx4_en_try_alloc_resources(struct mlx4_en_priv *priv,
 				bool carry_xdp_prog)
 {
 	struct bpf_prog *xdp_prog;
-	int i, t, ret;
+	int i, t;
 
-	ret = mlx4_en_copy_priv(tmp, priv, prof);
-	if (ret) {
-		en_warn(priv, "%s: mlx4_en_copy_priv() failed, return\n",
-			__func__);
-		return ret;
-	}
+	mlx4_en_copy_priv(tmp, priv, prof);
 
 	if (mlx4_en_alloc_resources(tmp)) {
 		en_warn(priv,
@@ -2307,7 +2286,11 @@ int mlx4_en_try_alloc_resources(struct mlx4_en_priv *priv,
 		lockdep_is_held(&priv->mdev->state_lock));
 
 	if (xdp_prog && carry_xdp_prog) {
-		bpf_prog_add(xdp_prog, tmp->rx_ring_num);
+		xdp_prog = bpf_prog_add(xdp_prog, tmp->rx_ring_num);
+		if (IS_ERR(xdp_prog)) {
+			mlx4_en_free_resources(tmp);
+			return PTR_ERR(xdp_prog);
+		}
 		for (i = 0; i < tmp->rx_ring_num; i++)
 			rcu_assign_pointer(tmp->rx_ring[i]->xdp_prog,
 					   xdp_prog);
@@ -2394,7 +2377,7 @@ static int mlx4_en_change_mtu(struct net_device *dev, int new_mtu)
 	if (netif_running(dev)) {
 		mutex_lock(&mdev->state_lock);
 		if (!mdev->device_up) {
-			/* NIC is probably restarting - let restart task reset
+			/* NIC is probably restarting - let watchdog task reset
 			 * the port */
 			en_dbg(DRV, priv, "Change MTU called with card down!?\n");
 		} else {
@@ -2403,9 +2386,7 @@ static int mlx4_en_change_mtu(struct net_device *dev, int new_mtu)
 			if (err) {
 				en_err(priv, "Failed restarting port:%d\n",
 					 priv->port);
-				if (!test_and_set_bit(MLX4_EN_STATE_FLAG_RESTARTING,
-						      &priv->state))
-					queue_work(mdev->workqueue, &priv->restart_task);
+				queue_work(mdev->workqueue, &priv->watchdog_task);
 			}
 		}
 		mutex_unlock(&mdev->state_lock);
@@ -2817,9 +2798,11 @@ static int mlx4_xdp_set(struct net_device *dev, struct bpf_prog *prog)
 	 * program for a new one.
 	 */
 	if (priv->tx_ring_num[TX_XDP] == xdp_ring_num) {
-		if (prog)
-			bpf_prog_add(prog, priv->rx_ring_num - 1);
-
+		if (prog) {
+			prog = bpf_prog_add(prog, priv->rx_ring_num - 1);
+			if (IS_ERR(prog))
+				return PTR_ERR(prog);
+		}
 		mutex_lock(&mdev->state_lock);
 		for (i = 0; i < priv->rx_ring_num; i++) {
 			old_prog = rcu_dereference_protected(
@@ -2840,8 +2823,13 @@ static int mlx4_xdp_set(struct net_device *dev, struct bpf_prog *prog)
 	if (!tmp)
 		return -ENOMEM;
 
-	if (prog)
-		bpf_prog_add(prog, priv->rx_ring_num - 1);
+	if (prog) {
+		prog = bpf_prog_add(prog, priv->rx_ring_num - 1);
+		if (IS_ERR(prog)) {
+			err = PTR_ERR(prog);
+			goto out;
+		}
+	}
 
 	mutex_lock(&mdev->state_lock);
 	memcpy(&new_prof, priv->prof, sizeof(struct mlx4_en_port_profile));
@@ -2884,13 +2872,13 @@ static int mlx4_xdp_set(struct net_device *dev, struct bpf_prog *prog)
 		if (err) {
 			en_err(priv, "Failed starting port %d for XDP change\n",
 			       priv->port);
-			if (!test_and_set_bit(MLX4_EN_STATE_FLAG_RESTARTING, &priv->state))
-				queue_work(mdev->workqueue, &priv->restart_task);
+			queue_work(mdev->workqueue, &priv->watchdog_task);
 		}
 	}
 
 unlock_out:
 	mutex_unlock(&mdev->state_lock);
+out:
 	kfree(tmp);
 	return err;
 }
@@ -3282,7 +3270,7 @@ int mlx4_en_init_netdev(struct mlx4_en_dev *mdev, int port,
 	priv->counter_index = MLX4_SINK_COUNTER_INDEX(mdev->dev);
 	spin_lock_init(&priv->stats_lock);
 	INIT_WORK(&priv->rx_mode_task, mlx4_en_do_set_rx_mode);
-	INIT_WORK(&priv->restart_task, mlx4_en_restart);
+	INIT_WORK(&priv->watchdog_task, mlx4_en_restart);
 	INIT_WORK(&priv->linkstate_task, mlx4_en_linkstate);
 	INIT_DELAYED_WORK(&priv->stats_task, mlx4_en_do_get_stats);
 	INIT_DELAYED_WORK(&priv->service_task, mlx4_en_service_task);
@@ -3662,8 +3650,6 @@ int mlx4_en_reset_config(struct net_device *dev,
 			en_err(priv, "Failed starting port\n");
 	}
 
-	if (!err)
-		err = mlx4_en_moderation_update(priv);
 out:
 	mutex_unlock(&mdev->state_lock);
 	kfree(tmp);

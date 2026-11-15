@@ -11,7 +11,6 @@
 #include <uapi/linux/pkt_sched.h>
 
 #define DEFAULT_TX_QUEUE_LEN	1000
-#define STAB_SIZE_LOG_MAX	30
 
 struct qdisc_walker {
 	int	stop;
@@ -124,14 +123,23 @@ static inline void qdisc_run(struct Qdisc *q)
 	}
 }
 
-extern const struct nla_policy rtm_tca_policy[TCA_MAX + 1];
+static inline __be16 tc_skb_protocol(const struct sk_buff *skb)
+{
+	/* We need to take extra care in case the skb came via
+	 * vlan accelerated path. In that case, use skb->vlan_proto
+	 * as the original vlan header was already stripped.
+	 */
+	if (skb_vlan_tag_present(skb))
+		return skb->vlan_proto;
+	return skb->protocol;
+}
 
 /* Calculate maximal size of packet seen by hard_start_xmit
    routine of this device.
  */
 static inline unsigned int psched_mtu(const struct net_device *dev)
 {
-	return READ_ONCE(dev->mtu) + dev->hard_header_len;
+	return dev->mtu + dev->hard_header_len;
 }
 
 static inline struct net *qdisc_net(struct Qdisc *q)

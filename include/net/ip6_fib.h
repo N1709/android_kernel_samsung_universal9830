@@ -171,8 +171,7 @@ struct fib6_info {
 					dst_nocount:1,
 					dst_nopolicy:1,
 					dst_host:1,
-					fib6_destroying:1,
-					unused:2;
+					unused:3;
 
 	struct fib6_nh			fib6_nh;
 	struct rcu_head			rcu;
@@ -242,7 +241,7 @@ static inline bool fib6_get_cookie_safe(const struct fib6_info *f6i,
 	fn = rcu_dereference(f6i->fib6_node);
 
 	if (fn) {
-		*cookie = READ_ONCE(fn->fn_sernum);
+		*cookie = fn->fn_sernum;
 		/* pairs with smp_wmb() in fib6_update_sernum_upto_root() */
 		smp_rmb();
 		status = true;
@@ -259,7 +258,8 @@ static inline u32 rt6_get_cookie(const struct rt6_info *rt)
 	rcu_read_lock();
 
 	from = rcu_dereference(rt->from);
-	if (from)
+	if (from && (rt->rt6i_flags & RTF_PCPU ||
+	    unlikely(!list_empty(&rt->rt6i_uncached))))
 		fib6_get_cookie_safe(from, &cookie);
 
 	rcu_read_unlock();
@@ -488,13 +488,6 @@ static inline bool fib6_metric_locked(struct fib6_info *f6i, int metric)
 {
 	return !!(f6i->fib6_metrics->metrics[RTAX_LOCK - 1] & (1 << metric));
 }
-
-#if IS_BUILTIN(CONFIG_IPV6) && defined(CONFIG_BPF_SYSCALL)
-struct bpf_iter__ipv6_route {
-	__bpf_md_ptr(struct bpf_iter_meta *, meta);
-	__bpf_md_ptr(struct fib6_info *, rt);
-};
-#endif
 
 #ifdef CONFIG_IPV6_MULTIPLE_TABLES
 int fib6_rules_init(void);

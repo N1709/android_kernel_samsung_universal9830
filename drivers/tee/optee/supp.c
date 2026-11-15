@@ -19,7 +19,7 @@
 struct optee_supp_req {
 	struct list_head link;
 
-	bool in_queue;
+	bool busy;
 	u32 func;
 	u32 ret;
 	size_t num_params;
@@ -54,6 +54,7 @@ void optee_supp_release(struct optee_supp *supp)
 
 	/* Abort all request retrieved by supplicant */
 	idr_for_each_entry(&supp->idr, req, id) {
+		req->busy = false;
 		idr_remove(&supp->idr, id);
 		req->ret = TEEC_ERROR_COMMUNICATION;
 		complete(&req->c);
@@ -62,7 +63,6 @@ void optee_supp_release(struct optee_supp *supp)
 	/* Abort all queued requests */
 	list_for_each_entry_safe(req, req_tmp, &supp->reqs, link) {
 		list_del(&req->link);
-		req->in_queue = false;
 		req->ret = TEEC_ERROR_COMMUNICATION;
 		complete(&req->c);
 	}
@@ -89,6 +89,7 @@ u32 optee_supp_thrd_req(struct tee_context *ctx, u32 func, size_t num_params,
 	struct optee *optee = tee_get_drvdata(ctx->teedev);
 	struct optee_supp *supp = &optee->supp;
 	struct optee_supp_req *req = kzalloc(sizeof(*req), GFP_KERNEL);
+	bool interruptable;
 	u32 ret;
 
 	if (!req)
@@ -102,7 +103,6 @@ u32 optee_supp_thrd_req(struct tee_context *ctx, u32 func, size_t num_params,
 	/* Insert the request in the request list */
 	mutex_lock(&supp->mutex);
 	list_add_tail(&req->link, &supp->reqs);
-	req->in_queue = true;
 	mutex_unlock(&supp->mutex);
 
 	/* Tell an eventual waiter there's a new request */
@@ -111,18 +111,35 @@ u32 optee_supp_thrd_req(struct tee_context *ctx, u32 func, size_t num_params,
 	/*
 	 * Wait for supplicant to process and return result, once we've
 	 * returned from wait_for_completion(&req->c) successfully we have
-	 * exclusive access again. Allow the wait to be killable such that
-	 * the wait doesn't turn into an indefinite state if the supplicant
-	 * gets hung for some reason.
+	 * exclusive access again.
 	 */
-	if (wait_for_completion_killable(&req->c)) {
+	while (wait_for_completion_interruptible(&req->c)) {
 		mutex_lock(&supp->mutex);
-		if (req->in_queue) {
-			list_del(&req->link);
-			req->in_queue = false;
+		interruptable = !supp->ctx;
+		if (interruptable) {
+			/*
+			 * There's no supplicant available and since the
+			 * supp->mutex currently is held none can
+			 * become available until the mutex released
+			 * again.
+			 *
+			 * Interrupting an RPC to supplicant is only
+			 * allowed as a way of slightly improving the user
+			 * experience in case the supplicant hasn't been
+			 * started yet. During normal operation the supplicant
+			 * will serve all requests in a timely manner and
+			 * interrupting then wouldn't make sense.
+			 */
+			interruptable = !req->busy;
+			if (!req->busy)
+				list_del(&req->link);
 		}
 		mutex_unlock(&supp->mutex);
-		req->ret = TEEC_ERROR_COMMUNICATION;
+
+		if (interruptable) {
+			req->ret = TEEC_ERROR_COMMUNICATION;
+			break;
+		}
 	}
 
 	ret = req->ret;
@@ -159,7 +176,7 @@ static struct optee_supp_req  *supp_pop_entry(struct optee_supp *supp,
 		return ERR_PTR(-ENOMEM);
 
 	list_del(&req->link);
-	req->in_queue = false;
+	req->busy = true;
 
 	return req;
 }
@@ -301,6 +318,7 @@ static struct optee_supp_req *supp_pop_req(struct optee_supp *supp,
 	if ((num_params - nm) != req->num_params)
 		return ERR_PTR(-EINVAL);
 
+	req->busy = false;
 	idr_remove(&supp->idr, id);
 	supp->req_id = -1;
 	*num_meta = nm;

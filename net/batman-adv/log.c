@@ -217,7 +217,6 @@ static const struct file_operations batadv_log_fops = {
 	.read           = batadv_log_read,
 	.poll           = batadv_log_poll,
 	.llseek         = no_llseek,
-	.owner          = THIS_MODULE,
 };
 
 /**

@@ -613,7 +613,7 @@ static struct uart_driver ulite_uart_driver = {
  *
  * Returns: 0 on success, <0 otherwise
  */
-static int ulite_assign(struct device *dev, int id, phys_addr_t base, int irq,
+static int ulite_assign(struct device *dev, int id, u32 base, int irq,
 			struct uartlite_data *pdata)
 {
 	struct uart_port *port;
@@ -846,8 +846,7 @@ static int __init ulite_init(void)
 static void __exit ulite_exit(void)
 {
 	platform_driver_unregister(&ulite_platform_driver);
-	if (ulite_uart_driver.state)
-		uart_unregister_driver(&ulite_uart_driver);
+	uart_unregister_driver(&ulite_uart_driver);
 }
 
 module_init(ulite_init);

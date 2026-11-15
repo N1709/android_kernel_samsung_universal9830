@@ -633,24 +633,15 @@ int tcf_action_exec(struct sk_buff *skb, struct tc_action **actions,
 restart_act_graph:
 	for (i = 0; i < nr_actions; i++) {
 		const struct tc_action *a = actions[i];
-		int repeat_ttl;
 
 		if (jmp_prgcnt > 0) {
 			jmp_prgcnt -= 1;
 			continue;
 		}
-
-		repeat_ttl = 32;
 repeat:
 		ret = a->ops->act(skb, a, res);
-
-		if (unlikely(ret == TC_ACT_REPEAT)) {
-			if (--repeat_ttl != 0)
-				goto repeat;
-			/* suspicious opcode, stop pipeline */
-			net_warn_ratelimited("TC_ACT_REPEAT abuse ?\n");
-			return TC_ACT_OK;
-		}
+		if (ret == TC_ACT_REPEAT)
+			goto repeat;	/* we need a ttl - JHS */
 
 		if (TC_ACT_EXT_CMP(ret, TC_ACT_JUMP)) {
 			jmp_prgcnt = ret & TCA_ACT_MAX_PRIO_MASK;
@@ -777,7 +768,7 @@ int tcf_action_dump(struct sk_buff *skb, struct tc_action *actions[],
 
 	for (i = 0; i < TCA_ACT_MAX_PRIO && actions[i]; i++) {
 		a = actions[i];
-		nest = nla_nest_start(skb, i + 1);
+		nest = nla_nest_start(skb, a->order);
 		if (nest == NULL)
 			goto nla_put_failure;
 		err = tcf_action_dump_1(skb, a, bind, ref);
@@ -932,9 +923,6 @@ struct tc_action *tcf_action_init_1(struct net *net, struct tcf_proto *tp,
 		NL_SET_ERR_MSG(extack, "Invalid control action value");
 		return ERR_PTR(-EINVAL);
 	}
-
-	if (!bind && ovr && err == ACT_P_CREATED)
-		refcount_set(&a->tcfa_refcnt, 2);
 
 	return a;
 
@@ -1297,6 +1285,7 @@ tca_action_gd(struct net *net, struct nlattr *nla, struct nlmsghdr *n,
 			ret = PTR_ERR(act);
 			goto err;
 		}
+		act->order = i;
 		attr_size += tcf_action_fill_size(act);
 		actions[i - 1] = act;
 	}
@@ -1347,16 +1336,11 @@ static int tcf_action_add(struct net *net, struct nlattr *nla,
 			  struct netlink_ext_ack *extack)
 {
 	size_t attr_size = 0;
-	int loop, ret;
+	int ret = 0;
 	struct tc_action *actions[TCA_ACT_MAX_PRIO] = {};
 
-	for (loop = 0; loop < 10; loop++) {
-		ret = tcf_action_init(net, NULL, nla, NULL, NULL, ovr, 0,
-				      actions, &attr_size, true, extack);
-		if (ret != -EAGAIN)
-			break;
-	}
-
+	ret = tcf_action_init(net, NULL, nla, NULL, NULL, ovr, 0, actions,
+			      &attr_size, true, extack);
 	if (ret < 0)
 		return ret;
 	ret = tcf_add_notify(net, n, actions, portid, attr_size, extack);
@@ -1406,8 +1390,11 @@ static int tc_ctl_action(struct sk_buff *skb, struct nlmsghdr *n,
 		 */
 		if (n->nlmsg_flags & NLM_F_REPLACE)
 			ovr = 1;
+replay:
 		ret = tcf_action_add(net, tca[TCA_ACT_TAB], n, portid, ovr,
 				     extack);
+		if (ret == -EAGAIN)
+			goto replay;
 		break;
 	case RTM_DELACTION:
 		ret = tca_action_gd(net, tca[TCA_ACT_TAB], n,

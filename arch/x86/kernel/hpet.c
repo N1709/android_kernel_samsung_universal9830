@@ -71,7 +71,7 @@ static inline void hpet_writel(unsigned int d, unsigned int a)
 }
 
 #ifdef CONFIG_X86_64
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 #endif
 
 static inline void hpet_set_mapping(void)
@@ -909,8 +909,6 @@ int __init hpet_enable(void)
 		return 0;
 
 	hpet_set_mapping();
-	if (!hpet_virt_address)
-		return 0;
 
 	/*
 	 * Read the period and check for a sane value:

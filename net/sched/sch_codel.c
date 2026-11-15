@@ -71,10 +71,10 @@ static struct sk_buff *dequeue_func(struct codel_vars *vars, void *ctx)
 	struct Qdisc *sch = ctx;
 	struct sk_buff *skb = __qdisc_dequeue_head(&sch->q);
 
-	if (skb) {
+	if (skb)
 		sch->qstats.backlog -= qdisc_pkt_len(skb);
-		prefetch(&skb->end); /* we'll need skb_shinfo() */
-	}
+
+	prefetch(&skb->end); /* we'll need skb_shinfo() */
 	return skb;
 }
 
@@ -95,7 +95,10 @@ static struct sk_buff *codel_qdisc_dequeue(struct Qdisc *sch)
 			    &q->stats, qdisc_pkt_len, codel_get_enqueue_time,
 			    drop_func, dequeue_func);
 
-	if (q->stats.drop_count) {
+	/* We cant call qdisc_tree_reduce_backlog() if our qlen is 0,
+	 * or HTB crashes. Defer it for next round.
+	 */
+	if (q->stats.drop_count && sch->q.qlen) {
 		qdisc_tree_reduce_backlog(sch, q->stats.drop_count, q->stats.drop_len);
 		q->stats.drop_count = 0;
 		q->stats.drop_len = 0;

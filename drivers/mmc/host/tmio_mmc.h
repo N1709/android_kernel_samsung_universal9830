@@ -103,8 +103,6 @@
 		TMIO_STAT_CARD_REMOVE | TMIO_STAT_CARD_INSERT)
 #define TMIO_MASK_IRQ     (TMIO_MASK_READOP | TMIO_MASK_WRITEOP | TMIO_MASK_CMD)
 
-#define TMIO_MAX_BLK_SIZE 512
-
 struct tmio_mmc_data;
 struct tmio_mmc_host;
 
@@ -271,11 +269,6 @@ static inline void sd_ctrl_write32_as_16_and_16(struct tmio_mmc_host *host,
 {
 	iowrite16(val & 0xffff, host->ctl + (addr << host->bus_shift));
 	iowrite16(val >> 16, host->ctl + ((addr + 2) << host->bus_shift));
-}
-
-static inline void sd_ctrl_write32(struct tmio_mmc_host *host, int addr, u32 val)
-{
-	iowrite32(val, host->ctl + (addr << host->bus_shift));
 }
 
 static inline void sd_ctrl_write32_rep(struct tmio_mmc_host *host, int addr,

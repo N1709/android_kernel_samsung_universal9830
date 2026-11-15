@@ -413,19 +413,10 @@ void bgx_lmac_rx_tx_enable(int node, int bgx_idx, int lmacid, bool enable)
 	lmac = &bgx->lmac[lmacid];
 
 	cfg = bgx_reg_read(bgx, lmacid, BGX_CMRX_CFG);
-	if (enable) {
+	if (enable)
 		cfg |= CMR_PKT_RX_EN | CMR_PKT_TX_EN;
-
-		/* enable TX FIFO Underflow interrupt */
-		bgx_reg_modify(bgx, lmacid, BGX_GMP_GMI_TXX_INT_ENA_W1S,
-			       GMI_TXX_INT_UNDFLW);
-	} else {
+	else
 		cfg &= ~(CMR_PKT_RX_EN | CMR_PKT_TX_EN);
-
-		/* Disable TX FIFO Underflow interrupt */
-		bgx_reg_modify(bgx, lmacid, BGX_GMP_GMI_TXX_INT_ENA_W1C,
-			       GMI_TXX_INT_UNDFLW);
-	}
 	bgx_reg_write(bgx, lmacid, BGX_CMRX_CFG, cfg);
 
 	if (bgx->is_rgx)
@@ -1127,7 +1118,7 @@ static int bgx_lmac_enable(struct bgx *bgx, u8 lmacid)
 				       phy_interface_mode(lmac->lmac_type)))
 			return -ENODEV;
 
-		phy_start(lmac->phydev);
+		phy_start_aneg(lmac->phydev);
 		return 0;
 	}
 
@@ -1439,18 +1430,16 @@ static acpi_status bgx_acpi_match_id(acpi_handle handle, u32 lvl,
 {
 	struct acpi_buffer string = { ACPI_ALLOCATE_BUFFER, NULL };
 	struct bgx *bgx = context;
-	char bgx_sel[7];
+	char bgx_sel[5];
 
-	snprintf(bgx_sel, sizeof(bgx_sel), "BGX%d", bgx->bgx_id);
+	snprintf(bgx_sel, 5, "BGX%d", bgx->bgx_id);
 	if (ACPI_FAILURE(acpi_get_name(handle, ACPI_SINGLE_NAME, &string))) {
 		pr_warn("Invalid link device\n");
 		return AE_OK;
 	}
 
-	if (strncmp(string.pointer, bgx_sel, 4)) {
-		kfree(string.pointer);
+	if (strncmp(string.pointer, bgx_sel, 4))
 		return AE_OK;
-	}
 
 	acpi_walk_namespace(ACPI_TYPE_DEVICE, handle, 1,
 			    bgx_acpi_register_phy, NULL, bgx, NULL);
@@ -1506,17 +1495,13 @@ static int bgx_init_of_phy(struct bgx *bgx)
 		 * this cortina phy, for which there is no driver
 		 * support, ignore it.
 		 */
-		if (phy_np) {
-			if (!of_device_is_compatible(phy_np, "cortina,cs4223-slice")) {
-				/* Wait until the phy drivers are available */
-				pd = of_phy_find_device(phy_np);
-				if (!pd) {
-					of_node_put(phy_np);
-					goto defer;
-				}
-				bgx->lmac[lmac].phydev = pd;
-			}
-			of_node_put(phy_np);
+		if (phy_np &&
+		    !of_device_is_compatible(phy_np, "cortina,cs4223-slice")) {
+			/* Wait until the phy drivers are available */
+			pd = of_phy_find_device(phy_np);
+			if (!pd)
+				goto defer;
+			bgx->lmac[lmac].phydev = pd;
 		}
 
 		lmac++;
@@ -1532,11 +1517,11 @@ defer:
 	 * for phy devices we may have already found.
 	 */
 	while (lmac) {
-		lmac--;
 		if (bgx->lmac[lmac].phydev) {
 			put_device(&bgx->lmac[lmac].phydev->mdio.dev);
 			bgx->lmac[lmac].phydev = NULL;
 		}
+		lmac--;
 	}
 	of_node_put(node);
 	return -EPROBE_DEFER;
@@ -1559,48 +1544,6 @@ static int bgx_init_phy(struct bgx *bgx)
 	return bgx_init_of_phy(bgx);
 }
 
-static irqreturn_t bgx_intr_handler(int irq, void *data)
-{
-	struct bgx *bgx = (struct bgx *)data;
-	u64 status, val;
-	int lmac;
-
-	for (lmac = 0; lmac < bgx->lmac_count; lmac++) {
-		status = bgx_reg_read(bgx, lmac, BGX_GMP_GMI_TXX_INT);
-		if (status & GMI_TXX_INT_UNDFLW) {
-			pci_err(bgx->pdev, "BGX%d lmac%d UNDFLW\n",
-				bgx->bgx_id, lmac);
-			val = bgx_reg_read(bgx, lmac, BGX_CMRX_CFG);
-			val &= ~CMR_EN;
-			bgx_reg_write(bgx, lmac, BGX_CMRX_CFG, val);
-			val |= CMR_EN;
-			bgx_reg_write(bgx, lmac, BGX_CMRX_CFG, val);
-		}
-		/* clear interrupts */
-		bgx_reg_write(bgx, lmac, BGX_GMP_GMI_TXX_INT, status);
-	}
-
-	return IRQ_HANDLED;
-}
-
-static void bgx_register_intr(struct pci_dev *pdev)
-{
-	struct bgx *bgx = pci_get_drvdata(pdev);
-	int ret;
-
-	ret = pci_alloc_irq_vectors(pdev, BGX_LMAC_VEC_OFFSET,
-				    BGX_LMAC_VEC_OFFSET, PCI_IRQ_ALL_TYPES);
-	if (ret < 0) {
-		pci_err(pdev, "Req for #%d msix vectors failed\n",
-			BGX_LMAC_VEC_OFFSET);
-		return;
-	}
-	ret = pci_request_irq(pdev, GMPX_GMI_TX_INT, bgx_intr_handler, NULL,
-			      bgx, "BGX%d", bgx->bgx_id);
-	if (ret)
-		pci_free_irq(pdev, GMPX_GMI_TX_INT, bgx);
-}
-
 static int bgx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	int err;
@@ -1616,7 +1559,7 @@ static int bgx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	pci_set_drvdata(pdev, bgx);
 
-	err = pcim_enable_device(pdev);
+	err = pci_enable_device(pdev);
 	if (err) {
 		dev_err(dev, "Failed to enable PCI device\n");
 		pci_set_drvdata(pdev, NULL);
@@ -1670,8 +1613,6 @@ static int bgx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	bgx_init_hw(bgx);
 
-	bgx_register_intr(pdev);
-
 	/* Enable all LMACs */
 	for (lmac = 0; lmac < bgx->lmac_count; lmac++) {
 		err = bgx_lmac_enable(bgx, lmac);
@@ -1688,7 +1629,6 @@ static int bgx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 err_enable:
 	bgx_vnic[bgx->bgx_id] = NULL;
-	pci_free_irq(pdev, GMPX_GMI_TX_INT, bgx);
 err_release_regions:
 	pci_release_regions(pdev);
 err_disable_device:
@@ -1705,8 +1645,6 @@ static void bgx_remove(struct pci_dev *pdev)
 	/* Disable all LMACs */
 	for (lmac = 0; lmac < bgx->lmac_count; lmac++)
 		bgx_lmac_disable(bgx, lmac);
-
-	pci_free_irq(pdev, GMPX_GMI_TX_INT, bgx);
 
 	bgx_vnic[bgx->bgx_id] = NULL;
 	pci_release_regions(pdev);

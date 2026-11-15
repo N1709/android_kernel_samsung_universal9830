@@ -17,7 +17,6 @@
 	compatible = "eukrea,cpuimx27", "fsl,imx27";
 
 	memory@a0000000 {
-		device_type = "memory";
 		reg = <0xa0000000 0x04000000>;
 	};
 
@@ -39,7 +38,7 @@
 	pinctrl-0 = <&pinctrl_i2c1>;
 	status = "okay";
 
-	rtc@51 {
+	pcf8563@51 {
 		compatible = "nxp,pcf8563";
 		reg = <0x51>;
 	};
@@ -96,7 +95,7 @@
 &weim {
 	status = "okay";
 
-	nor: flash@0,0 {
+	nor: nor@0,0 {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		compatible = "cfi-flash";

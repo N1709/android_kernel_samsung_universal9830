@@ -594,7 +594,7 @@ static u32 qedf_get_login_failures(void *cookie)
 }
 
 static struct qed_fcoe_cb_ops qedf_cb_ops = {
-	.common = {
+	{
 		.link_update = qedf_link_update,
 		.dcbx_aen = qedf_dcbx_handler,
 		.get_generic_tlv_data = qedf_get_generic_tlv_data,
@@ -1418,7 +1418,7 @@ static struct libfc_function_template qedf_lport_template = {
 
 static void qedf_fcoe_ctlr_setup(struct qedf_ctx *qedf)
 {
-	fcoe_ctlr_init(&qedf->ctlr, FIP_MODE_AUTO);
+	fcoe_ctlr_init(&qedf->ctlr, FIP_ST_AUTO);
 
 	qedf->ctlr.send = qedf_fip_send;
 	qedf->ctlr.get_src_addr = qedf_get_src_mac;
@@ -2420,7 +2420,6 @@ static int qedf_alloc_and_init_sb(struct qedf_ctx *qedf,
 	    sb_id, QED_SB_TYPE_STORAGE);
 
 	if (ret) {
-		dma_free_coherent(&qedf->pdev->dev, sizeof(*sb_virt), sb_virt, sb_phys);
 		QEDF_ERR(&(qedf->dbg_ctx), "Status block initialization "
 			  "failed for id = %d.\n", sb_id);
 		return ret;
@@ -2962,7 +2961,7 @@ static int __qedf_probe(struct pci_dev *pdev, int mode)
 {
 	int rc = -EINVAL;
 	struct fc_lport *lport;
-	struct qedf_ctx *qedf = NULL;
+	struct qedf_ctx *qedf;
 	struct Scsi_Host *host;
 	bool is_vf = false;
 	struct qed_ll2_params params;
@@ -2990,7 +2989,6 @@ static int __qedf_probe(struct pci_dev *pdev, int mode)
 
 		/* Initialize qedf_ctx */
 		qedf = lport_priv(lport);
-		set_bit(QEDF_PROBING, &qedf->flags);
 		qedf->lport = lport;
 		qedf->ctlr.lp = lport;
 		qedf->pdev = pdev;
@@ -3013,11 +3011,8 @@ static int __qedf_probe(struct pci_dev *pdev, int mode)
 	} else {
 		/* Init pointers during recovery */
 		qedf = pci_get_drvdata(pdev);
-		set_bit(QEDF_PROBING, &qedf->flags);
 		lport = qedf->lport;
 	}
-
-	QEDF_INFO(&qedf->dbg_ctx, QEDF_LOG_DISC, "Probe started.\n");
 
 	host = lport->host;
 
@@ -3102,7 +3097,6 @@ static int __qedf_probe(struct pci_dev *pdev, int mode)
 	}
 
 	/* Start the Slowpath-process */
-	memset(&slowpath_params, 0, sizeof(struct qed_slowpath_params));
 	slowpath_params.int_mode = QED_INT_MODE_MSIX;
 	slowpath_params.drv_major = QEDF_DRIVER_MAJOR_VER;
 	slowpath_params.drv_minor = QEDF_DRIVER_MINOR_VER;
@@ -3318,10 +3312,6 @@ static int __qedf_probe(struct pci_dev *pdev, int mode)
 	else
 		fc_fabric_login(lport);
 
-	QEDF_INFO(&qedf->dbg_ctx, QEDF_LOG_DISC, "Probe done.\n");
-
-	clear_bit(QEDF_PROBING, &qedf->flags);
-
 	/* All good */
 	return 0;
 
@@ -3494,24 +3484,10 @@ void qedf_get_protocol_tlv_data(void *dev, void *data)
 {
 	struct qedf_ctx *qedf = dev;
 	struct qed_mfw_tlv_fcoe *fcoe = data;
-	struct fc_lport *lport;
-	struct Scsi_Host *host;
-	struct fc_host_attrs *fc_host;
+	struct fc_lport *lport = qedf->lport;
+	struct Scsi_Host *host = lport->host;
+	struct fc_host_attrs *fc_host = shost_to_fc_host(host);
 	struct fc_host_statistics *hst;
-
-	if (!qedf) {
-		QEDF_ERR(NULL, "qedf is null.\n");
-		return;
-	}
-
-	if (test_bit(QEDF_PROBING, &qedf->flags)) {
-		QEDF_ERR(&qedf->dbg_ctx, "Function is still probing.\n");
-		return;
-	}
-
-	lport = qedf->lport;
-	host = lport->host;
-	fc_host = shost_to_fc_host(host);
 
 	/* Force a refresh of the fc_host stats including offload stats */
 	hst = qedf_fc_get_host_stats(host);

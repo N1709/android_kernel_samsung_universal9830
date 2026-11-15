@@ -257,11 +257,6 @@ static const struct fb_videomode modedb[] = {
 	{ NULL, 72, 480, 300, 33386, 40, 24, 11, 19, 80, 3, 0,
 		FB_VMODE_DOUBLE },
 
-	/* 1920x1080 @ 60 Hz, 67.3 kHz hsync */
-	{ NULL, 60, 1920, 1080, 6734, 148, 88, 36, 4, 44, 5, 0,
-		FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
-		FB_VMODE_NONINTERLACED },
-
 	/* 1920x1200 @ 60 Hz, 74.5 Khz hsync */
 	{ NULL, 60, 1920, 1200, 5177, 128, 336, 1, 38, 208, 3,
 		FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
@@ -294,7 +289,7 @@ static const struct fb_videomode modedb[] = {
 };
 
 #ifdef CONFIG_FB_MODE_HELPERS
-const struct fb_videomode cea_modes[100] = {
+const struct fb_videomode cea_modes[65] = {
 	/* #1: 640x480p@59.94/60Hz */
 	[1] = {
 		NULL, 60, 640, 480, 39722, 48, 16, 33, 10, 96, 2, 0,
@@ -347,11 +342,6 @@ const struct fb_videomode cea_modes[100] = {
 	/* #35: (2880)x480p4x@59.94/60Hz */
 	[35] = {
 		NULL, 60, 2880, 480, 9250, 240, 64, 30, 9, 248, 6, 0,
-		FB_VMODE_NONINTERLACED, 0,
-	},
-	/* #90: (2560)x1080p4x@60Hz */
-	[90] = {
-		NULL, 60, 2560, 1080, 19800, 148, 248, 11, 4, 44, 5, 0,
 		FB_VMODE_NONINTERLACED, 0,
 	},
 };
@@ -944,9 +934,6 @@ void fb_var_to_videomode(struct fb_videomode *mode,
 		vtotal /= 2;
 	if (var->vmode & FB_VMODE_DOUBLE)
 		vtotal *= 2;
-
-	if (!htotal || !vtotal)
-		return;
 
 	hfreq = pixclock/htotal;
 	mode->refresh = hfreq/vtotal;

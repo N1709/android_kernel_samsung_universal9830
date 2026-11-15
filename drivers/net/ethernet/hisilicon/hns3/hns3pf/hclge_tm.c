@@ -54,8 +54,7 @@ static int hclge_shaper_para_calc(u32 ir, u8 shaper_level,
 	u32 tick;
 
 	/* Calc tick */
-	if (shaper_level >= HCLGE_SHAPER_LVL_CNT ||
-	    ir > HCLGE_ETHER_MAX_RATE)
+	if (shaper_level >= HCLGE_SHAPER_LVL_CNT)
 		return -EINVAL;
 
 	tick = tick_array[shaper_level];
@@ -546,7 +545,7 @@ static void hclge_tm_vport_tc_info_update(struct hclge_vport *vport)
 	}
 
 	memcpy(kinfo->prio_tc, hdev->tm_info.prio_tc,
-	       sizeof_field(struct hnae3_knic_private_info, prio_tc));
+	       FIELD_SIZEOF(struct hnae3_knic_private_info, prio_tc));
 }
 
 static void hclge_tm_vport_info_update(struct hclge_dev *hdev)
@@ -1059,9 +1058,6 @@ static int hclge_tm_schd_mode_vnet_base_cfg(struct hclge_vport *vport)
 	int ret;
 	u8 i;
 
-	if (vport->vport_id >= HNAE3_MAX_TC)
-		return -EINVAL;
-
 	ret = hclge_tm_pri_schd_mode_cfg(hdev, vport->vport_id);
 	if (ret)
 		return ret;
@@ -1163,7 +1159,7 @@ static int hclge_pfc_setup_hw(struct hclge_dev *hdev)
 				HCLGE_RX_MAC_PAUSE_EN_MSK;
 
 	return hclge_pfc_pause_en_cfg(hdev, enable_bitmap,
-				      hdev->tm_info.pfc_en);
+				      hdev->tm_info.hw_pfc_map);
 }
 
 /* Each Tc has a 1024 queue sets to backpress, it divides to

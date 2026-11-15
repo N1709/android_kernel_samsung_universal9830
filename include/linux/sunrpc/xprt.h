@@ -330,7 +330,6 @@ struct xprt_class {
 	struct rpc_xprt *	(*setup)(struct xprt_create *);
 	struct module		*owner;
 	char			name[32];
-	const char *		netid[];
 };
 
 /*
@@ -461,11 +460,6 @@ static inline int xprt_connecting(struct rpc_xprt *xprt)
 static inline int xprt_test_and_set_connecting(struct rpc_xprt *xprt)
 {
 	return test_and_set_bit(XPRT_CONNECTING, &xprt->state);
-}
-
-static inline int xprt_close_wait(struct rpc_xprt *xprt)
-{
-	return test_bit(XPRT_CLOSE_WAIT, &xprt->state);
 }
 
 static inline void xprt_set_bound(struct rpc_xprt *xprt)

@@ -44,9 +44,6 @@
 #include "internal.h"
 #include "mount.h"
 
-#define CREATE_TRACE_POINTS
-#include <trace/events/namei.h>
-
 /* [Feb-1997 T. Schoebel-Theuer]
  * Fundamental changes in the pathname lookup mechanisms (namei)
  * were necessary because of omirr.  The reason is that omirr needs
@@ -772,81 +769,6 @@ static inline int d_revalidate(struct dentry *dentry, unsigned int flags)
 		return 1;
 }
 
-#define INIT_PATH_SIZE 64
-
-static void success_walk_trace(struct nameidata *nd)
-{
-	struct path *pt = &nd->path;
-	struct inode *i = nd->inode;
-	char buf[INIT_PATH_SIZE], *try_buf;
-	int cur_path_size;
-	char *p;
-
-	/* When eBPF/ tracepoint is disabled, keep overhead low. */
-	if (!trace_inodepath_enabled())
-		return;
-
-	/* First try stack allocated buffer. */
-	try_buf = buf;
-	cur_path_size = INIT_PATH_SIZE;
-
-	while (cur_path_size <= PATH_MAX) {
-		/* Free previous heap allocation if we are now trying
-		 * a second or later heap allocation.
-		 */
-		if (try_buf != buf)
-			kfree(try_buf);
-
-		/* All but the first alloc are on the heap. */
-		if (cur_path_size != INIT_PATH_SIZE) {
-			try_buf = kmalloc(cur_path_size, GFP_KERNEL);
-			if (!try_buf) {
-				try_buf = buf;
-				sprintf(try_buf, "error:buf_alloc_failed");
-				break;
-			}
-		}
-
-		p = d_path(pt, try_buf, cur_path_size);
-
-		if (!IS_ERR(p)) {
-			char *end = mangle_path(try_buf, p, "\n");
-
-			if (end) {
-				try_buf[end - try_buf] = 0;
-				break;
-			} else {
-				/* On mangle errors, double path size
-				 * till PATH_MAX.
-				 */
-				cur_path_size = cur_path_size << 1;
-				continue;
-			}
-		}
-
-		if (PTR_ERR(p) == -ENAMETOOLONG) {
-			/* If d_path complains that name is too long,
-			 * then double path size till PATH_MAX.
-			 */
-			cur_path_size = cur_path_size << 1;
-			continue;
-		}
-
-		sprintf(try_buf, "error:d_path_failed_%lu",
-			-1 * PTR_ERR(p));
-		break;
-	}
-
-	if (cur_path_size > PATH_MAX)
-		sprintf(try_buf, "error:d_path_name_too_long");
-
-	trace_inodepath(i, try_buf);
-
-	if (try_buf != buf)
-		kfree(try_buf);
-	return;
-}
-
 /**
  * complete_walk - successful completion of path walk
  * @nd:  pointer nameidata
@@ -869,21 +791,15 @@ static int complete_walk(struct nameidata *nd)
 			return -ECHILD;
 	}
 
-	if (likely(!(nd->flags & LOOKUP_JUMPED))) {
-		success_walk_trace(nd);
+	if (likely(!(nd->flags & LOOKUP_JUMPED)))
 		return 0;
-	}
 
-	if (likely(!(dentry->d_flags & DCACHE_OP_WEAK_REVALIDATE))) {
-		success_walk_trace(nd);
+	if (likely(!(dentry->d_flags & DCACHE_OP_WEAK_REVALIDATE)))
 		return 0;
-	}
 
 	status = dentry->d_op->d_weak_revalidate(dentry, nd->flags);
-	if (status > 0) {
-		success_walk_trace(nd);
+	if (status > 0)
 		return 0;
-	}
 
 	if (!status)
 		status = -ESTALE;
@@ -1093,8 +1009,7 @@ static int may_linkat(struct path *link)
  * may_create_in_sticky - Check whether an O_CREAT open in a sticky directory
  *			  should be allowed, or not, on files that already
  *			  exist.
- * @dir_mode: mode bits of directory
- * @dir_uid: owner of directory
+ * @dir: the sticky parent directory
  * @inode: the inode of the file to open
  *
  * Block an O_CREAT open of a FIFO (or a regular file) when:
@@ -1110,18 +1025,18 @@ static int may_linkat(struct path *link)
  *
  * Returns 0 if the open is allowed, -ve on error.
  */
-static int may_create_in_sticky(umode_t dir_mode, kuid_t dir_uid,
+static int may_create_in_sticky(struct dentry * const dir,
 				struct inode * const inode)
 {
 	if ((!sysctl_protected_fifos && S_ISFIFO(inode->i_mode)) ||
 	    (!sysctl_protected_regular && S_ISREG(inode->i_mode)) ||
-	    likely(!(dir_mode & S_ISVTX)) ||
-	    uid_eq(inode->i_uid, dir_uid) ||
+	    likely(!(dir->d_inode->i_mode & S_ISVTX)) ||
+	    uid_eq(inode->i_uid, dir->d_inode->i_uid) ||
 	    uid_eq(current_fsuid(), inode->i_uid))
 		return 0;
 
-	if (likely(dir_mode & 0002) ||
-	    (dir_mode & 0020 &&
+	if (likely(dir->d_inode->i_mode & 0002) ||
+	    (dir->d_inode->i_mode & 0020 &&
 	     ((sysctl_protected_fifos >= 2 && S_ISFIFO(inode->i_mode)) ||
 	      (sysctl_protected_regular >= 2 && S_ISREG(inode->i_mode))))) {
 		return -EACCES;
@@ -1153,7 +1068,7 @@ const char *get_link(struct nameidata *nd)
 		return ERR_PTR(error);
 
 	nd->last_type = LAST_BIND;
-	res = READ_ONCE(inode->i_link);
+	res = inode->i_link;
 	if (!res) {
 		const char * (*get)(struct dentry *, struct inode *,
 				struct delayed_call *);
@@ -1452,7 +1367,7 @@ static int follow_dotdot_rcu(struct nameidata *nd)
 			nd->path.dentry = parent;
 			nd->seq = seq;
 			if (unlikely(!path_connected(&nd->path)))
-				return -ECHILD;
+				return -ENOENT;
 			break;
 		} else {
 			struct mount *mnt = real_mount(nd->path.mnt);
@@ -2418,8 +2333,8 @@ static int path_lookupat(struct nameidata *nd, unsigned flags, struct path *path
 	return err;
 }
 
-int filename_lookup(int dfd, struct filename *name, unsigned flags,
-		    struct path *path, struct path *root)
+static int filename_lookup(int dfd, struct filename *name, unsigned flags,
+			   struct path *path, struct path *root)
 {
 	int retval;
 	struct nameidata nd;
@@ -2659,26 +2574,6 @@ struct dentry *lookup_one_len_unlocked(const char *name,
 }
 EXPORT_SYMBOL(lookup_one_len_unlocked);
 
-/*
- * Like lookup_one_len_unlocked(), except that it yields ERR_PTR(-ENOENT)
- * on negatives.  Returns known positive or ERR_PTR(); that's what
- * most of the users want.  Note that pinned negative with unlocked parent
- * _can_ become positive at any time, so callers of lookup_one_len_unlocked()
- * need to be very careful; pinned positives have ->d_inode stable, so
- * this one avoids such problems.
- */
-struct dentry *lookup_positive_unlocked(const char *name,
-				       struct dentry *base, int len)
-{
-	struct dentry *ret = lookup_one_len_unlocked(name, base, len);
-	if (!IS_ERR(ret) && d_is_negative(ret)) {
-		dput(ret);
-		ret = ERR_PTR(-ENOENT);
-	}
-	return ret;
-}
-EXPORT_SYMBOL(lookup_positive_unlocked);
-
 #ifdef CONFIG_UNIX98_PTYS
 int path_pts(struct path *path)
 {
@@ -2697,7 +2592,7 @@ int path_pts(struct path *path)
 	this.name = "pts";
 	this.len = 3;
 	child = d_hash_and_lookup(parent, &this);
-	if (IS_ERR_OR_NULL(child))
+	if (!child)
 		return -ENOENT;
 
 	path->dentry = child;
@@ -3363,8 +3258,6 @@ static int do_last(struct nameidata *nd,
 		   struct file *file, const struct open_flags *op)
 {
 	struct dentry *dir = nd->path.dentry;
-	kuid_t dir_uid = nd->inode->i_uid;
-	umode_t dir_mode = nd->inode->i_mode;
 	int open_flag = op->open_flag;
 	bool will_truncate = (open_flag & O_TRUNC) != 0;
 	bool got_write = false;
@@ -3500,7 +3393,7 @@ finish_open:
 		error = -EISDIR;
 		if (d_is_dir(nd->path.dentry))
 			goto out;
-		error = may_create_in_sticky(dir_mode, dir_uid,
+		error = may_create_in_sticky(dir,
 					     d_backing_inode(nd->path.dentry));
 		if (unlikely(error))
 			goto out;
@@ -3557,8 +3450,6 @@ struct dentry *vfs_tmpfile(struct dentry *dentry, umode_t mode, int open_flag)
 	child = d_alloc(dentry, &slash_name);
 	if (unlikely(!child))
 		goto out_err;
-	if (!IS_POSIXACL(dir))
-		mode &= ~current_umask();
 	error = dir->i_op->tmpfile(dir, child, mode);
 	if (error)
 		goto out_err;
@@ -4047,10 +3938,6 @@ retry:
 	if (error)
 		goto exit3;
 	error = vfs_rmdir(path.dentry->d_inode, dentry);
-#ifdef CONFIG_PROC_DLOG
-	if (!error)
-		dlog_hook_rmdir(dentry, &path);
-#endif
 exit3:
 	dput(dentry);
 exit2:
@@ -4173,10 +4060,6 @@ retry_deleg:
 		if (error)
 			goto exit2;
 		error = vfs_unlink(path.dentry->d_inode, dentry, &delegated_inode);
-#ifdef CONFIG_PROC_DLOG
-		if (!error)
-			dlog_hook(dentry, inode, &path);
-#endif
 exit2:
 		dput(dentry);
 	}
@@ -4847,7 +4730,7 @@ int vfs_readlink(struct dentry *dentry, char __user *buffer, int buflen)
 		spin_unlock(&inode->i_lock);
 	}
 
-	link = READ_ONCE(inode->i_link);
+	link = inode->i_link;
 	if (!link) {
 		link = inode->i_op->get_link(dentry, inode, &done);
 		if (IS_ERR(link))
@@ -4885,9 +4768,10 @@ const char *vfs_get_link(struct dentry *dentry, struct delayed_call *done)
 EXPORT_SYMBOL(vfs_get_link);
 
 /* get the link contents into pagecache */
-static char *__page_get_link(struct dentry *dentry, struct inode *inode,
-			     struct delayed_call *callback)
+const char *page_get_link(struct dentry *dentry, struct inode *inode,
+			  struct delayed_call *callback)
 {
+	char *kaddr;
 	struct page *page;
 	struct address_space *mapping = inode->i_mapping;
 
@@ -4906,23 +4790,8 @@ static char *__page_get_link(struct dentry *dentry, struct inode *inode,
 	}
 	set_delayed_call(callback, page_put_link, page);
 	BUG_ON(mapping_gfp_mask(mapping) & __GFP_HIGHMEM);
-	return page_address(page);
-}
-
-const char *page_get_link_raw(struct dentry *dentry, struct inode *inode,
-			      struct delayed_call *callback)
-{
-	return __page_get_link(dentry, inode, callback);
-}
-EXPORT_SYMBOL_GPL(page_get_link_raw);
-
-const char *page_get_link(struct dentry *dentry, struct inode *inode,
-					struct delayed_call *callback)
-{
-	char *kaddr = __page_get_link(dentry, inode, callback);
-
-	if (!IS_ERR(kaddr))
-		nd_terminate_link(kaddr, inode->i_size, PAGE_SIZE - 1);
+	kaddr = page_address(page);
+	nd_terminate_link(kaddr, inode->i_size, PAGE_SIZE - 1);
 	return kaddr;
 }
 
@@ -4952,7 +4821,7 @@ int __page_symlink(struct inode *inode, const char *symname, int len, int nofs)
 {
 	struct address_space *mapping = inode->i_mapping;
 	struct page *page;
-	void *fsdata = NULL;
+	void *fsdata;
 	int err;
 	unsigned int flags = 0;
 	if (nofs)

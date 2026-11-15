@@ -140,7 +140,7 @@ struct intel_uncore_box {
 #define UNCORE_BOX_FLAG_CFL8_CBOX_MSR_OFFS	2
 
 struct uncore_event_desc {
-	struct device_attribute attr;
+	struct kobj_attribute attr;
 	const char *config;
 };
 
@@ -160,8 +160,8 @@ struct pci2phy_map {
 
 struct pci2phy_map *__find_pci2phy_map(int segment);
 
-ssize_t uncore_event_show(struct device *dev,
-			  struct device_attribute *attr, char *buf);
+ssize_t uncore_event_show(struct kobject *kobj,
+			  struct kobj_attribute *attr, char *buf);
 
 #define INTEL_UNCORE_EVENT_DESC(_name, _config)			\
 {								\
@@ -170,14 +170,14 @@ ssize_t uncore_event_show(struct device *dev,
 }
 
 #define DEFINE_UNCORE_FORMAT_ATTR(_var, _name, _format)			\
-static ssize_t __uncore_##_var##_show(struct device *dev,		\
-				struct device_attribute *attr,		\
+static ssize_t __uncore_##_var##_show(struct kobject *kobj,		\
+				struct kobj_attribute *attr,		\
 				char *page)				\
 {									\
 	BUILD_BUG_ON(sizeof(_format) >= PAGE_SIZE);			\
 	return sprintf(page, _format "\n");				\
 }									\
-static struct device_attribute format_attr_##_var =			\
+static struct kobj_attribute format_attr_##_var =			\
 	__ATTR(_name, 0444, __uncore_##_var##_show, NULL)
 
 static inline bool uncore_pmc_fixed(int idx)
@@ -292,8 +292,8 @@ static inline
 unsigned int uncore_freerunning_counter(struct intel_uncore_box *box,
 					struct perf_event *event)
 {
-	unsigned int type = uncore_freerunning_type(event->hw.config);
-	unsigned int idx = uncore_freerunning_idx(event->hw.config);
+	unsigned int type = uncore_freerunning_type(event->attr.config);
+	unsigned int idx = uncore_freerunning_idx(event->attr.config);
 	struct intel_uncore_pmu *pmu = box->pmu;
 
 	return pmu->type->freerunning[type].counter_base +
@@ -377,7 +377,7 @@ static inline
 unsigned int uncore_freerunning_bits(struct intel_uncore_box *box,
 				     struct perf_event *event)
 {
-	unsigned int type = uncore_freerunning_type(event->hw.config);
+	unsigned int type = uncore_freerunning_type(event->attr.config);
 
 	return box->pmu->type->freerunning[type].bits;
 }
@@ -385,7 +385,7 @@ unsigned int uncore_freerunning_bits(struct intel_uncore_box *box,
 static inline int uncore_num_freerunning(struct intel_uncore_box *box,
 					 struct perf_event *event)
 {
-	unsigned int type = uncore_freerunning_type(event->hw.config);
+	unsigned int type = uncore_freerunning_type(event->attr.config);
 
 	return box->pmu->type->freerunning[type].num_counters;
 }
@@ -399,8 +399,8 @@ static inline int uncore_num_freerunning_types(struct intel_uncore_box *box,
 static inline bool check_valid_freerunning_event(struct intel_uncore_box *box,
 						 struct perf_event *event)
 {
-	unsigned int type = uncore_freerunning_type(event->hw.config);
-	unsigned int idx = uncore_freerunning_idx(event->hw.config);
+	unsigned int type = uncore_freerunning_type(event->attr.config);
+	unsigned int idx = uncore_freerunning_idx(event->attr.config);
 
 	return (type < uncore_num_freerunning_types(box, event)) &&
 	       (idx < uncore_num_freerunning(box, event));
@@ -419,14 +419,16 @@ static inline bool is_freerunning_event(struct perf_event *event)
 	       (((cfg >> 8) & 0xff) >= UNCORE_FREERUNNING_UMASK_START);
 }
 
-/* Check and reject invalid config */
-static inline int uncore_freerunning_hw_config(struct intel_uncore_box *box,
-					       struct perf_event *event)
+static inline void uncore_disable_box(struct intel_uncore_box *box)
 {
-	if (is_freerunning_event(event))
-		return 0;
+	if (box->pmu->type->ops->disable_box)
+		box->pmu->type->ops->disable_box(box);
+}
 
-	return -EINVAL;
+static inline void uncore_enable_box(struct intel_uncore_box *box)
+{
+	if (box->pmu->type->ops->enable_box)
+		box->pmu->type->ops->enable_box(box);
 }
 
 static inline void uncore_disable_event(struct intel_uncore_box *box,

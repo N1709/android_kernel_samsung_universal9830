@@ -111,24 +111,7 @@
 #define cpu_has_tx39_cache	__opt(MIPS_CPU_TX39_CACHE)
 #endif
 #ifndef cpu_has_octeon_cache
-#define cpu_has_octeon_cache						\
-({									\
-	int __res;							\
-									\
-	switch (boot_cpu_type()) {					\
-	case CPU_CAVIUM_OCTEON:						\
-	case CPU_CAVIUM_OCTEON_PLUS:					\
-	case CPU_CAVIUM_OCTEON2:					\
-	case CPU_CAVIUM_OCTEON3:					\
-		__res = 1;						\
-		break;							\
-									\
-	default:							\
-		__res = 0;						\
-	}								\
-									\
-	__res;								\
-})
+#define cpu_has_octeon_cache	0
 #endif
 /* Don't override `cpu_has_fpu' to 1 or the "nofpu" option won't work.  */
 #ifndef cpu_has_fpu
@@ -349,7 +332,7 @@
 ({									\
 	int __res;							\
 									\
-	switch (boot_cpu_type()) {					\
+	switch (current_cpu_type()) {					\
 	case CPU_M14KC:							\
 	case CPU_74K:							\
 	case CPU_1074K:							\
@@ -402,22 +385,6 @@
 
 #ifndef cpu_has_dsp3
 #define cpu_has_dsp3		__ase(MIPS_ASE_DSP3)
-#endif
-
-#ifndef cpu_has_loongson_mmi
-#define cpu_has_loongson_mmi		__ase(MIPS_ASE_LOONGSON_MMI)
-#endif
-
-#ifndef cpu_has_loongson_cam
-#define cpu_has_loongson_cam		__ase(MIPS_ASE_LOONGSON_CAM)
-#endif
-
-#ifndef cpu_has_loongson_ext
-#define cpu_has_loongson_ext		__ase(MIPS_ASE_LOONGSON_EXT)
-#endif
-
-#ifndef cpu_has_loongson_ext2
-#define cpu_has_loongson_ext2		__ase(MIPS_ASE_LOONGSON_EXT2)
 #endif
 
 #ifndef cpu_has_mipsmt

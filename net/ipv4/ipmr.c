@@ -265,9 +265,7 @@ static int __net_init ipmr_rules_init(struct net *net)
 	return 0;
 
 err2:
-	rtnl_lock();
 	ipmr_free_table(mrt);
-	rtnl_unlock();
 err1:
 	fib_rules_unregister(ops);
 	return err;
@@ -2280,8 +2278,7 @@ int ipmr_get_route(struct net *net, struct sk_buff *skb,
 			rcu_read_unlock();
 			return -ENODEV;
 		}
-
-		skb2 = skb_realloc_headroom(skb, sizeof(struct iphdr));
+		skb2 = skb_clone(skb, GFP_ATOMIC);
 		if (!skb2) {
 			read_unlock(&mrt_lock);
 			rcu_read_unlock();
@@ -2854,7 +2851,7 @@ out:
  */
 
 static void *ipmr_vif_seq_start(struct seq_file *seq, loff_t *pos)
-	__acquires(RCU)
+	__acquires(mrt_lock)
 {
 	struct mr_vif_iter *iter = seq->private;
 	struct net *net = seq_file_net(seq);
@@ -2866,14 +2863,14 @@ static void *ipmr_vif_seq_start(struct seq_file *seq, loff_t *pos)
 
 	iter->mrt = mrt;
 
-	rcu_read_lock();
+	read_lock(&mrt_lock);
 	return mr_vif_seq_start(seq, pos);
 }
 
 static void ipmr_vif_seq_stop(struct seq_file *seq, void *v)
-	__releases(RCU)
+	__releases(mrt_lock)
 {
-	rcu_read_unlock();
+	read_unlock(&mrt_lock);
 }
 
 static int ipmr_vif_seq_show(struct seq_file *seq, void *v)

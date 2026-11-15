@@ -4280,18 +4280,7 @@ intel_dp_check_mst_status(struct intel_dp *intel_dp)
 	bool bret;
 
 	if (intel_dp->is_mst) {
-		/*
-		 * The +2 is because DP_DPRX_ESI_LEN is 14, but we then
-		 * pass in "esi+10" to drm_dp_channel_eq_ok(), which
-		 * takes a 6-byte array. So we actually need 16 bytes
-		 * here.
-		 *
-		 * Somebody who knows what the limits actually are
-		 * should check this, but for now this is at least
-		 * harmless and avoids a valid compiler warning about
-		 * using more of the array than we have allocated.
-		 */
-		u8 esi[DP_DPRX_ESI_LEN+2] = { 0 };
+		u8 esi[DP_DPRX_ESI_LEN] = { 0 };
 		int ret = 0;
 		int retry;
 		bool handled;
@@ -5113,16 +5102,6 @@ intel_dp_long_pulse(struct intel_connector *connector,
 		 */
 		status = connector_status_disconnected;
 		goto out;
-	}
-
-	/*
-	 * Some external monitors do not signal loss of link synchronization
-	 * with an IRQ_HPD, so force a link status check.
-	 */
-	if (!intel_dp_is_edp(intel_dp)) {
-		struct intel_encoder *encoder = &dp_to_dig_port(intel_dp)->base;
-
-		intel_dp_retrain_link(encoder, ctx);
 	}
 
 	/*
@@ -6656,8 +6635,11 @@ intel_dp_init_connector(struct intel_digital_port *intel_dig_port,
 		intel_connector->get_hw_state = intel_connector_get_hw_state;
 
 	/* init MST on ports that can support it */
-	intel_dp_mst_encoder_init(intel_dig_port,
-				  intel_connector->base.base.id);
+	if (HAS_DP_MST(dev_priv) && !intel_dp_is_edp(intel_dp) &&
+	    (port == PORT_B || port == PORT_C ||
+	     port == PORT_D || port == PORT_F))
+		intel_dp_mst_encoder_init(intel_dig_port,
+					  intel_connector->base.base.id);
 
 	if (!intel_edp_init_connector(intel_dp, intel_connector)) {
 		intel_dp_aux_fini(intel_dp);

@@ -698,9 +698,7 @@ static int mlx5_rdma_setup_rn(struct ib_device *ibdev, u8 port_num,
 
 	prof->init(mdev, netdev, prof, ipriv);
 
-	err = mlx5e_attach_netdev(epriv);
-	if (err)
-		goto detach;
+	mlx5e_attach_netdev(epriv);
 	netif_carrier_off(netdev);
 
 	/* set rdma_netdev func pointers */
@@ -716,11 +714,6 @@ static int mlx5_rdma_setup_rn(struct ib_device *ibdev, u8 port_num,
 
 	return 0;
 
-detach:
-	profile->cleanup(epriv);
-	if (ipriv->sub_interface)
-		return NULL;
-	mlx5e_destroy_mdev_resources(mdev);
 destroy_ht:
 	mlx5i_pkey_qpn_ht_cleanup(netdev);
 	return err;

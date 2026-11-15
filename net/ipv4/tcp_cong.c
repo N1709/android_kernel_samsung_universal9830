@@ -20,7 +20,7 @@ static DEFINE_SPINLOCK(tcp_cong_list_lock);
 static LIST_HEAD(tcp_cong_list);
 
 /* Simple linear search, don't expect many entries! */
-struct tcp_congestion_ops *tcp_ca_find(const char *name)
+static struct tcp_congestion_ops *tcp_ca_find(const char *name)
 {
 	struct tcp_congestion_ops *e;
 
@@ -161,7 +161,7 @@ void tcp_assign_congestion_control(struct sock *sk)
 
 	rcu_read_lock();
 	ca = rcu_dereference(net->ipv4.tcp_congestion_control);
-	if (unlikely(!bpf_try_module_get(ca, ca->owner)))
+	if (unlikely(!try_module_get(ca->owner)))
 		ca = &tcp_reno;
 	icsk->icsk_ca_ops = ca;
 	rcu_read_unlock();
@@ -196,12 +196,7 @@ static void tcp_reinit_congestion_control(struct sock *sk,
 	icsk->icsk_ca_setsockopt = 1;
 	memset(icsk->icsk_ca_priv, 0, sizeof(icsk->icsk_ca_priv));
 
-	if (ca->flags & TCP_CONG_NEEDS_ECN)
-		INET_ECN_xmit(sk);
-	else
-		INET_ECN_dontxmit(sk);
-
-	if (!((1 << sk->sk_state) & (TCPF_CLOSE | TCPF_LISTEN)))
+	if (sk->sk_state != TCP_CLOSE)
 		tcp_init_congestion_control(sk);
 }
 
@@ -212,7 +207,7 @@ void tcp_cleanup_congestion_control(struct sock *sk)
 
 	if (icsk->icsk_ca_ops->release)
 		icsk->icsk_ca_ops->release(sk);
-	bpf_module_put(icsk->icsk_ca_ops, icsk->icsk_ca_ops->owner);
+	module_put(icsk->icsk_ca_ops->owner);
 }
 
 /* Used by sysctl to change default congestion control */
@@ -226,16 +221,12 @@ int tcp_set_default_congestion_control(struct net *net, const char *name)
 	ca = tcp_ca_find_autoload(net, name);
 	if (!ca) {
 		ret = -ENOENT;
-	} else if (!bpf_try_module_get(ca, ca->owner)) {
+	} else if (!try_module_get(ca->owner)) {
 		ret = -EBUSY;
-	} else if (!net_eq(net, &init_net) &&
-			!(ca->flags & TCP_CONG_NON_RESTRICTED)) {
-		/* Only init netns can set default to a restricted algorithm */
-		ret = -EPERM;
 	} else {
 		prev = xchg(&net->ipv4.tcp_congestion_control, ca);
 		if (prev)
-			bpf_module_put(prev, prev->owner);
+			module_put(prev->owner);
 
 		ca->flags |= TCP_CONG_NON_RESTRICTED;
 		ret = 0;
@@ -341,8 +332,7 @@ out:
  * tcp_reinit_congestion_control (if the current congestion control was
  * already initialized.
  */
-int tcp_set_congestion_control(struct sock *sk, const char *name, bool load,
-			       bool cap_net_admin)
+int tcp_set_congestion_control(struct sock *sk, const char *name, bool load, bool reinit)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	const struct tcp_congestion_ops *ca;
@@ -366,14 +356,22 @@ int tcp_set_congestion_control(struct sock *sk, const char *name, bool load,
 	if (!ca) {
 		err = -ENOENT;
 	} else if (!load) {
-		if (bpf_try_module_get(ca, ca->owner)) {
-			tcp_reinit_congestion_control(sk, ca);
+		const struct tcp_congestion_ops *old_ca = icsk->icsk_ca_ops;
+
+		if (try_module_get(ca->owner)) {
+			if (reinit) {
+				tcp_reinit_congestion_control(sk, ca);
+			} else {
+				icsk->icsk_ca_ops = ca;
+				module_put(old_ca->owner);
+			}
 		} else {
 			err = -EBUSY;
 		}
-	} else if (!((ca->flags & TCP_CONG_NON_RESTRICTED) || cap_net_admin)) {
+	} else if (!((ca->flags & TCP_CONG_NON_RESTRICTED) ||
+		     ns_capable(sock_net(sk)->user_ns, CAP_NET_ADMIN))) {
 		err = -EPERM;
-	} else if (!bpf_try_module_get(ca, ca->owner)) {
+	} else if (!try_module_get(ca->owner)) {
 		err = -EBUSY;
 	} else {
 		tcp_reinit_congestion_control(sk, ca);

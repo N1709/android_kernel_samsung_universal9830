@@ -32,7 +32,7 @@
 #include <linux/pci.h>
 #include <linux/gfp.h>
 #include <linux/edd.h>
-#include <linux/objtool.h>
+#include <linux/frame.h>
 
 #include <xen/xen.h>
 #include <xen/events.h>
@@ -63,7 +63,7 @@
 #include <asm/setup.h>
 #include <asm/desc.h>
 #include <asm/pgalloc.h>
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 #include <asm/tlbflush.h>
 #include <asm/reboot.h>
 #include <asm/stackprotector.h>
@@ -376,7 +376,7 @@ static void set_aliased_prot(void *v, pgprot_t prot)
 
 	preempt_disable();
 
-	copy_from_kernel_nofault(&dummy, v, 1);
+	probe_kernel_read(&dummy, v, 1);
 
 	if (HYPERVISOR_update_va_mapping((unsigned long)v, pte, 0))
 		BUG();
@@ -596,12 +596,12 @@ struct trap_array_entry {
 
 static struct trap_array_entry trap_array[] = {
 	{ debug,                       xen_xendebug,                    true },
+	{ int3,                        xen_xenint3,                     true },
 	{ double_fault,                xen_double_fault,                true },
 #ifdef CONFIG_X86_MCE
 	{ machine_check,               xen_machine_check,               true },
 #endif
 	{ nmi,                         xen_xennmi,                      true },
-	{ int3,                        xen_int3,                        false },
 	{ overflow,                    xen_overflow,                    false },
 #ifdef CONFIG_IA32_EMULATION
 	{ entry_INT80_compat,          xen_entry_INT80_compat,          false },
@@ -719,8 +719,8 @@ static void xen_write_idt_entry(gate_desc *dt, int entrynum, const gate_desc *g)
 	preempt_enable();
 }
 
-static unsigned xen_convert_trap_info(const struct desc_ptr *desc,
-				      struct trap_info *traps, bool full)
+static void xen_convert_trap_info(const struct desc_ptr *desc,
+				  struct trap_info *traps)
 {
 	unsigned in, out, count;
 
@@ -730,18 +730,17 @@ static unsigned xen_convert_trap_info(const struct desc_ptr *desc,
 	for (in = out = 0; in < count; in++) {
 		gate_desc *entry = (gate_desc *)(desc->address) + in;
 
-		if (cvt_gate_to_trap(in, entry, &traps[out]) || full)
+		if (cvt_gate_to_trap(in, entry, &traps[out]))
 			out++;
 	}
-
-	return out;
+	traps[out].address = 0;
 }
 
 void xen_copy_trap_info(struct trap_info *traps)
 {
 	const struct desc_ptr *desc = this_cpu_ptr(&idt_desc);
 
-	xen_convert_trap_info(desc, traps, true);
+	xen_convert_trap_info(desc, traps);
 }
 
 /* Load a new IDT into Xen.  In principle this can be per-CPU, so we
@@ -751,7 +750,6 @@ static void xen_load_idt(const struct desc_ptr *desc)
 {
 	static DEFINE_SPINLOCK(lock);
 	static struct trap_info traps[257];
-	unsigned out;
 
 	trace_xen_cpu_load_idt(desc);
 
@@ -759,8 +757,7 @@ static void xen_load_idt(const struct desc_ptr *desc)
 
 	memcpy(this_cpu_ptr(&idt_desc), desc, sizeof(idt_desc));
 
-	out = xen_convert_trap_info(desc, traps, false);
-	memset(&traps[out], 0, sizeof(traps[0]));
+	xen_convert_trap_info(desc, traps);
 
 	xen_mc_flush();
 	if (HYPERVISOR_set_trap_table(traps))
@@ -901,7 +898,10 @@ static u64 xen_read_msr_safe(unsigned int msr, int *err)
 	val = native_read_msr_safe(msr, err);
 	switch (msr) {
 	case MSR_IA32_APICBASE:
-		val &= ~X2APIC_ENABLE;
+#ifdef CONFIG_X86_X2APIC
+		if (!(cpuid_ecx(1) & (1 << (X86_FEATURE_X2APIC & 31))))
+#endif
+			val &= ~X2APIC_ENABLE;
 		break;
 	}
 	return val;
@@ -910,15 +910,14 @@ static u64 xen_read_msr_safe(unsigned int msr, int *err)
 static int xen_write_msr_safe(unsigned int msr, unsigned low, unsigned high)
 {
 	int ret;
-#ifdef CONFIG_X86_64
-	unsigned int which;
-	u64 base;
-#endif
 
 	ret = 0;
 
 	switch (msr) {
 #ifdef CONFIG_X86_64
+		unsigned which;
+		u64 base;
+
 	case MSR_FS_BASE:		which = SEGBASE_FS; goto set;
 	case MSR_KERNEL_GS_BASE:	which = SEGBASE_GS_USER; goto set;
 	case MSR_GS_BASE:		which = SEGBASE_GS_KERNEL; goto set;
@@ -1192,11 +1191,6 @@ static void __init xen_dom0_set_legacy_features(void)
 	x86_platform.legacy.rtc = 1;
 }
 
-static void __init xen_domu_set_legacy_features(void)
-{
-	x86_platform.legacy.rtc = 0;
-}
-
 /* First C function to be called on Xen boot */
 asmlinkage __visible void __init xen_start_kernel(void)
 {
@@ -1366,8 +1360,6 @@ asmlinkage __visible void __init xen_start_kernel(void)
 		add_preferred_console("xenboot", 0, NULL);
 		if (pci_xen)
 			x86_init.pci.arch_init = pci_xen_init;
-		x86_platform.set_legacy_features =
-				xen_domu_set_legacy_features;
 	} else {
 		const struct dom0_vga_console_info *info =
 			(void *)((char *)xen_start_info +
@@ -1397,15 +1389,6 @@ asmlinkage __visible void __init xen_start_kernel(void)
 		x86_init.mpparse.get_smp_config = x86_init_uint_noop;
 
 		xen_boot_params_init_edd();
-
-#ifdef CONFIG_ACPI
-		/*
-		 * Disable selecting "Firmware First mode" for correctable
-		 * memory errors, as this is the duty of the hypervisor to
-		 * decide.
-		 */
-		acpi_disable_cmcff = 1;
-#endif
 	}
 
 	if (!boot_params.screen_info.orig_video_isVGA)
@@ -1423,7 +1406,7 @@ asmlinkage __visible void __init xen_start_kernel(void)
 	/* We need this for printk timestamps */
 	xen_setup_runstate_info(0);
 
-	xen_efi_init(&boot_params);
+	xen_efi_init();
 
 	/* Start the world */
 #ifdef CONFIG_X86_32

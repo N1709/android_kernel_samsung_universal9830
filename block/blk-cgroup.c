@@ -46,7 +46,6 @@ struct blkcg blkcg_root;
 EXPORT_SYMBOL_GPL(blkcg_root);
 
 struct cgroup_subsys_state * const blkcg_root_css = &blkcg_root.css;
-EXPORT_SYMBOL_GPL(blkcg_root_css);
 
 static struct blkcg_policy *blkcg_policy[BLKCG_MAX_POLS];
 
@@ -475,7 +474,7 @@ const char *blkg_dev_name(struct blkcg_gq *blkg)
 {
 	/* some drivers (floppy) instantiate a queue w/o disk registered */
 	if (blkg->q->backing_dev_info->dev)
-		return bdi_dev_name(blkg->q->backing_dev_info);
+		return dev_name(blkg->q->backing_dev_info->dev);
 	return NULL;
 }
 EXPORT_SYMBOL_GPL(blkg_dev_name);
@@ -877,20 +876,13 @@ int blkg_conf_prep(struct blkcg *blkcg, const struct blkcg_policy *pol,
 			goto fail;
 		}
 
-		if (radix_tree_preload(GFP_KERNEL)) {
-			blkg_free(new_blkg);
-			ret = -ENOMEM;
-			goto fail;
-		}
-
 		rcu_read_lock();
 		spin_lock_irq(q->queue_lock);
 
 		blkg = blkg_lookup_check(pos, pol, q);
 		if (IS_ERR(blkg)) {
 			ret = PTR_ERR(blkg);
-			blkg_free(new_blkg);
-			goto fail_preloaded;
+			goto fail_unlock;
 		}
 
 		if (blkg) {
@@ -899,11 +891,9 @@ int blkg_conf_prep(struct blkcg *blkcg, const struct blkcg_policy *pol,
 			blkg = blkg_create(pos, q, new_blkg);
 			if (unlikely(IS_ERR(blkg))) {
 				ret = PTR_ERR(blkg);
-				goto fail_preloaded;
+				goto fail_unlock;
 			}
 		}
-
-		radix_tree_preload_end();
 
 		if (pos == blkcg)
 			goto success;
@@ -914,8 +904,6 @@ success:
 	ctx->body = body;
 	return 0;
 
-fail_preloaded:
-	radix_tree_preload_end();
 fail_unlock:
 	spin_unlock_irq(q->queue_lock);
 	rcu_read_unlock();
@@ -967,14 +955,9 @@ static int blkcg_print_stat(struct seq_file *sf, void *v)
 		int i;
 		bool has_stats = false;
 
-		spin_lock_irq(blkg->q->queue_lock);
-
-		if (!blkg->online)
-			goto skip;
-
 		dname = blkg_dev_name(blkg);
 		if (!dname)
-			goto skip;
+			continue;
 
 		/*
 		 * Hooray string manipulation, count is the size written NOT
@@ -983,6 +966,8 @@ static int blkcg_print_stat(struct seq_file *sf, void *v)
 		 * the \0 so we only add count to buf.
 		 */
 		off += scnprintf(buf+off, size-off, "%s ", dname);
+
+		spin_lock_irq(blkg->q->queue_lock);
 
 		rwstat = blkg_rwstat_recursive_sum(blkg, NULL,
 					offsetof(struct blkcg_gq, stat_bytes));
@@ -995,6 +980,8 @@ static int blkcg_print_stat(struct seq_file *sf, void *v)
 		rios = atomic64_read(&rwstat.aux_cnt[BLKG_RWSTAT_READ]);
 		wios = atomic64_read(&rwstat.aux_cnt[BLKG_RWSTAT_WRITE]);
 		dios = atomic64_read(&rwstat.aux_cnt[BLKG_RWSTAT_DISCARD]);
+
+		spin_unlock_irq(blkg->q->queue_lock);
 
 		if (rbytes || wbytes || rios || wios) {
 			has_stats = true;
@@ -1029,15 +1016,9 @@ static int blkcg_print_stat(struct seq_file *sf, void *v)
 		}
 next:
 		if (has_stats) {
-			if (off < size - 1) {
-				off += scnprintf(buf+off, size-off, "\n");
-				seq_commit(sf, off);
-			} else {
-				seq_commit(sf, -1);
-			}
+			off += scnprintf(buf+off, size-off, "\n");
+			seq_commit(sf, off);
 		}
-	skip:
-		spin_unlock_irq(blkg->q->queue_lock);
 	}
 
 	rcu_read_unlock();

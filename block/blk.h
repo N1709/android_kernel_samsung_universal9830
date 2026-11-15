@@ -24,7 +24,6 @@ struct blk_flush_queue {
 	unsigned int		flush_queue_delayed:1;
 	unsigned int		flush_pending_idx:1;
 	unsigned int		flush_running_idx:1;
-	blk_status_t 		rq_status;
 	unsigned long		flush_pending_since;
 	struct list_head	flush_queue[2];
 	struct list_head	flush_data_in_flight;
@@ -123,12 +122,6 @@ static inline struct blk_flush_queue *blk_get_flush_queue(
 static inline void __blk_get_queue(struct request_queue *q)
 {
 	kobject_get(&q->kobj);
-}
-
-static inline bool
-is_flush_rq(struct request *req, struct blk_mq_hw_ctx *hctx)
-{
-	return hctx->fq->flush_rq == req;
 }
 
 struct blk_flush_queue *blk_alloc_flush_queue(struct request_queue *q,
@@ -263,18 +256,6 @@ void blk_account_io_start(struct request *req, bool new_io);
 void blk_account_io_completion(struct request *req, unsigned int bytes);
 void blk_account_io_done(struct request *req, u64 now);
 
-#ifdef CONFIG_BLK_IO_VOLUME
-void blk_queue_reset_io_vol(struct request_queue *q);
-void blk_queue_io_vol_add(struct request_queue *q, int opf, long long bytes);
-void blk_queue_io_vol_del(struct request_queue *q, int opf, long long bytes);
-void blk_queue_io_vol_merge(struct request_queue *q, int opf, int rqs, long long bytes);
-#else
-#define blk_queue_reset_io_vol(q)			do {} while (0)
-#define blk_queue_io_vol_add(q, opf, bytes)		do {} while (0)
-#define blk_queue_io_vol_del(q, opf, bytes)		do {} while (0)
-#define blk_queue_io_vol_merge(q, opf, rqs, bytes)	do {} while (0)
-#endif
-
 /*
  * EH timer and IO completion will both attempt to 'grab' the request, make
  * sure that only one of them succeeds. Steal the bottom bit of the
@@ -387,7 +368,9 @@ extern int blk_update_nr_requests(struct request_queue *, unsigned int);
  */
 static inline bool blk_do_io_stat(struct request *rq)
 {
-	return false;
+	return rq->rq_disk &&
+	       (rq->rq_flags & RQF_IO_STAT) &&
+		!blk_rq_is_passthrough(rq);
 }
 
 static inline void req_set_nomerge(struct request_queue *q, struct request *req)

@@ -36,10 +36,10 @@ static inline int should_deliver(const struct net_bridge_port *p,
 
 int br_dev_queue_push_xmit(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
-	skb_push(skb, ETH_HLEN);
 	if (!is_skb_forwardable(skb->dev, skb))
 		goto drop;
 
+	skb_push(skb, ETH_HLEN);
 	br_drop_fake_rtable(skb);
 
 	if (skb->ip_summed == CHECKSUM_PARTIAL &&
@@ -65,7 +65,6 @@ EXPORT_SYMBOL_GPL(br_dev_queue_push_xmit);
 
 int br_forward_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
-	skb->tstamp = 0;
 	return NF_HOOK(NFPROTO_BRIDGE, NF_BR_POST_ROUTING,
 		       net, sk, skb, NULL, skb->dev,
 		       br_dev_queue_push_xmit);
@@ -98,11 +97,12 @@ static void __br_forward(const struct net_bridge_port *to,
 		net = dev_net(indev);
 	} else {
 		if (unlikely(netpoll_tx_running(to->br->dev))) {
-			skb_push(skb, ETH_HLEN);
-			if (!is_skb_forwardable(skb->dev, skb))
+			if (!is_skb_forwardable(skb->dev, skb)) {
 				kfree_skb(skb);
-			else
+			} else {
+				skb_push(skb, ETH_HLEN);
 				br_netpoll_send_skb(to, skb);
+			}
 			return;
 		}
 		br_hook = NF_BR_LOCAL_OUT;
@@ -251,7 +251,6 @@ static void maybe_deliver_addr(struct net_bridge_port *p, struct sk_buff *skb,
 {
 	struct net_device *dev = BR_INPUT_SKB_CB(skb)->brdev;
 	const unsigned char *src = eth_hdr(skb)->h_source;
-	struct sk_buff *nskb;
 
 	if (!should_deliver(p, skb))
 		return;
@@ -260,16 +259,12 @@ static void maybe_deliver_addr(struct net_bridge_port *p, struct sk_buff *skb,
 	if (skb->dev == p->dev && ether_addr_equal(src, addr))
 		return;
 
-	__skb_push(skb, ETH_HLEN);
-	nskb = pskb_copy(skb, GFP_ATOMIC);
-	__skb_pull(skb, ETH_HLEN);
-	if (!nskb) {
+	skb = skb_copy(skb, GFP_ATOMIC);
+	if (!skb) {
 		dev->stats.tx_dropped++;
 		return;
 	}
 
-	skb = nskb;
-	__skb_pull(skb, ETH_HLEN);
 	if (!is_broadcast_ether_addr(addr))
 		memcpy(eth_hdr(skb)->h_dest, addr, ETH_ALEN);
 

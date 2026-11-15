@@ -78,10 +78,6 @@ int fwnode_property_get_reference_args(const struct fwnode_handle *fwnode,
 				       unsigned int nargs, unsigned int index,
 				       struct fwnode_reference_args *args);
 
-struct fwnode_handle *fwnode_find_reference(const struct fwnode_handle *fwnode,
-					    const char *name,
-					    unsigned int index);
-
 struct fwnode_handle *fwnode_get_parent(const struct fwnode_handle *fwnode);
 struct fwnode_handle *fwnode_get_next_parent(
 	struct fwnode_handle *fwnode);
@@ -147,26 +143,6 @@ static inline int device_property_read_u64(struct device *dev,
 	return device_property_read_u64_array(dev, propname, val, 1);
 }
 
-static inline int device_property_count_u8(struct device *dev, const char *propname)
-{
-	return device_property_read_u8_array(dev, propname, NULL, 0);
-}
-
-static inline int device_property_count_u16(struct device *dev, const char *propname)
-{
-	return device_property_read_u16_array(dev, propname, NULL, 0);
-}
-
-static inline int device_property_count_u32(struct device *dev, const char *propname)
-{
-	return device_property_read_u32_array(dev, propname, NULL, 0);
-}
-
-static inline int device_property_count_u64(struct device *dev, const char *propname)
-{
-	return device_property_read_u64_array(dev, propname, NULL, 0);
-}
-
 static inline bool fwnode_property_read_bool(const struct fwnode_handle *fwnode,
 					     const char *propname)
 {
@@ -195,30 +171,6 @@ static inline int fwnode_property_read_u64(const struct fwnode_handle *fwnode,
 					   const char *propname, u64 *val)
 {
 	return fwnode_property_read_u64_array(fwnode, propname, val, 1);
-}
-
-static inline int fwnode_property_count_u8(const struct fwnode_handle *fwnode,
-					   const char *propname)
-{
-	return fwnode_property_read_u8_array(fwnode, propname, NULL, 0);
-}
-
-static inline int fwnode_property_count_u16(const struct fwnode_handle *fwnode,
-					    const char *propname)
-{
-	return fwnode_property_read_u16_array(fwnode, propname, NULL, 0);
-}
-
-static inline int fwnode_property_count_u32(const struct fwnode_handle *fwnode,
-					    const char *propname)
-{
-	return fwnode_property_read_u32_array(fwnode, propname, NULL, 0);
-}
-
-static inline int fwnode_property_count_u64(const struct fwnode_handle *fwnode,
-					    const char *propname)
-{
-	return fwnode_property_read_u64_array(fwnode, propname, NULL, 0);
 }
 
 /**
@@ -306,7 +258,7 @@ struct property_entry {
 #define PROPERTY_ENTRY_STRING(_name_, _val_)		\
 (struct property_entry) {				\
 	.name = _name_,					\
-	.length = sizeof(const char *),			\
+	.length = sizeof(_val_),			\
 	.type = DEV_PROP_STRING,			\
 	{ .value = { .str = _val_ } },			\
 }
@@ -351,11 +303,6 @@ struct fwnode_handle *fwnode_graph_get_remote_endpoint(
 struct fwnode_handle *
 fwnode_graph_get_remote_node(const struct fwnode_handle *fwnode, u32 port,
 			     u32 endpoint);
-
-static inline bool fwnode_graph_is_endpoint(struct fwnode_handle *fwnode)
-{
-	return fwnode_property_present(fwnode, "remote-endpoint");
-}
 
 #define fwnode_graph_for_each_endpoint(fwnode, child)			\
 	for (child = NULL;						\

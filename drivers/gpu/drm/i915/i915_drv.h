@@ -33,8 +33,6 @@
 #include <uapi/drm/i915_drm.h>
 #include <uapi/drm/drm_fourcc.h>
 
-#include <asm/hypervisor.h>
-
 #include <linux/io-mapping.h>
 #include <linux/i2c.h>
 #include <linux/i2c-algo-bit.h>
@@ -814,7 +812,6 @@ struct intel_rps {
 
 struct intel_rc6 {
 	bool enabled;
-	bool ctx_corrupted;
 	u64 prev_hw_residency[4];
 	u64 cur_residency[4];
 };
@@ -1629,8 +1626,6 @@ struct drm_i915_private {
 	void __iomem *regs;
 
 	struct intel_uncore uncore;
-
-	struct mutex tlb_invalidate_lock;
 
 	struct i915_virtual_gpu vgpu;
 
@@ -2563,12 +2558,6 @@ intel_info(const struct drm_i915_private *dev_priv)
 #define IS_GEN9_LP(dev_priv)	(IS_GEN9(dev_priv) && IS_LP(dev_priv))
 #define IS_GEN9_BC(dev_priv)	(IS_GEN9(dev_priv) && !IS_LP(dev_priv))
 
-/*
- * The Gen7 cmdparser copies the scanned buffer to the ggtt for execution
- * All later gens can run the final buffer from the ppgtt
- */
-#define CMDPARSER_USES_GGTT(dev_priv) IS_GEN7(dev_priv)
-
 #define ENGINE_MASK(id)	BIT(id)
 #define RENDER_RING	ENGINE_MASK(RCS)
 #define BSD_RING	ENGINE_MASK(VCS)
@@ -2589,8 +2578,6 @@ intel_info(const struct drm_i915_private *dev_priv)
 #define HAS_VEBOX(dev_priv)	HAS_ENGINE(dev_priv, VECS)
 
 #define HAS_LEGACY_SEMAPHORES(dev_priv) IS_GEN7(dev_priv)
-
-#define HAS_SECURE_BATCHES(dev_priv) (INTEL_GEN(dev_priv) < 6)
 
 #define HAS_LLC(dev_priv)	((dev_priv)->info.has_llc)
 #define HAS_SNOOP(dev_priv)	((dev_priv)->info.has_snoop)
@@ -2624,12 +2611,10 @@ intel_info(const struct drm_i915_private *dev_priv)
 /* Early gen2 have a totally busted CS tlb and require pinned batches. */
 #define HAS_BROKEN_CS_TLB(dev_priv)	(IS_I830(dev_priv) || IS_I845G(dev_priv))
 
-#define NEEDS_RC6_CTX_CORRUPTION_WA(dev_priv)	\
-	(IS_BROADWELL(dev_priv) || INTEL_GEN(dev_priv) == 9)
-
 /* WaRsDisableCoarsePowerGating:skl,cnl */
 #define NEEDS_WaRsDisableCoarsePowerGating(dev_priv) \
-	(IS_CANNONLAKE(dev_priv) || INTEL_GEN(dev_priv) == 9)
+	(IS_CANNONLAKE(dev_priv) || \
+	 IS_SKL_GT3(dev_priv) || IS_SKL_GT4(dev_priv))
 
 #define HAS_GMBUS_IRQ(dev_priv) (INTEL_GEN(dev_priv) >= 4)
 #define HAS_GMBUS_BURST_READ(dev_priv) (INTEL_GEN(dev_priv) >= 10 || \
@@ -2747,9 +2732,7 @@ static inline bool intel_vtd_active(void)
 	if (intel_iommu_gfx_mapped)
 		return true;
 #endif
-
-	/* Running as a guest, we assume the host is enforcing VT'd */
-	return !hypervisor_is_type(X86_HYPER_NATIVE);
+	return false;
 }
 
 static inline bool intel_scanout_needs_vtd_wa(struct drm_i915_private *dev_priv)
@@ -3022,14 +3005,6 @@ i915_gem_object_ggtt_pin(struct drm_i915_gem_object *obj,
 			 u64 size,
 			 u64 alignment,
 			 u64 flags);
-
-struct i915_vma * __must_check
-i915_gem_object_pin(struct drm_i915_gem_object *obj,
-		    struct i915_address_space *vm,
-		    const struct i915_ggtt_view *view,
-		    u64 size,
-		    u64 alignment,
-		    u64 flags);
 
 int i915_gem_object_unbind(struct drm_i915_gem_object *obj);
 void i915_gem_release_mmap(struct drm_i915_gem_object *obj);
@@ -3430,14 +3405,12 @@ const char *i915_cache_level_str(struct drm_i915_private *i915, int type);
 int i915_cmd_parser_get_version(struct drm_i915_private *dev_priv);
 void intel_engine_init_cmd_parser(struct intel_engine_cs *engine);
 void intel_engine_cleanup_cmd_parser(struct intel_engine_cs *engine);
-int intel_engine_cmd_parser(struct i915_gem_context *cxt,
-			    struct intel_engine_cs *engine,
+int intel_engine_cmd_parser(struct intel_engine_cs *engine,
 			    struct drm_i915_gem_object *batch_obj,
-			    u64 user_batch_start,
+			    struct drm_i915_gem_object *shadow_batch_obj,
 			    u32 batch_start_offset,
 			    u32 batch_len,
-			    struct drm_i915_gem_object *shadow_batch_obj,
-			    u64 shadow_batch_start);
+			    bool is_master);
 
 /* i915_perf.c */
 extern void i915_perf_init(struct drm_i915_private *dev_priv);

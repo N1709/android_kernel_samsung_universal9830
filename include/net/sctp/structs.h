@@ -474,7 +474,7 @@ struct sctp_af {
 					 int saddr);
 	void		(*from_sk)	(union sctp_addr *,
 					 struct sock *sk);
-	bool		(*from_addr_param) (union sctp_addr *,
+	void		(*from_addr_param) (union sctp_addr *,
 					    union sctp_addr_param *,
 					    __be16 port, int iif);
 	int		(*to_addr_param) (const union sctp_addr *,
@@ -787,7 +787,6 @@ struct sctp_transport {
 
 	/* Reference counting. */
 	refcount_t refcnt;
-	__u32	dead:1,
 		/* RTO-Pending : A flag used to track if one of the DATA
 		 *		chunks sent to this address is currently being
 		 *		used to compute a RTT. If this flag is 0,
@@ -797,7 +796,7 @@ struct sctp_transport {
 		 *		calculation completes (i.e. the DATA chunk
 		 *		is SACK'd) clear this flag.
 		 */
-		rto_pending:1,
+	__u32	rto_pending:1,
 
 		/*
 		 * hb_sent : a flag that signals that we have a pending
@@ -1248,9 +1247,6 @@ struct sctp_ep_common {
 	/* What socket does this endpoint belong to?  */
 	struct sock *sk;
 
-	/* Cache netns and it won't change once set */
-	struct net *net;
-
 	/* This is where we receive inbound chunks.  */
 	struct sctp_inq	  inqueue;
 
@@ -1349,7 +1345,6 @@ struct sctp_endpoint {
 
 	u32 secid;
 	u32 peer_secid;
-	struct rcu_head rcu;
 };
 
 /* Recover the outter endpoint structure. */
@@ -1365,7 +1360,7 @@ static inline struct sctp_endpoint *sctp_ep(struct sctp_ep_common *base)
 struct sctp_endpoint *sctp_endpoint_new(struct sock *, gfp_t);
 void sctp_endpoint_free(struct sctp_endpoint *);
 void sctp_endpoint_put(struct sctp_endpoint *);
-int sctp_endpoint_hold(struct sctp_endpoint *ep);
+void sctp_endpoint_hold(struct sctp_endpoint *);
 void sctp_endpoint_add_asoc(struct sctp_endpoint *, struct sctp_association *);
 struct sctp_association *sctp_endpoint_lookup_assoc(
 	const struct sctp_endpoint *ep,

@@ -10,7 +10,7 @@
 #include <linux/uaccess.h>
 #include <linux/sched/debug.h>
 #include <asm/current.h>
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 #include <asm/tlbflush.h>
 #include <arch.h>
 #include <as-layout.h>
@@ -46,7 +46,7 @@ int handle_page_fault(unsigned long address, unsigned long ip,
 	if (is_user)
 		flags |= FAULT_FLAG_USER;
 retry:
-	mmap_read_lock(mm);
+	down_read(&mm->mmap_sem);
 	vma = find_vma(mm, address);
 	if (!vma)
 		goto out;
@@ -122,7 +122,7 @@ good_area:
 #endif
 	flush_tlb_page(vma, address);
 out:
-	mmap_read_unlock(mm);
+	up_read(&mm->mmap_sem);
 out_nosemaphore:
 	return err;
 
@@ -131,7 +131,7 @@ out_of_memory:
 	 * We ran out of memory, call the OOM killer, and return the userspace
 	 * (which will retry the fault, or kill us if we got oom-killed).
 	 */
-	mmap_read_unlock(mm);
+	up_read(&mm->mmap_sem);
 	if (!is_user)
 		goto out_nosemaphore;
 	pagefault_out_of_memory();
@@ -201,12 +201,6 @@ void segv_handler(int sig, struct siginfo *unused_si, struct uml_pt_regs *regs)
 	segv(*fi, UPT_IP(regs), UPT_IS_USER(regs), regs);
 }
 
-static void segv_run_catcher(jmp_buf *catcher, void *fault_addr)
-{
-	current->thread.fault_addr = fault_addr;
-	UML_LONGJMP(catcher, 1);
-}
-
 /*
  * We give a *copy* of the faultinfo in the regs to segv.
  * This must be done, since nesting SEGVs could overwrite
@@ -225,19 +219,7 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
 	if (!is_user && regs)
 		current->thread.segv_regs = container_of(regs, struct pt_regs, regs);
 
-	catcher = current->thread.fault_catcher;
-	if (catcher && current->thread.is_running_test) {
-		/*
-		 * TODO(b/77223210): Right now we don't have a way to store a
-		 * copy of the stack, or a copy of information from the stack,
-		 * so we need to print it now; otherwise, the stack will be
-		 * destroyed by segv_run_catcher which works by popping off
-		 * stack frames.
-		 */
-		show_stack(NULL, NULL);
-		segv_run_catcher(catcher, (void *) address);
-	}
-	else if (!is_user && (address >= start_vm) && (address < end_vm)) {
+	if (!is_user && (address >= start_vm) && (address < end_vm)) {
 		flush_tlb_kernel_vm();
 		goto out;
 	}
@@ -264,10 +246,12 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
 		address = 0;
 	}
 
+	catcher = current->thread.fault_catcher;
 	if (!err)
 		goto out;
 	else if (catcher != NULL) {
-		segv_run_catcher(catcher, (void *) address);
+		current->thread.fault_addr = (void *) address;
+		UML_LONGJMP(catcher, 1);
 	}
 	else if (current->thread.fault_addr != NULL)
 		panic("fault_addr set but no fault catcher");

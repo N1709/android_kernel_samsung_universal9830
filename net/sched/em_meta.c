@@ -199,7 +199,7 @@ META_COLLECTOR(int_priority)
 META_COLLECTOR(int_protocol)
 {
 	/* Let userspace take care of the byte ordering */
-	dst->value = skb_protocol(skb, false);
+	dst->value = tc_skb_protocol(skb);
 }
 
 META_COLLECTOR(int_pkttype)
@@ -558,7 +558,7 @@ META_COLLECTOR(int_sk_rcvlowat)
 		*err = -1;
 		return;
 	}
-	dst->value = READ_ONCE(sk->sk_rcvlowat);
+	dst->value = sk->sk_rcvlowat;
 }
 
 META_COLLECTOR(int_sk_rcvtimeo)

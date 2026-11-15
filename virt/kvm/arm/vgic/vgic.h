@@ -17,7 +17,6 @@
 #define __KVM_ARM_VGIC_NEW_H__
 
 #include <linux/irqchip/arm-gic-common.h>
-#include <asm/kvm_mmu.h>
 
 #define PRODUCT_ID_KVM		0x4b	/* ASCII code K */
 #define IMPLEMENTER_ARM		0x43b
@@ -138,29 +137,6 @@ static inline bool vgic_irq_is_multi_sgi(struct vgic_irq *irq)
 	return vgic_irq_get_lr_count(irq) > 1;
 }
 
-static inline int vgic_its_read_entry_lock(struct vgic_its *its, gpa_t eaddr,
-					   u64 *eval, unsigned long esize)
-{
-	struct kvm *kvm = its->dev->kvm;
-
-	if (KVM_BUG_ON(esize != sizeof(*eval), kvm))
-		return -EINVAL;
-
-	return kvm_read_guest_lock(kvm, eaddr, eval, esize);
-
-}
-
-static inline int vgic_its_write_entry_lock(struct vgic_its *its, gpa_t eaddr,
-					    u64 eval, unsigned long esize)
-{
-	struct kvm *kvm = its->dev->kvm;
-
-	if (KVM_BUG_ON(esize != sizeof(eval), kvm))
-		return -EINVAL;
-
-	return kvm_write_guest_lock(kvm, eaddr, &eval, esize);
-}
-
 /*
  * This struct provides an intermediate representation of the fields contained
  * in the GICH_VMCR and ICH_VMCR registers, such that code exporting the GIC
@@ -228,7 +204,6 @@ int vgic_register_dist_iodev(struct kvm *kvm, gpa_t dist_base_address,
 void vgic_v2_init_lrs(void);
 void vgic_v2_load(struct kvm_vcpu *vcpu);
 void vgic_v2_put(struct kvm_vcpu *vcpu);
-void vgic_v2_vmcr_sync(struct kvm_vcpu *vcpu);
 
 void vgic_v2_save_state(struct kvm_vcpu *vcpu);
 void vgic_v2_restore_state(struct kvm_vcpu *vcpu);
@@ -259,7 +234,6 @@ bool vgic_v3_check_base(struct kvm *kvm);
 
 void vgic_v3_load(struct kvm_vcpu *vcpu);
 void vgic_v3_put(struct kvm_vcpu *vcpu);
-void vgic_v3_vmcr_sync(struct kvm_vcpu *vcpu);
 
 bool vgic_has_its(struct kvm *kvm);
 int kvm_vgic_register_its_device(void);

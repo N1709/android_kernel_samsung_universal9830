@@ -24,7 +24,6 @@
 
 #include "scsi_priv.h"
 #include "scsi_logging.h"
-#include "ufs/ufshcd.h"
 
 static struct device_type scsi_dev_type;
 
@@ -264,16 +263,7 @@ show_shost_supported_mode(struct device *dev, struct device_attribute *attr,
 	return show_shost_mode(supported_mode, buf);
 }
 
-static DEVICE_ATTR(supported_mode, S_IRUGO, show_shost_supported_mode, NULL);
-
-static ssize_t show_shost_transferred_cnt(struct device *dev, struct device_attribute *attr, char *buf)
-{
-    struct Scsi_Host *shost = class_to_shost(dev);
-    struct ufs_hba *hba = shost_priv(shost);
-
-    return sprintf(buf, "%u\n", hba->transferred_sector);
-}
-static DEVICE_ATTR(transferred_cnt, 0444, show_shost_transferred_cnt, NULL);
+static DEVICE_ATTR(supported_mode, S_IRUGO | S_IWUSR, show_shost_supported_mode, NULL);
 
 static ssize_t
 show_shost_active_mode(struct device *dev,
@@ -287,7 +277,7 @@ show_shost_active_mode(struct device *dev,
 		return show_shost_mode(shost->active_mode, buf);
 }
 
-static DEVICE_ATTR(active_mode, S_IRUGO, show_shost_active_mode, NULL);
+static DEVICE_ATTR(active_mode, S_IRUGO | S_IWUSR, show_shost_active_mode, NULL);
 
 static int check_reset_type(const char *str)
 {
@@ -380,12 +370,12 @@ static DEVICE_ATTR(eh_deadline, S_IRUGO | S_IWUSR, show_shost_eh_deadline, store
 shost_rd_attr(use_blk_mq, "%d\n");
 shost_rd_attr(unique_id, "%u\n");
 shost_rd_attr(cmd_per_lun, "%hd\n");
-shost_rd_attr(can_queue, "%d\n");
+shost_rd_attr(can_queue, "%hd\n");
 shost_rd_attr(sg_tablesize, "%hu\n");
 shost_rd_attr(sg_prot_tablesize, "%hu\n");
 shost_rd_attr(unchecked_isa_dma, "%d\n");
 shost_rd_attr(prot_capabilities, "%u\n");
-shost_rd_attr(prot_guard_type, "%d\n");
+shost_rd_attr(prot_guard_type, "%hd\n");
 shost_rd_attr2(proc_name, hostt->proc_name, "%s\n");
 
 static ssize_t
@@ -414,7 +404,6 @@ static struct attribute *scsi_sysfs_shost_attrs[] = {
 	&dev_attr_prot_guard_type.attr,
 	&dev_attr_host_reset.attr,
 	&dev_attr_eh_deadline.attr,
-	&dev_attr_transferred_cnt.attr,
 	NULL
 };
 
@@ -442,11 +431,8 @@ static void scsi_device_dev_release_usercontext(struct work_struct *work)
 	struct list_head *this, *tmp;
 	struct scsi_vpd *vpd_pg80 = NULL, *vpd_pg83 = NULL;
 	unsigned long flags;
-	struct module *mod;
 
 	sdev = container_of(work, struct scsi_device, ew.work);
-
-	mod = sdev->host->hostt->module;
 
 	scsi_dh_release_device(sdev);
 
@@ -488,17 +474,11 @@ static void scsi_device_dev_release_usercontext(struct work_struct *work)
 
 	if (parent)
 		put_device(parent);
-	module_put(mod);
 }
 
 static void scsi_device_dev_release(struct device *dev)
 {
 	struct scsi_device *sdp = to_scsi_device(dev);
-
-	/* Set module pointer as NULL in case of module unloading */
-	if (!try_module_get(sdp->host->hostt->module))
-		sdp->host->hostt->module = NULL;
-
 	execute_in_process_context(scsi_device_dev_release_usercontext,
 				   &sdp->ew);
 }
@@ -693,11 +673,8 @@ sdev_store_timeout (struct device *dev, struct device_attribute *attr,
 {
 	struct scsi_device *sdev;
 	int timeout;
-	int res;
 	sdev = to_scsi_device(dev);
-	res = sscanf (buf, "%d\n", &timeout);
-	if (res != 1)
-		return -EINVAL;
+	sscanf (buf, "%d\n", &timeout);
 	blk_queue_rq_timeout(sdev->request_queue, timeout * HZ);
 	return count;
 }
@@ -746,14 +723,6 @@ sdev_store_delete(struct device *dev, struct device_attribute *attr,
 		  const char *buf, size_t count)
 {
 	struct kernfs_node *kn;
-	struct scsi_device *sdev = to_scsi_device(dev);
-
-	/*
-	 * We need to try to get module, avoiding the module been removed
-	 * during delete.
-	 */
-	if (scsi_device_get(sdev))
-		return -ENODEV;
 
 	kn = sysfs_break_active_protection(&dev->kobj, &attr->attr);
 	WARN_ON_ONCE(!kn);
@@ -768,10 +737,9 @@ sdev_store_delete(struct device *dev, struct device_attribute *attr,
 	 * state into SDEV_DEL.
 	 */
 	device_remove_file(dev, attr);
-	scsi_remove_device(sdev);
+	scsi_remove_device(to_scsi_device(dev));
 	if (kn)
 		sysfs_unbreak_active_protection(kn);
-	scsi_device_put(sdev);
 	return count;
 };
 static DEVICE_ATTR(delete, S_IWUSR, NULL, sdev_store_delete);
@@ -1287,6 +1255,7 @@ static int scsi_target_add(struct scsi_target *starget)
 
 	pm_runtime_set_active(&starget->dev);
 	pm_runtime_enable(&starget->dev);
+	device_enable_async_suspend(&starget->dev);
 
 	return 0;
 }
@@ -1310,10 +1279,10 @@ int scsi_sysfs_add_sdev(struct scsi_device *sdev)
 
 	transport_configure_device(&starget->dev);
 
+	device_enable_async_suspend(&sdev->sdev_gendev);
 	scsi_autopm_get_target(starget);
 	pm_runtime_set_active(&sdev->sdev_gendev);
-	if (!sdev->rpm_autosuspend)
-		pm_runtime_forbid(&sdev->sdev_gendev);
+	pm_runtime_forbid(&sdev->sdev_gendev);
 	pm_runtime_enable(&sdev->sdev_gendev);
 	scsi_autopm_put_target(starget);
 
@@ -1328,6 +1297,7 @@ int scsi_sysfs_add_sdev(struct scsi_device *sdev)
 		return error;
 	}
 
+	device_enable_async_suspend(&sdev->sdev_dev);
 	error = device_add(&sdev->sdev_dev);
 	if (error) {
 		sdev_printk(KERN_INFO, sdev,

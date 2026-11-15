@@ -158,8 +158,7 @@ int intel_sanitize_enable_ppgtt(struct drm_i915_private *dev_priv,
 	if (enable_ppgtt == 0 && INTEL_GEN(dev_priv) < 9)
 		return 0;
 
-	/* Full PPGTT is required by the Gen9 cmdparser */
-	if (enable_ppgtt == 1 && INTEL_GEN(dev_priv) != 9)
+	if (enable_ppgtt == 1)
 		return 1;
 
 	if (enable_ppgtt == 2 && has_full_ppgtt)
@@ -2118,7 +2117,6 @@ static struct i915_vma *pd_vma_create(struct gen6_hw_ppgtt *ppgtt, int size)
 int gen6_ppgtt_pin(struct i915_hw_ppgtt *base)
 {
 	struct gen6_hw_ppgtt *ppgtt = to_gen6_ppgtt(base);
-	int err;
 
 	/*
 	 * Workaround the limited maximum vma->pin_count and the aliasing_ppgtt
@@ -2134,17 +2132,9 @@ int gen6_ppgtt_pin(struct i915_hw_ppgtt *base)
 	 * allocator works in address space sizes, so it's multiplied by page
 	 * size. We allocate at the top of the GTT to avoid fragmentation.
 	 */
-	err = i915_vma_pin(ppgtt->vma,
-			   0, GEN6_PD_ALIGN,
-			   PIN_GLOBAL | PIN_HIGH);
-	if (err)
-		goto unpin;
-
-	return 0;
-
-unpin:
-	ppgtt->pin_count = 0;
-	return err;
+	return i915_vma_pin(ppgtt->vma,
+			    0, GEN6_PD_ALIGN,
+			    PIN_GLOBAL | PIN_HIGH);
 }
 
 void gen6_ppgtt_unpin(struct i915_hw_ppgtt *base)

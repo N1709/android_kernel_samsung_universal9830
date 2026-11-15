@@ -738,12 +738,7 @@ static int __feat_register_sp(struct list_head *fn, u8 feat, u8 is_local,
 	if (dccp_feat_clone_sp_val(&fval, sp_val, sp_len))
 		return -ENOMEM;
 
-	if (dccp_feat_push_change(fn, feat, is_local, mandatory, &fval)) {
-		kfree(fval.sp.vec);
-		return -ENOMEM;
-	}
-
-	return 0;
+	return dccp_feat_push_change(fn, feat, is_local, mandatory, &fval);
 }
 
 /**
@@ -1161,12 +1156,8 @@ static u8 dccp_feat_change_recv(struct list_head *fn, u8 is_mandatory, u8 opt,
 			goto not_valid_or_not_known;
 		}
 
-		if (dccp_feat_push_confirm(fn, feat, local, &fval)) {
-			kfree(fval.sp.vec);
-			return DCCP_RESET_CODE_TOO_BUSY;
-		}
+		return dccp_feat_push_confirm(fn, feat, local, &fval);
 
-		return 0;
 	} else if (entry->state == FEAT_UNSTABLE) {	/* 6.6.2 */
 		return 0;
 	}

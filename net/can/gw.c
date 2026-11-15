@@ -416,29 +416,13 @@ static void can_can_gw_rcv(struct sk_buff *skb, void *data)
 	while (modidx < MAX_MODFUNCTIONS && gwj->mod.modfunc[modidx])
 		(*gwj->mod.modfunc[modidx++])(cf, &gwj->mod);
 
-	/* Has the CAN frame been modified? */
+	/* check for checksum updates when the CAN frame has been modified */
 	if (modidx) {
-		/* get available space for the processed CAN frame type */
-		int max_len = nskb->len - offsetof(struct can_frame, data);
-
-		/* dlc may have changed, make sure it fits to the CAN frame */
-		if (cf->can_dlc > max_len)
-			goto out_delete;
-
-		/* check for checksum updates in classic CAN length only */
-		if (gwj->mod.csumfunc.crc8) {
-			if (cf->can_dlc > 8)
-				goto out_delete;
-
+		if (gwj->mod.csumfunc.crc8)
 			(*gwj->mod.csumfunc.crc8)(cf, &gwj->mod.csum.crc8);
-		}
 
-		if (gwj->mod.csumfunc.xor) {
-			if (cf->can_dlc > 8)
-				goto out_delete;
-
+		if (gwj->mod.csumfunc.xor)
 			(*gwj->mod.csumfunc.xor)(cf, &gwj->mod.csum.xor);
-		}
 	}
 
 	/* clear the skb timestamp if not configured the other way */
@@ -450,14 +434,6 @@ static void can_can_gw_rcv(struct sk_buff *skb, void *data)
 		gwj->dropped_frames++;
 	else
 		gwj->handled_frames++;
-
-	return;
-
- out_delete:
-	/* delete frame due to misconfiguration */
-	gwj->deleted_frames++;
-	kfree_skb(nskb);
-	return;
 }
 
 static inline int cgw_register_filter(struct net *net, struct cgw_job *gwj)
@@ -494,7 +470,6 @@ static int cgw_notifier(struct notifier_block *nb,
 			if (gwj->src.dev == dev || gwj->dst.dev == dev) {
 				hlist_del(&gwj->list);
 				cgw_unregister_filter(net, gwj);
-				synchronize_rcu();
 				kmem_cache_free(cgw_cache, gwj);
 			}
 		}
@@ -942,7 +917,6 @@ static void cgw_remove_all_jobs(struct net *net)
 	hlist_for_each_entry_safe(gwj, nx, &net->can.cgw_list, list) {
 		hlist_del(&gwj->list);
 		cgw_unregister_filter(net, gwj);
-		synchronize_rcu();
 		kmem_cache_free(cgw_cache, gwj);
 	}
 }
@@ -1012,7 +986,6 @@ static int cgw_remove_job(struct sk_buff *skb, struct nlmsghdr *nlh,
 
 		hlist_del(&gwj->list);
 		cgw_unregister_filter(net, gwj);
-		synchronize_rcu();
 		kmem_cache_free(cgw_cache, gwj);
 		err = 0;
 		break;
@@ -1049,50 +1022,32 @@ static __init int cgw_module_init(void)
 	pr_info("can: netlink gateway (rev " CAN_GW_VERSION ") max_hops=%d\n",
 		max_hops);
 
-	ret = register_pernet_subsys(&cangw_pernet_ops);
-	if (ret)
-		return ret;
-
-	ret = -ENOMEM;
+	register_pernet_subsys(&cangw_pernet_ops);
 	cgw_cache = kmem_cache_create("can_gw", sizeof(struct cgw_job),
 				      0, 0, NULL);
+
 	if (!cgw_cache)
-		goto out_cache_create;
+		return -ENOMEM;
 
 	/* set notifier */
 	notifier.notifier_call = cgw_notifier;
-	ret = register_netdevice_notifier(&notifier);
-	if (ret)
-		goto out_register_notifier;
+	register_netdevice_notifier(&notifier);
 
 	ret = rtnl_register_module(THIS_MODULE, PF_CAN, RTM_GETROUTE,
 				   NULL, cgw_dump_jobs, 0);
-	if (ret)
-		goto out_rtnl_register1;
+	if (ret) {
+		unregister_netdevice_notifier(&notifier);
+		kmem_cache_destroy(cgw_cache);
+		return -ENOBUFS;
+	}
 
-	ret = rtnl_register_module(THIS_MODULE, PF_CAN, RTM_NEWROUTE,
-				   cgw_create_job, NULL, 0);
-	if (ret)
-		goto out_rtnl_register2;
-	ret = rtnl_register_module(THIS_MODULE, PF_CAN, RTM_DELROUTE,
-				   cgw_remove_job, NULL, 0);
-	if (ret)
-		goto out_rtnl_register3;
+	/* Only the first call to rtnl_register_module can fail */
+	rtnl_register_module(THIS_MODULE, PF_CAN, RTM_NEWROUTE,
+			     cgw_create_job, NULL, 0);
+	rtnl_register_module(THIS_MODULE, PF_CAN, RTM_DELROUTE,
+			     cgw_remove_job, NULL, 0);
 
 	return 0;
-
-out_rtnl_register3:
-	rtnl_unregister(PF_CAN, RTM_NEWROUTE);
-out_rtnl_register2:
-	rtnl_unregister(PF_CAN, RTM_GETROUTE);
-out_rtnl_register1:
-	unregister_netdevice_notifier(&notifier);
-out_register_notifier:
-	kmem_cache_destroy(cgw_cache);
-out_cache_create:
-	unregister_pernet_subsys(&cangw_pernet_ops);
-
-	return ret;
 }
 
 static __exit void cgw_module_exit(void)

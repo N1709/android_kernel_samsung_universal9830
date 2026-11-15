@@ -267,8 +267,7 @@ int stmmac_mdio_reset(struct mii_bus *bus)
 			of_property_read_u32_array(np,
 				"snps,reset-delays-us", data->delays, 3);
 
-			if (devm_gpio_request(priv->device, data->reset_gpio,
-					      "mdio-reset"))
+			if (gpio_request(data->reset_gpio, "mdio-reset"))
 				return 0;
 		}
 
@@ -360,11 +359,7 @@ int stmmac_mdio_register(struct net_device *ndev)
 	new_bus->parent = priv->device;
 
 	err = of_mdiobus_register(new_bus, mdio_node);
-	if (err == -ENODEV) {
-		err = 0;
-		dev_info(dev, "MDIO bus is disabled\n");
-		goto bus_register_fail;
-	} else if (err) {
+	if (err != 0) {
 		dev_err(dev, "Cannot register the MDIO bus\n");
 		goto bus_register_fail;
 	}

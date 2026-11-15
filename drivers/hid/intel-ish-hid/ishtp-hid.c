@@ -222,7 +222,7 @@ int ishtp_hid_probe(unsigned int cur_hid_dev,
 err_hid_device:
 	kfree(hid_data);
 err_hid_data:
-	hid_destroy_device(hid);
+	kfree(hid);
 	return rv;
 }
 
@@ -234,14 +234,12 @@ err_hid_data:
  */
 void ishtp_hid_remove(struct ishtp_cl_data *client_data)
 {
-	void *data;
 	int i;
 
 	for (i = 0; i < client_data->num_hid_devices; ++i) {
 		if (client_data->hid_sensor_hubs[i]) {
-			data = client_data->hid_sensor_hubs[i]->driver_data;
+			kfree(client_data->hid_sensor_hubs[i]->driver_data);
 			hid_destroy_device(client_data->hid_sensor_hubs[i]);
-			kfree(data);
 			client_data->hid_sensor_hubs[i] = NULL;
 		}
 	}

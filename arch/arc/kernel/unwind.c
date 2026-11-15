@@ -45,10 +45,10 @@ do {						\
 
 #define EXTRA_INFO(f) { \
 		BUILD_BUG_ON_ZERO(offsetof(struct unwind_frame_info, f) \
-				% sizeof_field(struct unwind_frame_info, f)) \
+				% FIELD_SIZEOF(struct unwind_frame_info, f)) \
 				+ offsetof(struct unwind_frame_info, f) \
-				/ sizeof_field(struct unwind_frame_info, f), \
-				sizeof_field(struct unwind_frame_info, f) \
+				/ FIELD_SIZEOF(struct unwind_frame_info, f), \
+				FIELD_SIZEOF(struct unwind_frame_info, f) \
 	}
 #define PTREGS_INFO(f) EXTRA_INFO(regs.f)
 
@@ -183,6 +183,11 @@ static void *__init unw_hdr_alloc_early(unsigned long sz)
 {
 	return memblock_alloc_from_nopanic(sz, sizeof(unsigned int),
 					   MAX_DMA_ADDRESS);
+}
+
+static void *unw_hdr_alloc(unsigned long sz)
+{
+	return kmalloc(sz, GFP_KERNEL);
 }
 
 static void init_unwind_table(struct unwind_table *table, const char *name,
@@ -365,10 +370,6 @@ ret_err:
 }
 
 #ifdef CONFIG_MODULES
-static void *unw_hdr_alloc(unsigned long sz)
-{
-	return kmalloc(sz, GFP_KERNEL);
-}
 
 static struct unwind_table *last_table;
 

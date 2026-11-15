@@ -908,7 +908,7 @@ static int tegra_sor_compute_config(struct tegra_sor *sor,
 				    struct drm_dp_link *link)
 {
 	const u64 f = 100000, link_rate = link->rate * 1000;
-	const u64 pclk = (u64)mode->clock * 1000;
+	const u64 pclk = mode->clock * 1000;
 	u64 input, output, watermark, num;
 	struct tegra_sor_params params;
 	u32 num_syms_per_line;
@@ -2747,23 +2747,17 @@ static int tegra_sor_init(struct host1x_client *client)
 		if (err < 0) {
 			dev_err(sor->dev, "failed to deassert SOR reset: %d\n",
 				err);
-			clk_disable_unprepare(sor->clk);
 			return err;
 		}
 	}
 
 	err = clk_prepare_enable(sor->clk_safe);
-	if (err < 0) {
-		clk_disable_unprepare(sor->clk);
+	if (err < 0)
 		return err;
-	}
 
 	err = clk_prepare_enable(sor->clk_dp);
-	if (err < 0) {
-		clk_disable_unprepare(sor->clk_safe);
-		clk_disable_unprepare(sor->clk);
+	if (err < 0)
 		return err;
-	}
 
 	return 0;
 }
@@ -3038,11 +3032,6 @@ static int tegra_sor_parse_dt(struct tegra_sor *sor)
 		 * earlier
 		 */
 		sor->pad = TEGRA_IO_PAD_HDMI_DP0 + sor->index;
-	} else {
-		if (sor->soc->supports_edp)
-			sor->index = 0;
-		else
-			sor->index = 1;
 	}
 
 	return 0;

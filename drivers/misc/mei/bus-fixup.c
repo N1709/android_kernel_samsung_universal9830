@@ -173,7 +173,7 @@ static int mei_fwver(struct mei_cl_device *cldev)
 	ret = __mei_cl_send(cldev->cl, buf, sizeof(struct mkhi_msg_hdr),
 			    MEI_CL_IO_TX_BLOCKING);
 	if (ret < 0) {
-		dev_err(&cldev->dev, "Could not send ReqFWVersion cmd ret = %d\n", ret);
+		dev_err(&cldev->dev, "Could not send ReqFWVersion cmd\n");
 		return ret;
 	}
 
@@ -185,7 +185,7 @@ static int mei_fwver(struct mei_cl_device *cldev)
 		 * Should be at least one version block,
 		 * error out if nothing found
 		 */
-		dev_err(&cldev->dev, "Could not read FW version ret = %d\n", bytes_recv);
+		dev_err(&cldev->dev, "Could not read FW version\n");
 		return -EIO;
 	}
 
@@ -213,21 +213,13 @@ static void mei_mkhi_fix(struct mei_cl_device *cldev)
 {
 	int ret;
 
-	/* No need to enable the client if nothing is needed from it */
-	if (!cldev->bus->fw_f_fw_ver_supported &&
-	    !cldev->bus->hbm_f_os_supported)
-		return;
-
 	ret = mei_cldev_enable(cldev);
 	if (ret)
 		return;
 
-	if (cldev->bus->fw_f_fw_ver_supported) {
-		ret = mei_fwver(cldev);
-		if (ret < 0)
-			dev_err(&cldev->dev, "FW version command failed %d\n",
-				ret);
-	}
+	ret = mei_fwver(cldev);
+	if (ret < 0)
+		dev_err(&cldev->dev, "FW version command failed %d\n", ret);
 
 	if (cldev->bus->hbm_f_os_supported) {
 		ret = mei_osver(cldev);
@@ -334,7 +326,7 @@ static int mei_nfc_if_version(struct mei_cl *cl,
 	ret = __mei_cl_send(cl, (u8 *)&cmd, sizeof(struct mei_nfc_cmd),
 			    MEI_CL_IO_TX_BLOCKING);
 	if (ret < 0) {
-		dev_err(bus->dev, "Could not send IF version cmd ret = %d\n", ret);
+		dev_err(bus->dev, "Could not send IF version cmd\n");
 		return ret;
 	}
 
@@ -349,7 +341,7 @@ static int mei_nfc_if_version(struct mei_cl *cl,
 	ret = 0;
 	bytes_recv = __mei_cl_recv(cl, (u8 *)reply, if_version_length, 0, 0);
 	if (bytes_recv < 0 || (size_t)bytes_recv < if_version_length) {
-		dev_err(bus->dev, "Could not read IF version ret = %d\n", bytes_recv);
+		dev_err(bus->dev, "Could not read IF version\n");
 		ret = -EIO;
 		goto err;
 	}

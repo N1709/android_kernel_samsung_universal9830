@@ -603,8 +603,7 @@ qla24xx_build_scsi_type_6_iocbs(srb_t *sp, struct cmd_type_6 *cmd_pkt,
 	*((uint32_t *)(&cmd_pkt->entry_type)) = cpu_to_le32(COMMAND_TYPE_6);
 
 	/* No data transfer */
-	if (!scsi_bufflen(cmd) || cmd->sc_data_direction == DMA_NONE ||
-	    tot_dsds == 0) {
+	if (!scsi_bufflen(cmd) || cmd->sc_data_direction == DMA_NONE) {
 		cmd_pkt->byte_count = cpu_to_le32(0);
 		return 0;
 	}
@@ -2537,8 +2536,7 @@ qla24xx_els_logo_iocb(srb_t *sp, struct els_entry_24xx *els_iocb)
 		ql_dbg(ql_dbg_io + ql_dbg_buffer, vha, 0x3073,
 		    "PLOGI ELS IOCB:\n");
 		ql_dump_buffer(ql_log_info, vha, 0x0109,
-		    (uint8_t *)els_iocb,
-		    sizeof(*els_iocb));
+		    (uint8_t *)els_iocb, 0x70);
 	} else {
 		els_iocb->tx_byte_count = sizeof(struct els_logo_payload);
 		els_iocb->tx_address[0] =
@@ -2702,8 +2700,7 @@ qla24xx_els_dcmd2_iocb(scsi_qla_host_t *vha, int els_opcode,
 
 	ql_dbg(ql_dbg_disc + ql_dbg_buffer, vha, 0x3073, "PLOGI buffer:\n");
 	ql_dump_buffer(ql_dbg_disc + ql_dbg_buffer, vha, 0x0109,
-	    (uint8_t *)elsio->u.els_plogi.els_plogi_pyld,
-	    sizeof(*elsio->u.els_plogi.els_plogi_pyld));
+	    (uint8_t *)elsio->u.els_plogi.els_plogi_pyld, 0x70);
 
 	rval = qla2x00_start_sp(sp);
 	if (rval != QLA_SUCCESS) {

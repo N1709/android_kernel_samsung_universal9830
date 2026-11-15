@@ -55,12 +55,11 @@ static int mdiobus_register_gpiod(struct mdio_device *mdiodev)
 		gpiod = fwnode_get_named_gpiod(&mdiodev->dev.of_node->fwnode,
 					       "reset-gpios", 0, GPIOD_OUT_LOW,
 					       "PHY reset");
-	if (IS_ERR(gpiod)) {
-		if (PTR_ERR(gpiod) == -ENOENT || PTR_ERR(gpiod) == -ENOSYS)
-			gpiod = NULL;
-		else
-			return PTR_ERR(gpiod);
-	}
+	if (PTR_ERR(gpiod) == -ENOENT ||
+	    PTR_ERR(gpiod) == -ENOSYS)
+		gpiod = NULL;
+	else if (IS_ERR(gpiod))
+		return PTR_ERR(gpiod);
 
 	mdiodev->reset = gpiod;
 
@@ -102,12 +101,7 @@ EXPORT_SYMBOL(mdiobus_unregister_device);
 
 struct phy_device *mdiobus_get_phy(struct mii_bus *bus, int addr)
 {
-	struct mdio_device *mdiodev;
-
-	if (addr < 0 || addr >= ARRAY_SIZE(bus->mdio_map))
-		return NULL;
-
-	mdiodev = bus->mdio_map[addr];
+	struct mdio_device *mdiodev = bus->mdio_map[addr];
 
 	if (!mdiodev)
 		return NULL;
@@ -382,16 +376,10 @@ int __mdiobus_register(struct mii_bus *bus, struct module *owner)
 	bus->dev.groups = NULL;
 	dev_set_name(&bus->dev, "%s", bus->id);
 
-	/* We need to set state to MDIOBUS_UNREGISTERED to correctly release
-	 * the device in mdiobus_free()
-	 *
-	 * State will be updated later in this function in case of success
-	 */
-	bus->state = MDIOBUS_UNREGISTERED;
-
 	err = device_register(&bus->dev);
 	if (err) {
 		pr_err("mii_bus %s failed to register\n", bus->id);
+		put_device(&bus->dev);
 		return -EINVAL;
 	}
 
@@ -402,7 +390,6 @@ int __mdiobus_register(struct mii_bus *bus, struct module *owner)
 	if (IS_ERR(gpiod)) {
 		dev_err(&bus->dev, "mii_bus %s couldn't get reset GPIO\n",
 			bus->id);
-		device_del(&bus->dev);
 		return PTR_ERR(gpiod);
 	} else	if (gpiod) {
 		bus->reset_gpiod = gpiod;
@@ -416,7 +403,7 @@ int __mdiobus_register(struct mii_bus *bus, struct module *owner)
 		bus->reset(bus);
 
 	for (i = 0; i < PHY_MAX_ADDR; i++) {
-		if ((bus->phy_mask & BIT(i)) == 0) {
+		if ((bus->phy_mask & (1 << i)) == 0) {
 			struct phy_device *phydev;
 
 			phydev = mdiobus_scan(bus, i);
@@ -430,7 +417,7 @@ int __mdiobus_register(struct mii_bus *bus, struct module *owner)
 	mdiobus_setup_mdiodev_from_board_info(bus, mdiobus_create_device);
 
 	bus->state = MDIOBUS_REGISTERED;
-	dev_dbg(&bus->dev, "probed\n");
+	pr_info("%s: probed\n", bus->name);
 	return 0;
 
 error:
@@ -457,8 +444,7 @@ void mdiobus_unregister(struct mii_bus *bus)
 	struct mdio_device *mdiodev;
 	int i;
 
-	if (WARN_ON_ONCE(bus->state != MDIOBUS_REGISTERED))
-		return;
+	BUG_ON(bus->state != MDIOBUS_REGISTERED);
 	bus->state = MDIOBUS_UNREGISTERED;
 
 	for (i = 0; i < PHY_MAX_ADDR; i++) {
@@ -557,13 +543,7 @@ int __mdiobus_read(struct mii_bus *bus, int addr, u32 regnum)
 
 	WARN_ON_ONCE(!mutex_is_locked(&bus->mdio_lock));
 
-	if (addr >= PHY_MAX_ADDR)
-		return -ENXIO;
-
-	if (bus->read)
-		retval = bus->read(bus, addr, regnum);
-	else
-		retval = -EOPNOTSUPP;
+	retval = bus->read(bus, addr, regnum);
 
 	trace_mdio_access(bus, 1, addr, regnum, retval, retval);
 
@@ -588,13 +568,7 @@ int __mdiobus_write(struct mii_bus *bus, int addr, u32 regnum, u16 val)
 
 	WARN_ON_ONCE(!mutex_is_locked(&bus->mdio_lock));
 
-	if (addr >= PHY_MAX_ADDR)
-		return -ENXIO;
-
-	if (bus->write)
-		err = bus->write(bus, addr, regnum, val);
-	else
-		err = -EOPNOTSUPP;
+	err = bus->write(bus, addr, regnum, val);
 
 	trace_mdio_access(bus, 0, addr, regnum, val, err);
 
@@ -762,6 +736,7 @@ int __init mdio_bus_init(void)
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(mdio_bus_init);
 
 #if IS_ENABLED(CONFIG_PHYLIB)
 void mdio_bus_exit(void)

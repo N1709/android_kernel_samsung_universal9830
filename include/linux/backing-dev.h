@@ -13,7 +13,6 @@
 #include <linux/fs.h>
 #include <linux/sched.h>
 #include <linux/blkdev.h>
-#include <linux/device.h>
 #include <linux/writeback.h>
 #include <linux/blk-cgroup.h>
 #include <linux/backing-dev-defs.h>
@@ -39,12 +38,6 @@ struct backing_dev_info *bdi_alloc_node(gfp_t gfp_mask, int node_id);
 static inline struct backing_dev_info *bdi_alloc(gfp_t gfp_mask)
 {
 	return bdi_alloc_node(gfp_mask, NUMA_NO_NODE);
-}
-
-struct backing_dev_info *sec_bdi_alloc_node(gfp_t gfp_mask, int node_id);
-static inline struct backing_dev_info *sec_bdi_alloc(gfp_t gfp_mask)
-{
-	return sec_bdi_alloc_node(gfp_mask, NUMA_NO_NODE);
 }
 
 void wb_start_background_writeback(struct bdi_writeback *wb);
@@ -140,7 +133,6 @@ int bdi_set_max_ratio(struct backing_dev_info *bdi, unsigned int max_ratio);
 #define BDI_CAP_STRICTLIMIT	0x00000010
 #define BDI_CAP_CGROUP_WRITEBACK 0x00000020
 #define BDI_CAP_SYNCHRONOUS_IO	0x00000040
-#define BDI_CAP_SEC_DEBUG	0x00000080
 
 #define BDI_CAP_NO_ACCT_AND_WRITEBACK \
 	(BDI_CAP_NO_WRITEBACK | BDI_CAP_NO_ACCT_DIRTY | BDI_CAP_NO_ACCT_WB)
@@ -345,7 +337,6 @@ static inline struct bdi_writeback *inode_to_wb(const struct inode *inode)
 {
 #ifdef CONFIG_LOCKDEP
 	WARN_ON_ONCE(debug_locks &&
-		     (inode->i_sb->s_iflags & SB_I_CGROUPWB) &&
 		     (!lockdep_is_held(&inode->i_lock) &&
 		      !lockdep_is_held(&inode->i_mapping->i_pages.xa_lock) &&
 		      !lockdep_is_held(&inode->i_wb->list_lock)));
@@ -506,7 +497,5 @@ static inline int bdi_rw_congested(struct backing_dev_info *bdi)
 	return bdi_congested(bdi, (1 << WB_sync_congested) |
 				  (1 << WB_async_congested));
 }
-
-const char *bdi_dev_name(struct backing_dev_info *bdi);
 
 #endif	/* _LINUX_BACKING_DEV_H */

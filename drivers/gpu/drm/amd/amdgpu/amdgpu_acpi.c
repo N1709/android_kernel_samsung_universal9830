@@ -91,7 +91,6 @@ static union acpi_object *amdgpu_atif_call(struct amdgpu_atif *atif,
 					   struct acpi_buffer *params)
 {
 	acpi_status status;
-	union acpi_object *obj;
 	union acpi_object atif_arg_elements[2];
 	struct acpi_object_list atif_arg;
 	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
@@ -114,24 +113,16 @@ static union acpi_object *amdgpu_atif_call(struct amdgpu_atif *atif,
 
 	status = acpi_evaluate_object(atif->handle, NULL, &atif_arg,
 				      &buffer);
-	obj = (union acpi_object *)buffer.pointer;
 
-	/* Fail if calling the method fails */
-	if (ACPI_FAILURE(status)) {
+	/* Fail only if calling the method fails and ATIF is supported */
+	if (ACPI_FAILURE(status) && status != AE_NOT_FOUND) {
 		DRM_DEBUG_DRIVER("failed to evaluate ATIF got %s\n",
 				 acpi_format_exception(status));
-		kfree(obj);
+		kfree(buffer.pointer);
 		return NULL;
 	}
 
-	if (obj->type != ACPI_TYPE_BUFFER) {
-		DRM_DEBUG_DRIVER("bad object returned from ATIF: %d\n",
-				 obj->type);
-		kfree(obj);
-		return NULL;
-	}
-
-	return obj;
+	return buffer.pointer;
 }
 
 /**
@@ -426,7 +417,8 @@ static int amdgpu_atif_handler(struct amdgpu_device *adev,
 			}
 		}
 		if (req.pending & ATIF_DGPU_DISPLAY_EVENT) {
-			if (adev->flags & AMD_IS_PX) {
+			if ((adev->flags & AMD_IS_PX) &&
+			    amdgpu_atpx_dgpu_req_power_for_displays()) {
 				pm_runtime_get_sync(adev->ddev->dev);
 				/* Just fire off a uevent and let userspace tell us what to do */
 				drm_helper_hpd_irq_event(adev->ddev);

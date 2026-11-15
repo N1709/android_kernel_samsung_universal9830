@@ -190,7 +190,7 @@ int mv88e6xxx_port_set_duplex(struct mv88e6xxx_chip *chip, int port, int dup)
 		/* normal duplex detection */
 		break;
 	default:
-		return -EOPNOTSUPP;
+		return -EINVAL;
 	}
 
 	err = mv88e6xxx_port_write(chip, port, MV88E6XXX_PORT_MAC_CTL, reg);
@@ -395,27 +395,19 @@ int mv88e6390x_port_set_cmode(struct mv88e6xxx_chip *chip, int port,
 		cmode = 0;
 	}
 
-	/* cmode doesn't change, nothing to do for us */
-	if (cmode == chip->ports[port].cmode)
-		return 0;
-
 	lane = mv88e6390x_serdes_get_lane(chip, port);
-	if (lane < 0 && lane != -ENODEV)
+	if (lane < 0)
 		return lane;
 
-	if (lane >= 0) {
-		if (chip->ports[port].serdes_irq) {
-			err = mv88e6390_serdes_irq_disable(chip, port, lane);
-			if (err)
-				return err;
-		}
-
-		err = mv88e6390x_serdes_power(chip, port, false);
+	if (chip->ports[port].serdes_irq) {
+		err = mv88e6390_serdes_irq_disable(chip, port, lane);
 		if (err)
 			return err;
 	}
 
-	chip->ports[port].cmode = 0;
+	err = mv88e6390_serdes_power(chip, port, false);
+	if (err)
+		return err;
 
 	if (cmode) {
 		err = mv88e6xxx_port_read(chip, port, MV88E6XXX_PORT_STS, &reg);
@@ -429,13 +421,7 @@ int mv88e6390x_port_set_cmode(struct mv88e6xxx_chip *chip, int port,
 		if (err)
 			return err;
 
-		chip->ports[port].cmode = cmode;
-
-		lane = mv88e6390x_serdes_get_lane(chip, port);
-		if (lane < 0)
-			return lane;
-
-		err = mv88e6390x_serdes_power(chip, port, true);
+		err = mv88e6390_serdes_power(chip, port, true);
 		if (err)
 			return err;
 
@@ -445,6 +431,8 @@ int mv88e6390x_port_set_cmode(struct mv88e6xxx_chip *chip, int port,
 				return err;
 		}
 	}
+
+	chip->ports[port].cmode = cmode;
 
 	return 0;
 }

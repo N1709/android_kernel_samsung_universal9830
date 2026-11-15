@@ -91,10 +91,8 @@ v9fs_fill_super(struct super_block *sb, struct v9fs_session_info *v9ses,
 	if (ret)
 		return ret;
 
-	if (!v9ses->cache) {
-		sb->s_bdi->ra_pages = 0;
-		sb->s_bdi->io_pages = 0;
-	}
+	if (v9ses->cache)
+		sb->s_bdi->ra_pages = (VM_MAX_READAHEAD * 1024)/PAGE_SIZE;
 
 	sb->s_flags |= SB_ACTIVE | SB_DIRSYNC;
 	if (!v9ses->cache)
@@ -174,7 +172,7 @@ static struct dentry *v9fs_mount(struct file_system_type *fs_type, int flags,
 			goto release_sb;
 		}
 		d_inode(root)->i_ino = v9fs_qid2ino(&st->qid);
-		v9fs_stat2inode_dotl(st, d_inode(root), 0);
+		v9fs_stat2inode_dotl(st, d_inode(root));
 		kfree(st);
 	} else {
 		struct p9_wstat *st = NULL;
@@ -185,7 +183,7 @@ static struct dentry *v9fs_mount(struct file_system_type *fs_type, int flags,
 		}
 
 		d_inode(root)->i_ino = v9fs_qid2ino(&st->qid);
-		v9fs_stat2inode(st, d_inode(root), sb, 0);
+		v9fs_stat2inode(st, d_inode(root), sb);
 
 		p9stat_free(st);
 		kfree(st);
@@ -348,7 +346,6 @@ static const struct super_operations v9fs_super_ops = {
 	.alloc_inode = v9fs_alloc_inode,
 	.destroy_inode = v9fs_destroy_inode,
 	.statfs = simple_statfs,
-	.drop_inode = v9fs_drop_inode,
 	.evict_inode = v9fs_evict_inode,
 	.show_options = v9fs_show_options,
 	.umount_begin = v9fs_umount_begin,

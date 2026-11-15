@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * efi.c - EFI subsystem
  *
@@ -10,6 +9,8 @@
  * allowing the efivarfs to be mounted or the efivars module to be loaded.
  * The existance of /sys/firmware/efi may also be used by userspace to
  * determine that the system supports EFI.
+ *
+ * This file is released under the GPLv2.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -236,7 +237,7 @@ static void generic_ops_unregister(void)
 	efivars_unregister(&generic_efivars);
 }
 
-#ifdef CONFIG_EFI_CUSTOM_SSDT_OVERLAYS
+#if IS_ENABLED(CONFIG_ACPI)
 #define EFIVAR_SSDT_NAME_MAX	16
 static char efivar_ssdt[EFIVAR_SSDT_NAME_MAX] __initdata;
 static int __init efivar_ssdt_setup(char *str)
@@ -245,7 +246,7 @@ static int __init efivar_ssdt_setup(char *str)
 		memcpy(efivar_ssdt, str, strlen(str));
 	else
 		pr_warn("efivar_ssdt: name too long: %s\n", str);
-	return 1;
+	return 0;
 }
 __setup("efivar_ssdt=", efivar_ssdt_setup);
 
@@ -280,9 +281,6 @@ static __init int efivar_ssdt_load(void)
 	unsigned long size;
 	void *data;
 	int ret;
-
-	if (!efivar_ssdt[0])
-		return 0;
 
 	ret = efivar_init(efivar_ssdt_iter, &entries, true, &entries);
 
@@ -359,8 +357,7 @@ static int __init efisubsys_init(void)
 	efi_kobj = kobject_create_and_add("efi", firmware_kobj);
 	if (!efi_kobj) {
 		pr_err("efi: Firmware registration failed.\n");
-		error = -ENOMEM;
-		goto err_destroy_wq;
+		return -ENOMEM;
 	}
 
 	error = generic_ops_register();
@@ -396,10 +393,6 @@ err_unregister:
 	generic_ops_unregister();
 err_put:
 	kobject_put(efi_kobj);
-err_destroy_wq:
-	if (efi_rts_wq)
-		destroy_workqueue(efi_rts_wq);
-
 	return error;
 }
 
@@ -560,7 +553,7 @@ int __init efi_config_parse_tables(void *config_tables, int count, int sz,
 
 		seed = early_memremap(efi.rng_seed, sizeof(*seed));
 		if (seed != NULL) {
-			size = min(seed->size, EFI_RANDOM_SEED_SIZE);
+			size = seed->size;
 			early_memunmap(seed, sizeof(*seed));
 		} else {
 			pr_err("Could not map UEFI random seed!\n");
@@ -578,7 +571,7 @@ int __init efi_config_parse_tables(void *config_tables, int count, int sz,
 		}
 	}
 
-	if (!IS_ENABLED(CONFIG_X86_32) && efi_enabled(EFI_MEMMAP))
+	if (efi_enabled(EFI_MEMMAP))
 		efi_memattr_init();
 
 	efi_tpm_eventlog_init();
@@ -678,7 +671,7 @@ device_initcall(efi_load_efivars);
 		{ name },				   \
 		{ prop },				   \
 		offsetof(struct efi_fdt_params, field),    \
-		sizeof_field(struct efi_fdt_params, field) \
+		FIELD_SIZEOF(struct efi_fdt_params, field) \
 	}
 
 struct params {

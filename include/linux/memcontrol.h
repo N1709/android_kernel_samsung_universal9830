@@ -188,13 +188,6 @@ struct memcg_padding {
 #define MEMCG_PADDING(name)
 #endif
 
-#ifdef CONFIG_MEMCG_HEIMDALL
-#define MEMCG_HEIMDALL_SHRINK_ANON 1
-#define MEMCG_HEIMDALL_SHRINK_FILE 2
-void forced_shrink_node_memcg(struct pglist_data *pgdat, struct mem_cgroup *memcg,
-			      int type, unsigned long nr_requested);
-#endif
-
 /*
  * The memory controller data structure. The memory controller controls both
  * page cache and RSS per cgroup. We would eventually like to provide
@@ -566,10 +559,7 @@ struct mem_cgroup *lock_page_memcg(struct page *page);
 void __unlock_page_memcg(struct mem_cgroup *memcg);
 void unlock_page_memcg(struct page *page);
 
-/*
- * idx can be of type enum memcg_stat_item or node_stat_item.
- * Keep in sync with memcg_exact_page_state().
- */
+/* idx can be of type enum memcg_stat_item or node_stat_item */
 static inline unsigned long memcg_page_state(struct mem_cgroup *memcg,
 					     int idx)
 {
@@ -777,16 +767,8 @@ static inline void count_memcg_event_mm(struct mm_struct *mm,
 static inline void memcg_memory_event(struct mem_cgroup *memcg,
 				      enum memcg_memory_event event)
 {
-	do {
-		atomic_long_inc(&memcg->memory_events[event]);
-		cgroup_file_notify(&memcg->events_file);
-
-		if (!cgroup_subsys_on_dfl(memory_cgrp_subsys))
-			break;
-		if (cgrp_dfl_root.flags & CGRP_ROOT_MEMORY_LOCAL_EVENTS)
-			break;
-	} while ((memcg = parent_mem_cgroup(memcg)) &&
-		 !mem_cgroup_is_root(memcg));
+	atomic_long_inc(&memcg->memory_events[event]);
+	cgroup_file_notify(&memcg->events_file);
 }
 
 static inline void memcg_memory_event_mm(struct mm_struct *mm,

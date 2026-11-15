@@ -31,7 +31,6 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/mount.h>
-#include <linux/pseudo_fs.h>
 #include <linux/slab.h>
 #include <linux/srcu.h>
 
@@ -382,7 +381,11 @@ void drm_dev_unplug(struct drm_device *dev)
 	synchronize_srcu(&drm_unplug_srcu);
 
 	drm_dev_unregister(dev);
-	drm_dev_put(dev);
+
+	mutex_lock(&drm_global_mutex);
+	if (dev->open_count == 0)
+		drm_dev_put(dev);
+	mutex_unlock(&drm_global_mutex);
 }
 EXPORT_SYMBOL(drm_dev_unplug);
 
@@ -407,15 +410,28 @@ EXPORT_SYMBOL(drm_dev_unplug);
 static int drm_fs_cnt;
 static struct vfsmount *drm_fs_mnt;
 
-static int drm_fs_init_fs_context(struct fs_context *fc)
+static const struct dentry_operations drm_fs_dops = {
+	.d_dname	= simple_dname,
+};
+
+static const struct super_operations drm_fs_sops = {
+	.statfs		= simple_statfs,
+};
+
+static struct dentry *drm_fs_mount(struct file_system_type *fs_type, int flags,
+				   const char *dev_name, void *data)
 {
-	return init_pseudo(fc, 0x010203ff) ? 0 : -ENOMEM;
+	return mount_pseudo(fs_type,
+			    "drm:",
+			    &drm_fs_sops,
+			    &drm_fs_dops,
+			    0x010203ff);
 }
 
 static struct file_system_type drm_fs_type = {
 	.name		= "drm",
 	.owner		= THIS_MODULE,
-	.init_fs_context = drm_fs_init_fs_context,
+	.mount		= drm_fs_mount,
 	.kill_sb	= kill_anon_super,
 };
 
@@ -487,7 +503,7 @@ int drm_dev_init(struct drm_device *dev,
 	}
 
 	kref_init(&dev->ref);
-	dev->dev = get_device(parent);
+	dev->dev = parent;
 	dev->driver = driver;
 
 	/* no per-device feature limits by default */
@@ -559,7 +575,6 @@ err_minors:
 	drm_minor_free(dev, DRM_MINOR_RENDER);
 	drm_fs_inode_free(dev->anon_inode);
 err_free:
-	put_device(dev->dev);
 	mutex_destroy(&dev->master_mutex);
 	mutex_destroy(&dev->ctxlist_mutex);
 	mutex_destroy(&dev->clientlist_mutex);
@@ -594,8 +609,6 @@ void drm_dev_fini(struct drm_device *dev)
 
 	drm_minor_free(dev, DRM_MINOR_PRIMARY);
 	drm_minor_free(dev, DRM_MINOR_RENDER);
-
-	put_device(dev->dev);
 
 	mutex_destroy(&dev->master_mutex);
 	mutex_destroy(&dev->ctxlist_mutex);
@@ -809,11 +822,8 @@ int drm_dev_register(struct drm_device *dev, unsigned long flags)
 			goto err_minors;
 	}
 
-	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
-		ret = drm_modeset_register_all(dev);
-		if (ret)
-			goto err_unload;
-	}
+	if (drm_core_check_feature(dev, DRIVER_MODESET))
+		drm_modeset_register_all(dev);
 
 	ret = 0;
 
@@ -825,9 +835,6 @@ int drm_dev_register(struct drm_device *dev, unsigned long flags)
 
 	goto out_unlock;
 
-err_unload:
-	if (dev->driver->unload)
-		dev->driver->unload(dev);
 err_minors:
 	remove_compat_control_link(dev);
 	drm_minor_unregister(dev, DRM_MINOR_PRIMARY);

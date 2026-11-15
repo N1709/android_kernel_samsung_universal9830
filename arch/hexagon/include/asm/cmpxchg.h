@@ -44,7 +44,7 @@ static inline unsigned long __xchg(unsigned long x, volatile void *ptr,
 	__asm__ __volatile__ (
 	"1:	%0 = memw_locked(%1);\n"    /*  load into retval */
 	"	memw_locked(%1,P0) = %2;\n" /*  store into memory */
-	"	if (!P0) jump 1b;\n"
+	"	if !P0 jump 1b;\n"
 	: "=&r" (retval)
 	: "r" (ptr), "r" (x)
 	: "memory", "p0"
@@ -70,7 +70,7 @@ static inline unsigned long __xchg(unsigned long x, volatile void *ptr,
 	__typeof__(ptr) __ptr = (ptr);				\
 	__typeof__(*(ptr)) __old = (old);			\
 	__typeof__(*(ptr)) __new = (new);			\
-	__typeof__(*(ptr)) __oldval = (__typeof__(*(ptr))) 0;	\
+	__typeof__(*(ptr)) __oldval = 0;			\
 								\
 	asm volatile(						\
 		"1:	%0 = memw_locked(%1);\n"		\

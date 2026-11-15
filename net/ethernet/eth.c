@@ -135,9 +135,8 @@ u32 eth_get_headlen(void *data, unsigned int len)
 		return len;
 
 	/* parse any remaining L2/L3 headers, check for L4 */
-	if (!skb_flow_dissect_flow_keys_basic(NULL, NULL, &keys, data,
-					      eth->h_proto, sizeof(*eth),
-					      len, flags))
+	if (!skb_flow_dissect_flow_keys_basic(NULL, &keys, data, eth->h_proto,
+					      sizeof(*eth), len, flags))
 		return max_t(u32, keys.control.thoff, sizeof(*eth));
 
 	/* parse for any L4 headers */
@@ -166,7 +165,15 @@ __be16 eth_type_trans(struct sk_buff *skb, struct net_device *dev)
 	eth = (struct ethhdr *)skb->data;
 	skb_pull_inline(skb, ETH_HLEN);
 
-	eth_skb_pkt_type(skb, dev);
+	if (unlikely(is_multicast_ether_addr_64bits(eth->h_dest))) {
+		if (ether_addr_equal_64bits(eth->h_dest, dev->broadcast))
+			skb->pkt_type = PACKET_BROADCAST;
+		else
+			skb->pkt_type = PACKET_MULTICAST;
+	}
+	else if (unlikely(!ether_addr_equal_64bits(eth->h_dest,
+						   dev->dev_addr)))
+		skb->pkt_type = PACKET_OTHERHOST;
 
 	/*
 	 * Some variants of DSA tagging don't have an ethertype field
@@ -232,12 +239,7 @@ int eth_header_cache(const struct neighbour *neigh, struct hh_cache *hh, __be16 
 	eth->h_proto = type;
 	memcpy(eth->h_source, dev->dev_addr, ETH_ALEN);
 	memcpy(eth->h_dest, neigh->ha, ETH_ALEN);
-
-	/* Pairs with READ_ONCE() in neigh_resolve_output(),
-	 * neigh_hh_output() and neigh_update_hhs().
-	 */
-	smp_store_release(&hh->hh_len, ETH_HLEN);
-
+	hh->hh_len = ETH_HLEN;
 	return 0;
 }
 EXPORT_SYMBOL(eth_header_cache);

@@ -29,7 +29,6 @@
 
 #include <asm/pgalloc.h>
 #include <asm/ptrace.h>
-#include <asm/tlbflush.h>
 
 /*
  * This routine handles page faults.  It determines the address and the
@@ -128,7 +127,7 @@ good_area:
 	 * signal first. We do not need to release the mmap_sem because it
 	 * would already be released in __lock_page_or_retry in mm/filemap.c.
 	 */
-	if (fault_signal_pending(fault, regs))
+	if ((fault & VM_FAULT_RETRY) && fatal_signal_pending(tsk))
 		return;
 
 	if (unlikely(fault & VM_FAULT_ERROR)) {
@@ -200,7 +199,7 @@ no_context:
 		(addr < PAGE_SIZE) ? "NULL pointer dereference" :
 		"paging request", addr);
 	die(regs, "Oops");
-	make_task_dead(SIGKILL);
+	do_exit(SIGKILL);
 
 	/*
 	 * We ran out of memory, call the OOM killer, and return the userspace
@@ -282,18 +281,6 @@ vmalloc_fault:
 		pte_k = pte_offset_kernel(pmd_k, addr);
 		if (!pte_present(*pte_k))
 			goto no_context;
-
-		/*
-		 * The kernel assumes that TLBs don't cache invalid
-		 * entries, but in RISC-V, SFENCE.VMA specifies an
-		 * ordering constraint, not a cache flush; it is
-		 * necessary even after writing invalid entries.
-		 * Relying on flush_tlb_fix_spurious_fault would
-		 * suffice, but the extra traps reduce
-		 * performance. So, eagerly SFENCE.VMA.
-		 */
-		local_flush_tlb_page(addr);
-
 		return;
 	}
 }

@@ -120,13 +120,13 @@ ia64_init_addr_space (void)
 		vma->vm_end = vma->vm_start + PAGE_SIZE;
 		vma->vm_flags = VM_DATA_DEFAULT_FLAGS|VM_GROWSUP|VM_ACCOUNT;
 		vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
-		mmap_write_lock(current->mm);
+		down_write(&current->mm->mmap_sem);
 		if (insert_vm_struct(current->mm, vma)) {
-			mmap_write_unlock(current->mm);
+			up_write(&current->mm->mmap_sem);
 			vm_area_free(vma);
 			return;
 		}
-		mmap_write_unlock(current->mm);
+		up_write(&current->mm->mmap_sem);
 	}
 
 	/* map NaT-page at address zero to speed up speculative dereferencing of NULL: */
@@ -138,13 +138,13 @@ ia64_init_addr_space (void)
 			vma->vm_page_prot = __pgprot(pgprot_val(PAGE_READONLY) | _PAGE_MA_NAT);
 			vma->vm_flags = VM_READ | VM_MAYREAD | VM_IO |
 					VM_DONTEXPAND | VM_DONTDUMP;
-			mmap_write_lock(current->mm);
+			down_write(&current->mm->mmap_sem);
 			if (insert_vm_struct(current->mm, vma)) {
-				mmap_write_unlock(current->mm);
+				up_write(&current->mm->mmap_sem);
 				vm_area_free(vma);
 				return;
 			}
-			mmap_write_unlock(current->mm);
+			up_write(&current->mm->mmap_sem);
 		}
 	}
 }
@@ -498,7 +498,7 @@ virtual_memmap_init(u64 start, u64 end, void *arg)
 	if (map_start < map_end)
 		memmap_init_zone((unsigned long)(map_end - map_start),
 				 args->nid, args->zone, page_to_pfn(map_start),
-				 MEMINIT_EARLY, NULL);
+				 MEMMAP_EARLY, NULL);
 	return 0;
 }
 
@@ -507,8 +507,8 @@ memmap_init (unsigned long size, int nid, unsigned long zone,
 	     unsigned long start_pfn)
 {
 	if (!vmem_map) {
-		memmap_init_zone(size, nid, zone, start_pfn,
-				 MEMINIT_EARLY, NULL);
+		memmap_init_zone(size, nid, zone, start_pfn, MEMMAP_EARLY,
+				NULL);
 	} else {
 		struct page *start;
 		struct memmap_init_callback_data args;

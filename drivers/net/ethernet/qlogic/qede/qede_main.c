@@ -29,7 +29,6 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-#include <linux/crash_dump.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/version.h>
@@ -632,7 +631,6 @@ static const struct net_device_ops qede_netdev_ops = {
 	.ndo_open = qede_open,
 	.ndo_stop = qede_close,
 	.ndo_start_xmit = qede_start_xmit,
-	.ndo_select_queue = qede_select_queue,
 	.ndo_set_rx_mode = qede_set_rx_mode,
 	.ndo_set_mac_address = qede_set_mac_addr,
 	.ndo_validate_addr = eth_validate_addr,
@@ -668,7 +666,6 @@ static const struct net_device_ops qede_netdev_vf_ops = {
 	.ndo_open = qede_open,
 	.ndo_stop = qede_close,
 	.ndo_start_xmit = qede_start_xmit,
-	.ndo_select_queue = qede_select_queue,
 	.ndo_set_rx_mode = qede_set_rx_mode,
 	.ndo_set_mac_address = qede_set_mac_addr,
 	.ndo_validate_addr = eth_validate_addr,
@@ -687,7 +684,6 @@ static const struct net_device_ops qede_netdev_vf_xdp_ops = {
 	.ndo_open = qede_open,
 	.ndo_stop = qede_close,
 	.ndo_start_xmit = qede_start_xmit,
-	.ndo_select_queue = qede_select_queue,
 	.ndo_set_rx_mode = qede_set_rx_mode,
 	.ndo_set_mac_address = qede_set_mac_addr,
 	.ndo_validate_addr = eth_validate_addr,
@@ -731,14 +727,8 @@ static struct qede_dev *qede_alloc_etherdev(struct qed_dev *cdev,
 	edev->dp_module = dp_module;
 	edev->dp_level = dp_level;
 	edev->ops = qed_ops;
-
-	if (is_kdump_kernel()) {
-		edev->q_num_rx_buffers = NUM_RX_BDS_KDUMP_MIN;
-		edev->q_num_tx_buffers = NUM_TX_BDS_KDUMP_MIN;
-	} else {
-		edev->q_num_rx_buffers = NUM_RX_BDS_DEF;
-		edev->q_num_tx_buffers = NUM_TX_BDS_DEF;
-	}
+	edev->q_num_rx_buffers = NUM_RX_BDS_DEF;
+	edev->q_num_tx_buffers = NUM_TX_BDS_DEF;
 
 	DP_INFO(edev, "Allocated netdev with %d tx queues and %d rx queues\n",
 		info->num_queues, info->num_queues);
@@ -1177,16 +1167,8 @@ enum qede_remove_mode {
 static void __qede_remove(struct pci_dev *pdev, enum qede_remove_mode mode)
 {
 	struct net_device *ndev = pci_get_drvdata(pdev);
-	struct qede_dev *edev;
-	struct qed_dev *cdev;
-
-	if (!ndev) {
-		dev_info(&pdev->dev, "Device has already been removed\n");
-		return;
-	}
-
-	edev = netdev_priv(ndev);
-	cdev = edev->cdev;
+	struct qede_dev *edev = netdev_priv(ndev);
+	struct qed_dev *cdev = edev->cdev;
 
 	DP_INFO(edev, "Starting qede_remove\n");
 
@@ -1369,7 +1351,6 @@ static int qede_alloc_mem_rxq(struct qede_dev *edev, struct qede_rx_queue *rxq)
 		rxq->rx_buf_seg_size = roundup_pow_of_two(size);
 	} else {
 		rxq->rx_buf_seg_size = PAGE_SIZE;
-		edev->ndev->features &= ~NETIF_F_GRO_HW;
 	}
 
 	/* Allocate the parallel driver ring for Rx buffers */
@@ -1414,7 +1395,6 @@ static int qede_alloc_mem_rxq(struct qede_dev *edev, struct qede_rx_queue *rxq)
 		}
 	}
 
-	edev->gro_disable = !(edev->ndev->features & NETIF_F_GRO_HW);
 	if (!edev->gro_disable)
 		qede_set_tpa_param(rxq);
 err:
@@ -1615,6 +1595,8 @@ static void qede_init_fp(struct qede_dev *edev)
 		snprintf(fp->name, sizeof(fp->name), "%s-fp-%d",
 			 edev->ndev->name, queue_id);
 	}
+
+	edev->gro_disable = !(edev->ndev->features & NETIF_F_GRO_HW);
 }
 
 static int qede_set_real_num_queues(struct qede_dev *edev)
@@ -1676,7 +1658,6 @@ static void qede_sync_free_irqs(struct qede_dev *edev)
 	}
 
 	edev->int_info.used_cnt = 0;
-	edev->int_info.msix_cnt = 0;
 }
 
 static int qede_req_msix_irqs(struct qede_dev *edev)
@@ -2018,8 +1999,12 @@ static int qede_start_queues(struct qede_dev *edev, bool clear_stats)
 			if (rc)
 				goto out;
 
-			bpf_prog_add(edev->xdp_prog, 1);
-			fp->rxq->xdp_prog = edev->xdp_prog;
+			fp->rxq->xdp_prog = bpf_prog_add(edev->xdp_prog, 1);
+			if (IS_ERR(fp->rxq->xdp_prog)) {
+				rc = PTR_ERR(fp->rxq->xdp_prog);
+				fp->rxq->xdp_prog = NULL;
+				goto out;
+			}
 		}
 
 		if (fp->type & QEDE_FASTPATH_TX) {
@@ -2190,6 +2175,7 @@ static int qede_load(struct qede_dev *edev, enum qede_load_mode mode,
 	goto out;
 err4:
 	qede_sync_free_irqs(edev);
+	memset(&edev->int_info.msix_cnt, 0, sizeof(struct qed_int_info));
 err3:
 	qede_napi_disable_remove(edev);
 err2:

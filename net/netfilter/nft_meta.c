@@ -30,8 +30,8 @@
 struct nft_meta {
 	enum nft_meta_keys	key:8;
 	union {
-		u8		dreg;
-		u8		sreg;
+		enum nft_registers	dreg:8;
+		enum nft_registers	sreg:8;
 	};
 };
 
@@ -363,8 +363,9 @@ static int nft_meta_get_init(const struct nft_ctx *ctx,
 		return -EOPNOTSUPP;
 	}
 
-	return nft_parse_register_store(ctx, tb[NFTA_META_DREG], &priv->dreg,
-					NULL, NFT_DATA_VALUE, len);
+	priv->dreg = nft_parse_register(tb[NFTA_META_DREG]);
+	return nft_validate_register_store(ctx, priv->dreg, NULL,
+					   NFT_DATA_VALUE, len);
 }
 
 static int nft_meta_get_validate(const struct nft_ctx *ctx,
@@ -455,7 +456,8 @@ static int nft_meta_set_init(const struct nft_ctx *ctx,
 		return -EOPNOTSUPP;
 	}
 
-	err = nft_parse_register_load(tb[NFTA_META_SREG], &priv->sreg, len);
+	priv->sreg = nft_parse_register(tb[NFTA_META_SREG]);
+	err = nft_validate_register_load(priv->sreg, len);
 	if (err < 0)
 		return err;
 

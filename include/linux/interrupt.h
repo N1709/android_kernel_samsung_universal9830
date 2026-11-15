@@ -74,7 +74,6 @@
 #define IRQF_NO_THREAD		0x00010000
 #define IRQF_EARLY_RESUME	0x00020000
 #define IRQF_COND_SUSPEND	0x00040000
-#define IRQF_GIC_MULTI_TARGET	0x10000000
 
 #define IRQF_TIMER		(__IRQF_TIMER | IRQF_NO_SUSPEND | IRQF_NO_THREAD)
 
@@ -362,7 +361,7 @@ irq_calc_affinity_vectors(int minvec, int maxvec, const struct irq_affinity *aff
 static inline void disable_irq_nosync_lockdep(unsigned int irq)
 {
 	disable_irq_nosync(irq);
-#if defined(CONFIG_LOCKDEP) && !defined(CONFIG_PREEMPT_RT)
+#ifdef CONFIG_LOCKDEP
 	local_irq_disable();
 #endif
 }
@@ -370,7 +369,7 @@ static inline void disable_irq_nosync_lockdep(unsigned int irq)
 static inline void disable_irq_nosync_lockdep_irqsave(unsigned int irq, unsigned long *flags)
 {
 	disable_irq_nosync(irq);
-#if defined(CONFIG_LOCKDEP) && !defined(CONFIG_PREEMPT_RT)
+#ifdef CONFIG_LOCKDEP
 	local_irq_save(*flags);
 #endif
 }
@@ -385,7 +384,7 @@ static inline void disable_irq_lockdep(unsigned int irq)
 
 static inline void enable_irq_lockdep(unsigned int irq)
 {
-#if defined(CONFIG_LOCKDEP) && !defined(CONFIG_PREEMPT_RT)
+#ifdef CONFIG_LOCKDEP
 	local_irq_enable();
 #endif
 	enable_irq(irq);
@@ -393,7 +392,7 @@ static inline void enable_irq_lockdep(unsigned int irq)
 
 static inline void enable_irq_lockdep_irqrestore(unsigned int irq, unsigned long *flags)
 {
-#if defined(CONFIG_LOCKDEP) && !defined(CONFIG_PREEMPT_RT)
+#ifdef CONFIG_LOCKDEP
 	local_irq_restore(*flags);
 #endif
 	enable_irq(irq);

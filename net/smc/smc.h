@@ -113,9 +113,9 @@ struct smc_host_cdc_msg {		/* Connection Data Control message */
 } __aligned(8);
 
 enum smc_urg_state {
-	SMC_URG_VALID	= 1,			/* data present */
-	SMC_URG_NOTYET	= 2,			/* data pending */
-	SMC_URG_READ	= 3,			/* data was already read */
+	SMC_URG_VALID,			/* data present */
+	SMC_URG_NOTYET,			/* data pending */
+	SMC_URG_READ			/* data was already read */
 };
 
 struct smc_connection {
@@ -267,10 +267,5 @@ static inline bool using_ipsec(struct smc_sock *smc)
 
 struct sock *smc_accept_dequeue(struct sock *parent, struct socket *new_sock);
 void smc_close_non_accepted(struct sock *sk);
-
-static inline void smc_sock_set_flag(struct sock *sk, enum sock_flags flag)
-{
-	set_bit(flag, &sk->sk_flags);
-}
 
 #endif	/* __SMC_H */

@@ -38,7 +38,7 @@
 #include <asm/io.h>
 #include <asm/smp.h>
 #include <asm/mmu.h>
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 #include <asm/iommu.h>
 #include <asm/btext.h>
 #include <asm/sections.h>
@@ -910,7 +910,7 @@ static const struct ibm_arch_vec ibm_architecture_vec_template __initconst = {
 		.reserved2 = 0,
 		.reserved3 = 0,
 		.subprocessors = 1,
-		.byte22 = OV5_FEAT(OV5_DRMEM_V2) | OV5_FEAT(OV5_DRC_INFO),
+		.byte22 = OV5_FEAT(OV5_DRMEM_V2),
 		.intarch = 0,
 		.mmu = 0,
 		.hash_ext = 0,
@@ -2668,7 +2668,7 @@ static void __init fixup_device_tree_chrp(void)
 #endif
 
 #if defined(CONFIG_PPC64) && defined(CONFIG_PPC_PMAC)
-static void __init fixup_device_tree_pmac64(void)
+static void __init fixup_device_tree_pmac(void)
 {
 	phandle u3, i2c, mpic;
 	u32 u3_rev;
@@ -2708,31 +2708,7 @@ static void __init fixup_device_tree_pmac64(void)
 		     &parent, sizeof(parent));
 }
 #else
-#define fixup_device_tree_pmac64()
-#endif
-
-#ifdef CONFIG_PPC_PMAC
-static void __init fixup_device_tree_pmac(void)
-{
-	__be32 val = 1;
-	char type[8];
-	phandle node;
-
-	// Some pmacs are missing #size-cells on escc or i2s nodes
-	for (node = 0; prom_next_node(&node); ) {
-		type[0] = '\0';
-		prom_getprop(node, "device_type", type, sizeof(type));
-		if (prom_strcmp(type, "escc") && prom_strcmp(type, "i2s"))
-			continue;
-
-		if (prom_getproplen(node, "#size-cells") != PROM_ERROR)
-			continue;
-
-		prom_setprop(node, NULL, "#size-cells", &val, sizeof(val));
-	}
-}
-#else
-static inline void fixup_device_tree_pmac(void) { }
+#define fixup_device_tree_pmac()
 #endif
 
 #ifdef CONFIG_PPC_EFIKA
@@ -2755,7 +2731,7 @@ static void __init fixup_device_tree_efika_add_phy(void)
 
 	/* Check if the phy-handle property exists - bail if it does */
 	rv = prom_getprop(node, "phy-handle", prop, sizeof(prop));
-	if (rv <= 0)
+	if (!rv)
 		return;
 
 	/*
@@ -2957,7 +2933,6 @@ static void __init fixup_device_tree(void)
 	fixup_device_tree_maple_memory_controller();
 	fixup_device_tree_chrp();
 	fixup_device_tree_pmac();
-	fixup_device_tree_pmac64();
 	fixup_device_tree_efika();
 	fixup_device_tree_pasemi();
 }

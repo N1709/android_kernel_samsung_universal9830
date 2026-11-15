@@ -22,7 +22,6 @@
 #include <linux/kvm_host.h>
 #include <linux/init.h>
 #include <linux/export.h>
-#include <linux/kmemleak.h>
 #include <linux/kvm_para.h>
 #include <linux/slab.h>
 #include <linux/of.h>
@@ -643,19 +642,19 @@ static void kvm_check_ins(u32 *inst, u32 features)
 #endif
 	}
 
-#ifdef CONFIG_PPC_BOOK3S_32
 	switch (inst_no_rt & ~KVM_MASK_RB) {
+#ifdef CONFIG_PPC_BOOK3S_32
 	case KVM_INST_MTSRIN:
 		if (features & KVM_MAGIC_FEAT_SR) {
 			u32 inst_rb = _inst & KVM_MASK_RB;
 			kvm_patch_ins_mtsrin(inst, inst_rt, inst_rb);
 		}
 		break;
-	}
 #endif
+	}
 
-#ifdef CONFIG_BOOKE
 	switch (_inst) {
+#ifdef CONFIG_BOOKE
 	case KVM_INST_WRTEEI_0:
 		kvm_patch_ins_wrteei_0(inst);
 		break;
@@ -663,8 +662,8 @@ static void kvm_check_ins(u32 *inst, u32 features)
 	case KVM_INST_WRTEEI_1:
 		kvm_patch_ins_wrtee(inst, 0, 1);
 		break;
-	}
 #endif
+	}
 }
 
 extern u32 kvm_template_start[];
@@ -680,7 +679,7 @@ static void kvm_use_magic_page(void)
 	on_each_cpu(kvm_map_magic_page, &features, 1);
 
 	/* Quick self-test to see if the mapping works */
-	if (fault_in_pages_readable((const char *)KVM_MAGIC_PAGE, sizeof(u32))) {
+	if (!fault_in_pages_readable((const char *)KVM_MAGIC_PAGE, sizeof(u32))) {
 		kvm_patching_worked = false;
 		return;
 	}
@@ -713,12 +712,6 @@ static void kvm_use_magic_page(void)
 
 static __init void kvm_free_tmp(void)
 {
-	/*
-	 * Inform kmemleak about the hole in the .bss section since the
-	 * corresponding pages will be unmapped with DEBUG_PAGEALLOC=y.
-	 */
-	kmemleak_free_part(&kvm_tmp[kvm_tmp_index],
-			   ARRAY_SIZE(kvm_tmp) - kvm_tmp_index);
 	free_reserved_area(&kvm_tmp[kvm_tmp_index],
 			   &kvm_tmp[ARRAY_SIZE(kvm_tmp)], -1, NULL);
 }

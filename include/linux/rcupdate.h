@@ -69,12 +69,14 @@ void __rcu_read_unlock(void);
 
 static inline void __rcu_read_lock(void)
 {
-	preempt_disable();
+	if (IS_ENABLED(CONFIG_PREEMPT_COUNT))
+		preempt_disable();
 }
 
 static inline void __rcu_read_unlock(void)
 {
-	preempt_enable();
+	if (IS_ENABLED(CONFIG_PREEMPT_COUNT))
+		preempt_enable();
 }
 
 static inline int rcu_preempt_depth(void)
@@ -175,37 +177,6 @@ do { \
 	cond_resched(); \
 } while (0)
 
-/**
- * rcu_softirq_qs_periodic - Report RCU and RCU-Tasks quiescent states
- * @old_ts: jiffies at start of processing.
- *
- * This helper is for long-running softirq handlers, such as NAPI threads in
- * networking. The caller should initialize the variable passed in as @old_ts
- * at the beginning of the softirq handler. When invoked frequently, this macro
- * will invoke rcu_softirq_qs() every 100 milliseconds thereafter, which will
- * provide both RCU and RCU-Tasks quiescent states. Note that this macro
- * modifies its old_ts argument.
- *
- * Because regions of code that have disabled softirq act as RCU read-side
- * critical sections, this macro should be invoked with softirq (and
- * preemption) enabled.
- *
- * The macro is not needed when CONFIG_PREEMPT_RT is defined. RT kernels would
- * have more chance to invoke schedule() calls and provide necessary quiescent
- * states. As a contrast, calling cond_resched() only won't achieve the same
- * effect because cond_resched() does not provide RCU-Tasks quiescent states.
- */
-#define rcu_softirq_qs_periodic(old_ts) \
-do { \
-	if (!IS_ENABLED(CONFIG_PREEMPT_RT) && \
-	    time_after(jiffies, (old_ts) + HZ / 10)) { \
-		preempt_disable(); \
-		rcu_softirq_qs(); \
-		preempt_enable(); \
-		(old_ts) = jiffies; \
-	} \
-} while (0)
-
 /*
  * Infrastructure to implement the synchronize_() primitives in
  * TREE_RCU and rcu_barrier_() primitives in TINY_RCU.
@@ -254,7 +225,7 @@ static inline void rcu_lock_acquire(struct lockdep_map *map)
 
 static inline void rcu_lock_release(struct lockdep_map *map)
 {
-	lock_release(map, _THIS_IP_);
+	lock_release(map, 1, _THIS_IP_);
 }
 
 extern struct lockdep_map rcu_lock_map;
@@ -265,7 +236,6 @@ int debug_lockdep_rcu_enabled(void);
 int rcu_read_lock_held(void);
 int rcu_read_lock_bh_held(void);
 int rcu_read_lock_sched_held(void);
-int rcu_read_lock_any_held(void);
 
 #else /* #ifdef CONFIG_DEBUG_LOCK_ALLOC */
 
@@ -286,12 +256,6 @@ static inline int rcu_read_lock_sched_held(void)
 {
 	return !preemptible();
 }
-
-static inline int rcu_read_lock_any_held(void)
-{
-	return !preemptible();
-}
-
 #endif /* #else #ifdef CONFIG_DEBUG_LOCK_ALLOC */
 
 #ifdef CONFIG_PROVE_RCU
@@ -424,24 +388,6 @@ static inline void rcu_preempt_sleep_check(void) { }
 	else								      \
 		smp_store_release(&p, RCU_INITIALIZER((typeof(p))_r_a_p__v)); \
 	_r_a_p__v;							      \
-})
-
-/**
- * rcu_replace_pointer() - replace an RCU pointer, returning its old value
- * @rcu_ptr: RCU pointer, whose old value is returned
- * @ptr: regular pointer
- * @c: the lockdep conditions under which the dereference will take place
- *
- * Perform a replacement, where @rcu_ptr is an RCU-annotated
- * pointer and @c is the lockdep argument that is passed to the
- * rcu_dereference_protected() call used to read that pointer.  The old
- * value of @rcu_ptr is returned, and @rcu_ptr is set to @ptr.
- */
-#define rcu_replace_pointer(rcu_ptr, ptr, c)				\
-({									\
-	typeof(ptr) __tmp = rcu_dereference_protected((rcu_ptr), (c));	\
-	rcu_assign_pointer((rcu_ptr), (ptr));				\
-	__tmp;								\
 })
 
 /**
@@ -654,7 +600,7 @@ static inline void rcu_preempt_sleep_check(void) { }
  * read-side critical sections may be preempted and they may also block, but
  * only when acquiring spinlocks that are subject to priority inheritance.
  */
-static __always_inline void rcu_read_lock(void)
+static inline void rcu_read_lock(void)
 {
 	__rcu_read_lock();
 	__acquire(RCU);

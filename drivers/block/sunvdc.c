@@ -45,8 +45,6 @@ MODULE_VERSION(DRV_MODULE_VERSION);
 #define WAITING_FOR_GEN_CMD	0x04
 #define WAITING_FOR_ANY		-1
 
-#define	VDC_MAX_RETRIES	10
-
 static struct workqueue_struct *sunvdc_wq;
 
 struct vdc_req_entry {
@@ -433,7 +431,6 @@ static int __vdc_tx_trigger(struct vdc_port *port)
 		.end_idx		= dr->prod,
 	};
 	int err, delay;
-	int retries = 0;
 
 	hdr.seq = dr->snd_nxt;
 	delay = 1;
@@ -446,8 +443,6 @@ static int __vdc_tx_trigger(struct vdc_port *port)
 		udelay(delay);
 		if ((delay <<= 1) > 128)
 			delay = 128;
-		if (retries++ > VDC_MAX_RETRIES)
-			break;
 	} while (err == -EAGAIN);
 
 	if (err == -ENOTCONN)
@@ -931,10 +926,8 @@ static bool vdc_port_mpgroup_check(struct vio_dev *vdev)
 	dev = device_find_child(vdev->dev.parent, &port_data,
 				vdc_device_probed);
 
-	if (dev) {
-		put_device(dev);
+	if (dev)
 		return true;
-	}
 
 	return false;
 }
@@ -949,8 +942,6 @@ static int vdc_port_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 	print_version();
 
 	hp = mdesc_grab();
-	if (!hp)
-		return -ENODEV;
 
 	err = -ENODEV;
 	if ((vdev->dev_no << PARTITION_SHIFT) & ~(u64)MINORMASK) {

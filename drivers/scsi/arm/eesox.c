@@ -36,7 +36,7 @@
 #include <asm/io.h>
 #include <asm/dma.h>
 #include <asm/ecard.h>
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 
 #include "../scsi.h"
 #include <scsi/scsi_host.h>
@@ -575,7 +575,7 @@ static int eesoxscsi_probe(struct expansion_card *ec, const struct ecard_id *id)
 
 	if (info->info.scsi.dma != NO_DMA)
 		free_dma(info->info.scsi.dma);
-	free_irq(ec->irq, info);
+	free_irq(ec->irq, host);
 
  out_remove:
 	fas216_remove(host);

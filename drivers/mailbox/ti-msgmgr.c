@@ -385,20 +385,14 @@ static int ti_msgmgr_send_data(struct mbox_chan *chan, void *data)
 		/* Ensure all unused data is 0 */
 		data_trail &= 0xFFFFFFFF >> (8 * (sizeof(u32) - trail_bytes));
 		writel(data_trail, data_reg);
-		data_reg += sizeof(u32);
+		data_reg++;
 	}
-
 	/*
 	 * 'data_reg' indicates next register to write. If we did not already
 	 * write on tx complete reg(last reg), we must do so for transmit
-	 * In addition, we also need to make sure all intermediate data
-	 * registers(if any required), are reset to 0 for TISCI backward
-	 * compatibility to be maintained.
 	 */
-	while (data_reg <= qinst->queue_buff_end) {
-		writel(0, data_reg);
-		data_reg += sizeof(u32);
-	}
+	if (data_reg <= qinst->queue_buff_end)
+		writel(0, qinst->queue_buff_end);
 
 	return 0;
 }
@@ -553,7 +547,7 @@ static struct mbox_chan *ti_msgmgr_of_xlate(struct mbox_controller *mbox,
 	}
 
 	if (d->is_sproxy) {
-		if (req_pid >= d->num_valid_queues)
+		if (req_pid > d->num_valid_queues)
 			goto err;
 		qinst = &inst->qinsts[req_pid];
 		return qinst->chan;

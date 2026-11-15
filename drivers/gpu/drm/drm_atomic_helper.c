@@ -537,30 +537,6 @@ mode_valid(struct drm_atomic_state *state)
 	return 0;
 }
 
-static int drm_atomic_check_valid_clones(struct drm_atomic_state *state,
-					 struct drm_crtc *crtc)
-{
-	struct drm_encoder *drm_enc;
-	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state,
-									  crtc);
-
-	drm_for_each_encoder_mask(drm_enc, crtc->dev, crtc_state->encoder_mask) {
-		if (!drm_enc->possible_clones) {
-			DRM_DEBUG("enc%d possible_clones is 0\n", drm_enc->base.id);
-			continue;
-		}
-
-		if ((crtc_state->encoder_mask & drm_enc->possible_clones) !=
-		    crtc_state->encoder_mask) {
-			DRM_DEBUG("crtc%d failed valid clone check for mask 0x%x\n",
-				  crtc->base.id, crtc_state->encoder_mask);
-			return -EINVAL;
-		}
-	}
-
-	return 0;
-}
-
 /**
  * drm_atomic_helper_check_modeset - validate state object for modeset changes
  * @dev: DRM device
@@ -712,10 +688,6 @@ drm_atomic_helper_check_modeset(struct drm_device *dev,
 			return ret;
 
 		ret = drm_atomic_add_affected_planes(state, crtc);
-		if (ret != 0)
-			return ret;
-
-		ret = drm_atomic_check_valid_clones(state, crtc);
 		if (ret != 0)
 			return ret;
 	}
@@ -999,7 +971,7 @@ disable_outputs(struct drm_device *dev, struct drm_atomic_state *old_state)
 		 * Each encoder has at most one connector (since we always steal
 		 * it away), so we won't call disable hooks twice.
 		 */
-		drm_atomic_bridge_disable(encoder->bridge, old_state);
+		drm_bridge_disable(encoder->bridge);
 
 		/* Right function depends upon target state. */
 		if (funcs) {
@@ -1011,7 +983,7 @@ disable_outputs(struct drm_device *dev, struct drm_atomic_state *old_state)
 				funcs->dpms(encoder, DRM_MODE_DPMS_OFF);
 		}
 
-		drm_atomic_bridge_post_disable(encoder->bridge, old_state);
+		drm_bridge_post_disable(encoder->bridge);
 	}
 
 	for_each_oldnew_crtc_in_state(old_state, crtc, old_crtc_state, new_crtc_state, i) {
@@ -1175,7 +1147,7 @@ crtc_set_mode(struct drm_device *dev, struct drm_atomic_state *old_state)
 		mode = &new_crtc_state->mode;
 		adjusted_mode = &new_crtc_state->adjusted_mode;
 
-		if (!new_crtc_state->mode_changed && !new_crtc_state->connectors_changed)
+		if (!new_crtc_state->mode_changed)
 			continue;
 
 		DRM_DEBUG_ATOMIC("modeset on [ENCODER:%d:%s]\n",
@@ -1310,7 +1282,7 @@ void drm_atomic_helper_commit_modeset_enables(struct drm_device *dev,
 		 * Each encoder has at most one connector (since we always steal
 		 * it away), so we won't call enable hooks twice.
 		 */
-		drm_atomic_bridge_pre_enable(encoder->bridge, old_state);
+		drm_bridge_pre_enable(encoder->bridge);
 
 		if (funcs) {
 			if (funcs->enable)
@@ -1319,7 +1291,7 @@ void drm_atomic_helper_commit_modeset_enables(struct drm_device *dev,
 				funcs->commit(encoder);
 		}
 
-		drm_atomic_bridge_enable(encoder->bridge, old_state);
+		drm_bridge_enable(encoder->bridge);
 	}
 
 	drm_atomic_helper_commit_writebacks(dev, old_state);
@@ -1473,9 +1445,6 @@ void drm_atomic_helper_wait_for_flip_done(struct drm_device *dev,
 			DRM_ERROR("[CRTC:%d:%s] flip_done timed out\n",
 				  crtc->base.id, crtc->name);
 	}
-
-	if (old_state->fake_commit)
-		complete_all(&old_state->fake_commit->flip_done);
 }
 EXPORT_SYMBOL(drm_atomic_helper_wait_for_flip_done);
 
@@ -1612,15 +1581,6 @@ int drm_atomic_helper_async_check(struct drm_device *dev,
 	    old_plane_state->crtc != new_plane_state->crtc)
 		return -EINVAL;
 
-	/*
-	 * FIXME: Since prepare_fb and cleanup_fb are always called on
-	 * the new_plane_state for async updates we need to block framebuffer
-	 * changes. This prevents use of a fb that's been cleaned up and
-	 * double cleanups from occuring.
-	 */
-	if (old_plane_state->fb != new_plane_state->fb)
-		return -EINVAL;
-
 	funcs = plane->helper_private;
 	if (!funcs->atomic_async_update)
 		return -EINVAL;
@@ -1651,8 +1611,6 @@ EXPORT_SYMBOL(drm_atomic_helper_async_check);
  * drm_atomic_async_check() succeeds. Async commits are not supposed to swap
  * the states like normal sync commits, but just do in-place changes on the
  * current state.
- *
- * TODO: Implement full swap instead of doing in-place changes.
  */
 void drm_atomic_helper_async_commit(struct drm_device *dev,
 				    struct drm_atomic_state *state)
@@ -1663,9 +1621,6 @@ void drm_atomic_helper_async_commit(struct drm_device *dev,
 	int i;
 
 	for_each_new_plane_in_state(state, plane, plane_state, i) {
-		struct drm_framebuffer *new_fb = plane_state->fb;
-		struct drm_framebuffer *old_fb = plane->state->fb;
-
 		funcs = plane->helper_private;
 		funcs->atomic_async_update(plane, plane_state);
 
@@ -1674,17 +1629,11 @@ void drm_atomic_helper_async_commit(struct drm_device *dev,
 		 * plane->state in-place, make sure at least common
 		 * properties have been properly updated.
 		 */
-		WARN_ON_ONCE(plane->state->fb != new_fb);
+		WARN_ON_ONCE(plane->state->fb != plane_state->fb);
 		WARN_ON_ONCE(plane->state->crtc_x != plane_state->crtc_x);
 		WARN_ON_ONCE(plane->state->crtc_y != plane_state->crtc_y);
 		WARN_ON_ONCE(plane->state->src_x != plane_state->src_x);
 		WARN_ON_ONCE(plane->state->src_y != plane_state->src_y);
-
-		/*
-		 * Make sure the FBs have been swapped so that cleanups in the
-		 * new_state performs a cleanup in the old FB.
-		 */
-		WARN_ON_ONCE(plane_state->fb != old_fb);
 	}
 }
 EXPORT_SYMBOL(drm_atomic_helper_async_commit);
@@ -2866,7 +2815,6 @@ int __drm_atomic_helper_disable_plane(struct drm_plane *plane,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(__drm_atomic_helper_disable_plane);
 
 static int update_output_state(struct drm_atomic_state *state,
 			       struct drm_mode_set *set)
@@ -2968,7 +2916,7 @@ int drm_atomic_helper_set_config(struct drm_mode_set *set,
 
 	ret = handle_conflicting_encoders(state, true);
 	if (ret)
-		goto fail;
+		return ret;
 
 	ret = drm_atomic_commit(state);
 
@@ -3052,7 +3000,6 @@ commit:
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(__drm_atomic_helper_set_config);
 
 static int __drm_atomic_helper_disable_all(struct drm_device *dev,
 					   struct drm_modeset_acquire_ctx *ctx,
@@ -3262,7 +3209,7 @@ EXPORT_SYMBOL(drm_atomic_helper_suspend);
 int drm_atomic_helper_commit_duplicated_state(struct drm_atomic_state *state,
 					      struct drm_modeset_acquire_ctx *ctx)
 {
-	int i, ret;
+	int i;
 	struct drm_plane *plane;
 	struct drm_plane_state *new_plane_state;
 	struct drm_connector *connector;
@@ -3281,11 +3228,7 @@ int drm_atomic_helper_commit_duplicated_state(struct drm_atomic_state *state,
 	for_each_new_connector_in_state(state, connector, new_conn_state, i)
 		state->connectors[i].old_state = connector->state;
 
-	ret = drm_atomic_commit(state);
-
-	state->acquire_ctx = NULL;
-
-	return ret;
+	return drm_atomic_commit(state);
 }
 EXPORT_SYMBOL(drm_atomic_helper_commit_duplicated_state);
 

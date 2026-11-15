@@ -18,6 +18,7 @@
 #ifndef _UAPI_LINUX_TCP_H
 #define _UAPI_LINUX_TCP_H
 
+#include <linux/types.h>
 #include <asm/byteorder.h>
 #include <linux/socket.h>
 

@@ -61,7 +61,7 @@ static struct sk_buff *__skb_udp_tunnel_segment(struct sk_buff *skb,
 	remcsum = !!(skb_shinfo(skb)->gso_type & SKB_GSO_TUNNEL_REMCSUM);
 	skb->remcsum_offload = remcsum;
 
-	need_ipsec = (skb_dst(skb) && dst_xfrm(skb_dst(skb))) || skb_sec_path(skb);
+	need_ipsec = skb_dst(skb) && dst_xfrm(skb_dst(skb));
 	/* Try to offload checksum if possible */
 	offload_csum = !!(need_csum &&
 			  !need_ipsec &&
@@ -207,17 +207,13 @@ struct sk_buff *__udp_gso_segment(struct sk_buff *gso_skb,
 
 	/* clear destructor to avoid skb_segment assigning it to tail */
 	copy_dtor = gso_skb->destructor == sock_wfree;
-	if (copy_dtor) {
+	if (copy_dtor)
 		gso_skb->destructor = NULL;
-		gso_skb->sk = NULL;
-	}
 
 	segs = skb_segment(gso_skb, features);
 	if (unlikely(IS_ERR_OR_NULL(segs))) {
-		if (copy_dtor) {
+		if (copy_dtor)
 			gso_skb->destructor = sock_wfree;
-			gso_skb->sk = sk;
-		}
 		return segs;
 	}
 
@@ -230,11 +226,6 @@ struct sk_buff *__udp_gso_segment(struct sk_buff *gso_skb,
 
 	seg = segs;
 	uh = udp_hdr(seg);
-
-	/* preserve TX timestamp flags and TS key for first segment */
-	skb_shinfo(seg)->tskey = skb_shinfo(gso_skb)->tskey;
-	skb_shinfo(seg)->tx_flags |=
-			(skb_shinfo(gso_skb)->tx_flags & SKBTX_ANY_TSTAMP);
 
 	/* compute checksum adjustment based on old length versus new */
 	newlen = htons(sizeof(*uh) + mss);
@@ -363,7 +354,7 @@ struct sk_buff *udp_gro_receive(struct list_head *head, struct sk_buff *skb,
 	struct sock *sk;
 
 	if (NAPI_GRO_CB(skb)->encap_mark ||
-	    (uh->check && skb->ip_summed != CHECKSUM_PARTIAL &&
+	    (skb->ip_summed != CHECKSUM_PARTIAL &&
 	     NAPI_GRO_CB(skb)->csum_cnt == 0 &&
 	     !NAPI_GRO_CB(skb)->csum_valid))
 		goto out;

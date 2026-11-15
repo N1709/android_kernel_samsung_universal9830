@@ -44,7 +44,7 @@ static long try_increment_locked_vm(struct mm_struct *mm, long npages)
 	if (!npages)
 		return 0;
 
-	mmap_write_lock(mm);
+	down_write(&mm->mmap_sem);
 	locked = mm->locked_vm + npages;
 	lock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
 	if (locked > lock_limit && !capable(CAP_IPC_LOCK))
@@ -58,7 +58,7 @@ static long try_increment_locked_vm(struct mm_struct *mm, long npages)
 			rlimit(RLIMIT_MEMLOCK),
 			ret ? " - exceeded" : "");
 
-	mmap_write_unlock(mm);
+	up_write(&mm->mmap_sem);
 
 	return ret;
 }
@@ -68,7 +68,7 @@ static void decrement_locked_vm(struct mm_struct *mm, long npages)
 	if (!mm || !npages)
 		return;
 
-	mmap_write_lock(mm);
+	down_write(&mm->mmap_sem);
 	if (WARN_ON_ONCE(npages > mm->locked_vm))
 		npages = mm->locked_vm;
 	mm->locked_vm -= npages;
@@ -76,7 +76,7 @@ static void decrement_locked_vm(struct mm_struct *mm, long npages)
 			npages << PAGE_SHIFT,
 			mm->locked_vm << PAGE_SHIFT,
 			rlimit(RLIMIT_MEMLOCK));
-	mmap_write_unlock(mm);
+	up_write(&mm->mmap_sem);
 }
 
 /*
@@ -371,7 +371,6 @@ static void tce_iommu_release(void *iommu_data)
 {
 	struct tce_container *container = iommu_data;
 	struct tce_iommu_group *tcegrp;
-	struct tce_iommu_prereg *tcemem, *tmtmp;
 	long i;
 
 	while (tce_groups_attached(container)) {
@@ -394,8 +393,13 @@ static void tce_iommu_release(void *iommu_data)
 		tce_iommu_free_table(container, tbl);
 	}
 
-	list_for_each_entry_safe(tcemem, tmtmp, &container->prereg_list, next)
-		WARN_ON(tce_iommu_prereg_free(container, tcemem));
+	while (!list_empty(&container->prereg_list)) {
+		struct tce_iommu_prereg *tcemem;
+
+		tcemem = list_first_entry(&container->prereg_list,
+				struct tce_iommu_prereg, next);
+		WARN_ON_ONCE(tce_iommu_prereg_free(container, tcemem));
+	}
 
 	tce_iommu_disable(container);
 	if (container->mm)

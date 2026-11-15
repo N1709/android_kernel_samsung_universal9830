@@ -15,13 +15,8 @@ static int iavf_setup_all_tx_resources(struct iavf_adapter *adapter);
 static int iavf_setup_all_rx_resources(struct iavf_adapter *adapter);
 static int iavf_close(struct net_device *netdev);
 
-<<<<<<<< HEAD:drivers/net/ethernet/intel/iavf/i40evf_main.c
-char i40evf_driver_name[] = "i40evf";
-static const char i40evf_driver_string[] =
-========
 char iavf_driver_name[] = "iavf";
 static const char iavf_driver_string[] =
->>>>>>>> v4.20:drivers/net/ethernet/intel/iavf/iavf_main.c
 	"Intel(R) Ethernet Adaptive Virtual Function Network Driver";
 
 #define DRV_KERN "-k"
@@ -33,13 +28,8 @@ static const char iavf_driver_string[] =
 	     __stringify(DRV_VERSION_MINOR) "." \
 	     __stringify(DRV_VERSION_BUILD) \
 	     DRV_KERN
-<<<<<<<< HEAD:drivers/net/ethernet/intel/iavf/i40evf_main.c
-const char i40evf_driver_version[] = DRV_VERSION;
-static const char i40evf_copyright[] =
-========
 const char iavf_driver_version[] = DRV_VERSION;
 static const char iavf_copyright[] =
->>>>>>>> v4.20:drivers/net/ethernet/intel/iavf/iavf_main.c
 	"Copyright (c) 2013 - 2018 Intel Corporation.";
 
 /* iavf_pci_tbl - PCI Device ID Table
@@ -2065,7 +2055,7 @@ static void iavf_adminq_task(struct work_struct *work)
 
 	/* check for error indications */
 	val = rd32(hw, hw->aq.arq.len);
-	if (val == 0xdeadbeef || val == 0xffffffff) /* device in reset */
+	if (val == 0xdeadbeef) /* indicates device in reset */
 		goto freedom;
 	oldval = val;
 	if (val & IAVF_VF_ARQLEN1_ARQVFE_MASK) {
@@ -3116,11 +3106,7 @@ static int iavf_set_features(struct net_device *netdev,
 				IAVF_FLAG_AQ_ENABLE_VLAN_STRIPPING;
 		else
 			adapter->aq_required |=
-<<<<<<<< HEAD:drivers/net/ethernet/intel/iavf/i40evf_main.c
-				I40EVF_FLAG_AQ_DISABLE_VLAN_STRIPPING;
-========
 				IAVF_FLAG_AQ_DISABLE_VLAN_STRIPPING;
->>>>>>>> v4.20:drivers/net/ethernet/intel/iavf/iavf_main.c
 	}
 
 	return 0;
@@ -3196,8 +3182,7 @@ static netdev_features_t iavf_fix_features(struct net_device *netdev,
 {
 	struct iavf_adapter *adapter = netdev_priv(netdev);
 
-	if (adapter->vf_res &&
-	    !(adapter->vf_res->vf_cap_flags & VIRTCHNL_VF_OFFLOAD_VLAN))
+	if (!(adapter->vf_res->vf_cap_flags & VIRTCHNL_VF_OFFLOAD_VLAN))
 		features &= ~(NETIF_F_HW_VLAN_CTAG_TX |
 			      NETIF_F_HW_VLAN_CTAG_RX |
 			      NETIF_F_HW_VLAN_CTAG_FILTER);
@@ -3747,7 +3732,6 @@ static int iavf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 err_ioremap:
 	free_netdev(netdev);
 err_alloc_etherdev:
-	pci_disable_pcie_error_reporting(pdev);
 	pci_release_regions(pdev);
 err_pci_reg:
 err_dma:
@@ -3899,11 +3883,7 @@ static void iavf_remove(struct pci_dev *pdev)
 
 	cancel_work_sync(&adapter->adminq_task);
 
-<<<<<<<< HEAD:drivers/net/ethernet/intel/iavf/i40evf_main.c
-	i40evf_free_rss(adapter);
-========
 	iavf_free_rss(adapter);
->>>>>>>> v4.20:drivers/net/ethernet/intel/iavf/iavf_main.c
 
 	if (hw->aq.asq.count)
 		iavf_shutdown_adminq(hw);

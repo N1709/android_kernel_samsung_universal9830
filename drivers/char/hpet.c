@@ -307,13 +307,8 @@ hpet_read(struct file *file, char __user *buf, size_t count, loff_t * ppos)
 	if (!devp->hd_ireqfreq)
 		return -EIO;
 
-	if (in_compat_syscall()) {
-		if (count < sizeof(compat_ulong_t))
-			return -EINVAL;
-	} else {
-		if (count < sizeof(unsigned long))
-			return -EINVAL;
-	}
+	if (count < sizeof(unsigned long))
+		return -EINVAL;
 
 	add_wait_queue(&devp->hd_waitqueue, &wait);
 
@@ -337,16 +332,9 @@ hpet_read(struct file *file, char __user *buf, size_t count, loff_t * ppos)
 		schedule();
 	}
 
-	if (in_compat_syscall()) {
-		retval = put_user(data, (compat_ulong_t __user *)buf);
-		if (!retval)
-			retval = sizeof(compat_ulong_t);
-	} else {
-		retval = put_user(data, (unsigned long __user *)buf);
-		if (!retval)
-			retval = sizeof(unsigned long);
-	}
-
+	retval = put_user(data, (unsigned long __user *)buf);
+	if (!retval)
+		retval = sizeof(unsigned long);
 out:
 	__set_current_state(TASK_RUNNING);
 	remove_wait_queue(&devp->hd_waitqueue, &wait);
@@ -389,7 +377,7 @@ static __init int hpet_mmap_enable(char *str)
 	pr_info("HPET mmap %s\n", hpet_mmap_enabled ? "enabled" : "disabled");
 	return 1;
 }
-__setup("hpet_mmap=", hpet_mmap_enable);
+__setup("hpet_mmap", hpet_mmap_enable);
 
 static int hpet_mmap(struct file *file, struct vm_area_struct *vma)
 {
@@ -582,7 +570,8 @@ static inline unsigned long hpet_time_div(struct hpets *hpets,
 	unsigned long long m;
 
 	m = hpets->hp_tick_freq + (dis >> 1);
-	return div64_ul(m, dis);
+	do_div(m, dis);
+	return (unsigned long)m;
 }
 
 static int
@@ -701,23 +690,11 @@ struct compat_hpet_info {
 	unsigned short hi_timer;
 };
 
-/* 32-bit types would lead to different command codes which should be
- * translated into 64-bit ones before passed to hpet_ioctl_common
- */
-#define COMPAT_HPET_INFO       _IOR('h', 0x03, struct compat_hpet_info)
-#define COMPAT_HPET_IRQFREQ    _IOW('h', 0x6, compat_ulong_t)
-
 static long
 hpet_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct hpet_info info;
 	int err;
-
-	if (cmd == COMPAT_HPET_INFO)
-		cmd = HPET_INFO;
-
-	if (cmd == COMPAT_HPET_IRQFREQ)
-		cmd = HPET_IRQFREQ;
 
 	mutex_lock(&hpet_mutex);
 	err = hpet_ioctl_common(file->private_data, cmd, arg, &info);
@@ -999,8 +976,6 @@ static acpi_status hpet_resources(struct acpi_resource *res, void *data)
 	if (ACPI_SUCCESS(status)) {
 		hdp->hd_phys_address = addr.address.minimum;
 		hdp->hd_address = ioremap(addr.address.minimum, addr.address.address_length);
-		if (!hdp->hd_address)
-			return AE_ERROR;
 
 		if (hpet_is_known(hdp)) {
 			iounmap(hdp->hd_address);
@@ -1014,8 +989,6 @@ static acpi_status hpet_resources(struct acpi_resource *res, void *data)
 		hdp->hd_phys_address = fixmem32->address;
 		hdp->hd_address = ioremap(fixmem32->address,
 						HPET_RANGE_SIZE);
-		if (!hdp->hd_address)
-			return AE_ERROR;
 
 		if (hpet_is_known(hdp)) {
 			iounmap(hdp->hd_address);

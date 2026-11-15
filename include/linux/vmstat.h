@@ -16,8 +16,8 @@ extern int sysctl_stat_interval;
 #define DISABLE_NUMA_STAT   0
 extern int sysctl_vm_numa_stat;
 DECLARE_STATIC_KEY_TRUE(vm_numa_stat_key);
-int sysctl_vm_numa_stat_handler(struct ctl_table *table, int write,
-		void *buffer, size_t *length, loff_t *ppos);
+extern int sysctl_vm_numa_stat_handler(struct ctl_table *table,
+		int write, void __user *buffer, size_t *length, loff_t *ppos);
 #endif
 
 struct reclaim_stat {
@@ -29,7 +29,6 @@ struct reclaim_stat {
 	unsigned nr_activate;
 	unsigned nr_ref_keep;
 	unsigned nr_unmap_fail;
-	unsigned nr_lazyfree_fail;
 };
 
 #ifdef CONFIG_VM_EVENT_COUNTERS
@@ -206,13 +205,6 @@ static inline unsigned long zone_page_state(struct zone *zone,
 	return x;
 }
 
-static inline unsigned long zone_available_simple(struct zone *zone)
-{
-	return zone_page_state(zone, NR_FREE_PAGES)
-		+ zone_page_state(zone, NR_ZONE_INACTIVE_FILE)
-		+ zone_page_state(zone, NR_ZONE_ACTIVE_FILE);
-}
-
 /*
  * More accurate version that also considers the currently pending
  * deltas. For that we need to loop over all cpus to find the current
@@ -281,8 +273,8 @@ void cpu_vm_stats_fold(int cpu);
 void refresh_zone_stat_thresholds(void);
 
 struct ctl_table;
-int vmstat_refresh(struct ctl_table *, int write, void *buffer, size_t *lenp,
-		loff_t *ppos);
+int vmstat_refresh(struct ctl_table *, int write,
+		   void __user *buffer, size_t *lenp, loff_t *ppos);
 
 void drain_zonestat(struct zone *zone, struct per_cpu_pageset *);
 

@@ -30,7 +30,6 @@
 #include <linux/iommu.h>
 #include <linux/kmemleak.h>
 #include <linux/mem_encrypt.h>
-#include <linux/iopoll.h>
 #include <asm/pci-direct.h>
 #include <asm/iommu.h>
 #include <asm/gart.h>
@@ -40,7 +39,6 @@
 #include <asm/irq_remapping.h>
 
 #include <linux/crash_dump.h>
-#include "amd_iommu.h"
 #include "amd_iommu_proto.h"
 #include "amd_iommu_types.h"
 #include "irq_remapping.h"
@@ -90,7 +88,7 @@
 #define ACPI_DEVFLAG_LINT1              0x80
 #define ACPI_DEVFLAG_ATSDIS             0x10000000
 
-#define LOOP_TIMEOUT	2000000
+#define LOOP_TIMEOUT	100000
 /*
  * ACPI table definitions
  *
@@ -358,7 +356,7 @@ static void iommu_write_l2(struct amd_iommu *iommu, u8 address, u32 val)
 static void iommu_set_exclusion_range(struct amd_iommu *iommu)
 {
 	u64 start = iommu->exclusion_start & PAGE_MASK;
-	u64 limit = (start + iommu->exclusion_length - 1) & PAGE_MASK;
+	u64 limit = (start + iommu->exclusion_length) & PAGE_MASK;
 	u64 entry;
 
 	if (!iommu->exclusion_start)
@@ -423,9 +421,6 @@ static void iommu_enable(struct amd_iommu *iommu)
 
 static void iommu_disable(struct amd_iommu *iommu)
 {
-	if (!iommu->mmio_base)
-		return;
-
 	/* Disable command buffer */
 	iommu_feature_disable(iommu, CONTROL_CMDBUF_EN);
 
@@ -773,7 +768,6 @@ static int iommu_ga_log_enable(struct amd_iommu *iommu)
 		status = readl(iommu->mmio_base + MMIO_STATUS_OFFSET);
 		if (status & (MMIO_STATUS_GALOG_RUN_MASK))
 			break;
-		udelay(10);
 	}
 
 	if (i >= LOOP_TIMEOUT)
@@ -1018,7 +1012,7 @@ static void __init set_dev_entry_from_acpi(struct amd_iommu *iommu,
 	set_iommu_for_device(iommu, devid);
 }
 
-int __init add_special_device(u8 type, u8 id, u16 *devid, bool cmd_line)
+static int __init add_special_device(u8 type, u8 id, u16 *devid, bool cmd_line)
 {
 	struct devid_map *entry;
 	struct list_head *list;
@@ -1168,8 +1162,6 @@ static int __init init_iommu_from_acpi(struct amd_iommu *iommu,
 	ret = add_early_maps();
 	if (ret)
 		return ret;
-
-	amd_iommu_apply_ivrs_quirks();
 
 	/*
 	 * First save the recommended feature enable bits from ACPI
@@ -1346,8 +1338,8 @@ static int __init init_iommu_from_acpi(struct amd_iommu *iommu,
 		}
 		case IVHD_DEV_ACPI_HID: {
 			u16 devid;
-			u8 hid[ACPIHID_HID_LEN];
-			u8 uid[ACPIHID_UID_LEN];
+			u8 hid[ACPIHID_HID_LEN] = {0};
+			u8 uid[ACPIHID_UID_LEN] = {0};
 			int ret;
 
 			if (h->type != 0x40) {
@@ -1364,7 +1356,6 @@ static int __init init_iommu_from_acpi(struct amd_iommu *iommu,
 				break;
 			}
 
-			uid[0] = '\0';
 			switch (e->uidf) {
 			case UID_NOT_PRESENT:
 
@@ -1379,8 +1370,8 @@ static int __init init_iommu_from_acpi(struct amd_iommu *iommu,
 				break;
 			case UID_IS_CHARACTER:
 
-				memcpy(uid, &e->uid, e->uidl);
-				uid[e->uidl] = '\0';
+				memcpy(uid, (u8 *)(&e->uid), ACPIHID_UID_LEN - 1);
+				uid[ACPIHID_UID_LEN - 1] = '\0';
 
 				break;
 			default:
@@ -1419,17 +1410,8 @@ static int __init init_iommu_from_acpi(struct amd_iommu *iommu,
 	return 0;
 }
 
-static void __init free_sysfs(struct amd_iommu *iommu)
-{
-	if (iommu->iommu.dev) {
-		iommu_device_unregister(&iommu->iommu);
-		iommu_device_sysfs_remove(&iommu->iommu);
-	}
-}
-
 static void __init free_iommu_one(struct amd_iommu *iommu)
 {
-	free_sysfs(iommu);
 	free_command_buffer(iommu);
 	free_event_buffer(iommu);
 	free_ppr_log(iommu);
@@ -1752,9 +1734,6 @@ static int __init iommu_init_pci(struct amd_iommu *iommu)
 	/* Prevent binding other PCI device drivers to IOMMU devices */
 	iommu->dev->match_driver = false;
 
-	/* ACPI _PRT won't have an IRQ for IOMMU */
-	iommu->dev->irq_managed = 1;
-
 	pci_read_config_dword(iommu->dev, cap_ptr + MMIO_CAP_HDR_OFFSET,
 			      &iommu->cap);
 	pci_read_config_dword(iommu->dev, cap_ptr + MMIO_RANGE_OFFSET,
@@ -2032,9 +2011,6 @@ static int __init init_unity_map_range(struct ivmd_header *m)
 	if (e == NULL)
 		return -ENOMEM;
 
-	if (m->flags & IVMD_FLAG_EXCL_RANGE)
-		init_exclusion_range(m);
-
 	switch (m->type) {
 	default:
 		kfree(e);
@@ -2081,7 +2057,9 @@ static int __init init_memory_definitions(struct acpi_table_header *table)
 
 	while (p < end) {
 		m = (struct ivmd_header *)p;
-		if (m->flags & (IVMD_FLAG_UNITY_MAP | IVMD_FLAG_EXCL_RANGE))
+		if (m->flags & IVMD_FLAG_EXCL_RANGE)
+			init_exclusion_range(m);
+		else if (m->flags & IVMD_FLAG_UNITY_MAP)
 			init_unity_map_range(m);
 
 		p += m->length;
@@ -2861,7 +2839,7 @@ static int __init parse_amd_iommu_intr(char *str)
 {
 	for (; *str; ++str) {
 		if (strncmp(str, "legacy", 6) == 0) {
-			amd_iommu_guest_ir = AMD_IOMMU_GUEST_IR_LEGACY_GA;
+			amd_iommu_guest_ir = AMD_IOMMU_GUEST_IR_LEGACY;
 			break;
 		}
 		if (strncmp(str, "vapic", 5) == 0) {
@@ -2965,21 +2943,6 @@ static int __init parse_ivrs_acpihid(char *str)
 
 	if (!hid || !(*hid) || !uid) {
 		pr_err("AMD-Vi: Invalid command line: hid or uid\n");
-		return 1;
-	}
-
-	/*
-	 * Ignore leading zeroes after ':', so e.g., AMDI0095:00
-	 * will match AMDI0095:0 in the second strcmp in acpi_dev_hid_uid_match
-	 */
-	while (*uid == '0' && *(uid + 1))
-		uid++;
-
-	if (strlen(hid) >= ACPIHID_HID_LEN) {
-		pr_err("Invalid command line: hid is too long\n");
-		return 1;
-	} else if (strlen(uid) >= ACPIHID_UID_LEN) {
-		pr_err("Invalid command line: uid is too long\n");
 		return 1;
 	}
 

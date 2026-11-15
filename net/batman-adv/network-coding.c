@@ -167,10 +167,8 @@ int batadv_nc_mesh_init(struct batadv_priv *bat_priv)
 				   &batadv_nc_coding_hash_lock_class_key);
 
 	bat_priv->nc.decoding_hash = batadv_hash_new(128);
-	if (!bat_priv->nc.decoding_hash) {
-		batadv_hash_destroy(bat_priv->nc.coding_hash);
+	if (!bat_priv->nc.decoding_hash)
 		goto err;
-	}
 
 	batadv_hash_set_lock_class(bat_priv->nc.decoding_hash,
 				   &batadv_nc_decoding_hash_lock_class_key);
@@ -1023,8 +1021,15 @@ static struct batadv_nc_path *batadv_nc_get_path(struct batadv_priv *bat_priv,
  */
 static u8 batadv_nc_random_weight_tq(u8 tq)
 {
+	u8 rand_val, rand_tq;
+
+	get_random_bytes(&rand_val, sizeof(rand_val));
+
 	/* randomize the estimated packet loss (max TQ - estimated TQ) */
-	u8 rand_tq = prandom_u32_max(BATADV_TQ_MAX_VALUE + 1 - tq);
+	rand_tq = rand_val * (BATADV_TQ_MAX_VALUE - tq);
+
+	/* normalize the randomized packet loss */
+	rand_tq /= BATADV_TQ_MAX_VALUE;
 
 	/* convert to (randomized) estimated tq again */
 	return BATADV_TQ_MAX_VALUE - rand_tq;
@@ -1706,12 +1711,7 @@ batadv_nc_skb_decode_packet(struct batadv_priv *bat_priv, struct sk_buff *skb,
 
 	coding_len = ntohs(coded_packet_tmp.coded_len);
 
-	/* ensure dst buffer is large enough (payload only) */
-	if (coding_len + h_size > skb->len)
-		return NULL;
-
-	/* ensure src buffer is large enough (payload only) */
-	if (coding_len + h_size > nc_packet->skb->len)
+	if (coding_len > skb->len)
 		return NULL;
 
 	/* Here the magic is reversed:

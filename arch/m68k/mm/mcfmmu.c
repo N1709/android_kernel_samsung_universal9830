@@ -17,7 +17,7 @@
 
 #include <asm/setup.h>
 #include <asm/page.h>
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 #include <asm/mmu_context.h>
 #include <asm/mcf_pgalloc.h>
 #include <asm/tlbflush.h>
@@ -159,7 +159,7 @@ void __init cf_bootmem_alloc(void)
 	m68k_memory[0].addr = _rambase;
 	m68k_memory[0].size = _ramend - _rambase;
 
-	memblock_add_node(m68k_memory[0].addr, m68k_memory[0].size, 0);
+	memblock_add(m68k_memory[0].addr, m68k_memory[0].size);
 
 	/* compute total pages in system */
 	num_pages = PFN_DOWN(_ramend - _rambase);

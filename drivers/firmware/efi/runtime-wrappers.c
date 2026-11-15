@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * runtime-wrappers.c - Runtime Services function call wrappers
  *
@@ -20,6 +19,8 @@
  * Copyright (C) 1999-2002 Hewlett-Packard Co.
  * Copyright (C) 2005-2008 Intel Co.
  * Copyright (C) 2013 SuSE Labs
+ *
+ * This file is released under the GPLv2.
  */
 
 #define pr_fmt(fmt)	"efi: " fmt
@@ -144,13 +145,6 @@ void efi_call_virt_check_flags(unsigned long flags, const char *call)
  * So let's just use a single lock to serialize all Runtime Services calls.
  */
 static DEFINE_SEMAPHORE(efi_runtime_lock);
-
-/*
- * Expose the EFI runtime lock to the UV platform
- */
-#ifdef CONFIG_X86_UV
-extern struct semaphore __efi_uv_runtime_lock __alias(efi_runtime_lock);
-#endif
 
 /*
  * Calls the appropriate efi_runtime_service() with the appropriate
@@ -401,7 +395,7 @@ static void virt_efi_reset_system(int reset_type,
 				  unsigned long data_size,
 				  efi_char16_t *data)
 {
-	if (down_trylock(&efi_runtime_lock)) {
+	if (down_interruptible(&efi_runtime_lock)) {
 		pr_warn("failed to invoke the reset_system() runtime service:\n"
 			"could not get exclusive access to the firmware\n");
 		return;

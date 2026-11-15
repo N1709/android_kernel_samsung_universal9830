@@ -621,10 +621,7 @@ find_cifs_entry(const unsigned int xid, struct cifs_tcon *tcon, loff_t pos,
 			else
 				cifs_buf_release(cfile->srch_inf.
 						ntwrk_buf_start);
-			/* Reset all pointers to the network buffer to prevent stale references */
 			cfile->srch_inf.ntwrk_buf_start = NULL;
-			cfile->srch_inf.srch_entries_start = NULL;
-			cfile->srch_inf.last_entry = NULL;
 		}
 		rc = initiate_cifs_search(xid, file);
 		if (rc) {
@@ -647,25 +644,18 @@ find_cifs_entry(const unsigned int xid, struct cifs_tcon *tcon, loff_t pos,
 		rc = server->ops->query_dir_next(xid, tcon, &cfile->fid,
 						 search_flags,
 						 &cfile->srch_inf);
-		if (rc)
-			return -ENOENT;
 		/* FindFirst/Next set last_entry to NULL on malformed reply */
 		if (cfile->srch_inf.last_entry)
 			cifs_save_resume_key(cfile->srch_inf.last_entry, cfile);
+		if (rc)
+			return -ENOENT;
 	}
 	if (index_to_find < cfile->srch_inf.index_of_last_entry) {
 		/* we found the buffer that contains the entry */
 		/* scan and find it */
 		int i;
 		char *cur_ent;
-		char *end_of_smb;
-
-		if (cfile->srch_inf.ntwrk_buf_start == NULL) {
-			cifs_dbg(VFS, "ntwrk_buf_start is NULL during readdir\n");
-			return -EIO;
-		}
-
-		end_of_smb = cfile->srch_inf.ntwrk_buf_start +
+		char *end_of_smb = cfile->srch_inf.ntwrk_buf_start +
 			server->ops->calc_smb_size(
 					cfile->srch_inf.ntwrk_buf_start,
 					server);

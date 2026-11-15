@@ -80,10 +80,8 @@ static void ip6_sublist_rcv_finish(struct list_head *head)
 {
 	struct sk_buff *skb, *next;
 
-	list_for_each_entry_safe(skb, next, head, list) {
-		skb_list_del_init(skb);
+	list_for_each_entry_safe(skb, next, head, list)
 		dst_input(skb);
-	}
 }
 
 static void ip6_list_rcv_finish(struct net *net, struct sock *sk,
@@ -253,8 +251,7 @@ static struct sk_buff *ip6_rcv_core(struct sk_buff *skb, struct net_device *dev,
 	rcu_read_unlock();
 
 	/* Must drop socket now because of tproxy. */
-	if (!skb_sk_is_prefetched(skb))
-		skb_orphan(skb);
+	skb_orphan(skb);
 
 	return skb;
 err:

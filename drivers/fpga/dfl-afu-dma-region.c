@@ -51,7 +51,7 @@ static int afu_dma_adjust_locked_vm(struct device *dev, long npages, bool incr)
 	if (!current->mm)
 		return 0;
 
-	mmap_write_lock(current->mm);
+	down_write(&current->mm->mmap_sem);
 
 	if (incr) {
 		locked = current->mm->locked_vm + npages;
@@ -72,7 +72,7 @@ static int afu_dma_adjust_locked_vm(struct device *dev, long npages, bool incr)
 		current->mm->locked_vm << PAGE_SHIFT, rlimit(RLIMIT_MEMLOCK),
 		ret ? "- exceeded" : "");
 
-	mmap_write_unlock(current->mm);
+	up_write(&current->mm->mmap_sem);
 
 	return ret;
 }
@@ -106,10 +106,10 @@ static int afu_dma_pin_pages(struct dfl_feature_platform_data *pdata,
 				     region->pages);
 	if (pinned < 0) {
 		ret = pinned;
-		goto free_pages;
+		goto put_pages;
 	} else if (pinned != npages) {
 		ret = -EFAULT;
-		goto put_pages;
+		goto free_pages;
 	}
 
 	dev_dbg(dev, "%d pages pinned\n", pinned);
@@ -399,7 +399,7 @@ int afu_dma_map_region(struct dfl_feature_platform_data *pdata,
 				    region->pages[0], 0,
 				    region->length,
 				    DMA_BIDIRECTIONAL);
-	if (dma_mapping_error(dfl_fpga_pdata_to_parent(pdata), region->iova)) {
+	if (dma_mapping_error(&pdata->dev->dev, region->iova)) {
 		dev_err(&pdata->dev->dev, "failed to map for dma\n");
 		ret = -EFAULT;
 		goto unpin_pages;

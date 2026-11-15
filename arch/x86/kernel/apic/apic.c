@@ -41,7 +41,6 @@
 #include <asm/x86_init.h>
 #include <asm/pgalloc.h>
 #include <linux/atomic.h>
-#include <asm/barrier.h>
 #include <asm/mpspec.h>
 #include <asm/i8259.h>
 #include <asm/proto.h>
@@ -166,7 +165,7 @@ static __init int setup_apicpmtimer(char *s)
 {
 	apic_calibrate_pmtmr = 1;
 	notsc_setup(NULL);
-	return 1;
+	return 0;
 }
 __setup("apicpmtimer", setup_apicpmtimer);
 #endif
@@ -182,7 +181,7 @@ EXPORT_SYMBOL_GPL(local_apic_timer_c2_ok);
 /*
  * Debug level, exported for io_apic.c
  */
-int apic_verbosity;
+unsigned int apic_verbosity;
 
 int pic_mode;
 
@@ -351,6 +350,8 @@ static void __setup_APIC_LVTT(unsigned int clocks, int oneshot, int irqen)
 		 * According to Intel, MFENCE can do the serialization here.
 		 */
 		asm volatile("mfence" : : : "memory");
+
+		printk_once(KERN_DEBUG "TSC deadline timer enabled\n");
 		return;
 	}
 
@@ -408,9 +409,10 @@ static unsigned int reserve_eilvt_offset(int offset, unsigned int new)
 		if (vector && !eilvt_entry_is_changeable(vector, new))
 			/* may not change if vectors are different */
 			return rsvd;
-	} while (!atomic_try_cmpxchg(&eilvt_offsets[offset], &rsvd, new));
+		rsvd = atomic_cmpxchg(&eilvt_offsets[offset], rsvd, new);
+	} while (rsvd != new);
 
-	rsvd = new & ~APIC_EILVT_MASKED;
+	rsvd &= ~APIC_EILVT_MASKED;
 	if (rsvd && rsvd != vector)
 		pr_info("LVT offset %d assigned for vector 0x%02x\n",
 			offset, rsvd);
@@ -470,9 +472,6 @@ static int lapic_next_deadline(unsigned long delta,
 {
 	u64 tsc;
 
-	/* This MSR is special and need a special fence: */
-	weak_wrmsr_fence();
-
 	tsc = rdtsc();
 	wrmsrl(MSR_IA32_TSC_DEADLINE, tsc + (((u64) delta) * TSC_DIVISOR));
 	return 0;
@@ -489,19 +488,7 @@ static int lapic_timer_shutdown(struct clock_event_device *evt)
 	v = apic_read(APIC_LVTT);
 	v |= (APIC_LVT_MASKED | LOCAL_TIMER_VECTOR);
 	apic_write(APIC_LVTT, v);
-
-	/*
-	 * Setting APIC_LVT_MASKED (above) should be enough to tell
-	 * the hardware that this timer will never fire. But AMD
-	 * erratum 411 and some Intel CPU behavior circa 2024 say
-	 * otherwise.  Time for belt and suspenders programming: mask
-	 * the timer _and_ zero the counter registers:
-	 */
-	if (v & APIC_LVT_TIMER_TSCDEADLINE)
-		wrmsrl(MSR_IA32_TSC_DEADLINE, 0);
-	else
-		apic_write(APIC_TMICT, 0);
-
+	apic_write(APIC_TMICT, 0);
 	return 0;
 }
 
@@ -563,7 +550,7 @@ static DEFINE_PER_CPU(struct clock_event_device, lapic_events);
 #define DEADLINE_MODEL_MATCH_REV(model, rev)	\
 	{ X86_VENDOR_INTEL, 6, model, X86_FEATURE_ANY, (unsigned long)rev }
 
-static __init u32 hsx_deadline_rev(void)
+static u32 hsx_deadline_rev(void)
 {
 	switch (boot_cpu_data.x86_stepping) {
 	case 0x02: return 0x3a; /* EP */
@@ -573,7 +560,7 @@ static __init u32 hsx_deadline_rev(void)
 	return ~0U;
 }
 
-static __init u32 bdx_deadline_rev(void)
+static u32 bdx_deadline_rev(void)
 {
 	switch (boot_cpu_data.x86_stepping) {
 	case 0x02: return 0x00000011;
@@ -585,7 +572,7 @@ static __init u32 bdx_deadline_rev(void)
 	return ~0U;
 }
 
-static __init u32 skx_deadline_rev(void)
+static u32 skx_deadline_rev(void)
 {
 	switch (boot_cpu_data.x86_stepping) {
 	case 0x03: return 0x01000136;
@@ -598,7 +585,7 @@ static __init u32 skx_deadline_rev(void)
 	return ~0U;
 }
 
-static const struct x86_cpu_id deadline_match[] __initconst = {
+static const struct x86_cpu_id deadline_match[] = {
 	DEADLINE_MODEL_MATCH_FUNC( INTEL_FAM6_HASWELL_X,	hsx_deadline_rev),
 	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_BROADWELL_X,	0x0b000020),
 	DEADLINE_MODEL_MATCH_FUNC( INTEL_FAM6_BROADWELL_XEON_D,	bdx_deadline_rev),
@@ -620,19 +607,18 @@ static const struct x86_cpu_id deadline_match[] __initconst = {
 	{},
 };
 
-static __init bool apic_validate_deadline_timer(void)
+static void apic_check_deadline_errata(void)
 {
 	const struct x86_cpu_id *m;
 	u32 rev;
 
-	if (!boot_cpu_has(X86_FEATURE_TSC_DEADLINE_TIMER))
-		return false;
-	if (boot_cpu_has(X86_FEATURE_HYPERVISOR))
-		return true;
+	if (!boot_cpu_has(X86_FEATURE_TSC_DEADLINE_TIMER) ||
+	    boot_cpu_has(X86_FEATURE_HYPERVISOR))
+		return;
 
 	m = x86_match_cpu(deadline_match);
 	if (!m)
-		return true;
+		return;
 
 	/*
 	 * Function pointers will have the MSB set due to address layout,
@@ -644,12 +630,11 @@ static __init bool apic_validate_deadline_timer(void)
 		rev = (u32)m->driver_data;
 
 	if (boot_cpu_data.microcode >= rev)
-		return true;
+		return;
 
 	setup_clear_cpu_cap(X86_FEATURE_TSC_DEADLINE_TIMER);
 	pr_err(FW_BUG "TSC_DEADLINE disabled due to Errata; "
 	       "please update microcode to version: 0x%x (or later)\n", rev);
-	return false;
 }
 
 /*
@@ -735,7 +720,7 @@ static __initdata unsigned long lapic_cal_pm1, lapic_cal_pm2;
 static __initdata unsigned long lapic_cal_j1, lapic_cal_j2;
 
 /*
- * Temporary interrupt handler and polled calibration function.
+ * Temporary interrupt handler.
  */
 static void __init lapic_cal_handler(struct clock_event_device *dev)
 {
@@ -819,8 +804,7 @@ calibrate_by_pmtimer(long deltapm, long *delta, long *deltatsc)
 static int __init calibrate_APIC_clock(void)
 {
 	struct clock_event_device *levt = this_cpu_ptr(&lapic_events);
-	u64 tsc_perj = 0, tsc_start = 0;
-	unsigned long jif_start;
+	void (*real_handler)(struct clock_event_device *dev);
 	unsigned long deltaj;
 	long delta, deltatsc;
 	int pm_referenced = 0;
@@ -851,12 +835,11 @@ static int __init calibrate_APIC_clock(void)
 	apic_printk(APIC_VERBOSE, "Using local APIC timer interrupts.\n"
 		    "calibrating APIC timer ...\n");
 
-	/*
-	 * There are platforms w/o global clockevent devices. Instead of
-	 * making the calibration conditional on that, use a polling based
-	 * approach everywhere.
-	 */
 	local_irq_disable();
+
+	/* Replace the global interrupt handler */
+	real_handler = global_clock_event->event_handler;
+	global_clock_event->event_handler = lapic_cal_handler;
 
 	/*
 	 * Setup the APIC counter to maximum. There is no way the lapic
@@ -864,51 +847,16 @@ static int __init calibrate_APIC_clock(void)
 	 */
 	__setup_APIC_LVTT(0xffffffff, 0, 0);
 
-	/*
-	 * Methods to terminate the calibration loop:
-	 *  1) Global clockevent if available (jiffies)
-	 *  2) TSC if available and frequency is known
-	 */
-	jif_start = READ_ONCE(jiffies);
-
-	if (tsc_khz) {
-		tsc_start = rdtsc();
-		tsc_perj = div_u64((u64)tsc_khz * 1000, HZ);
-	}
-
-	/*
-	 * Enable interrupts so the tick can fire, if a global
-	 * clockevent device is available
-	 */
+	/* Let the interrupts run */
 	local_irq_enable();
 
-	while (lapic_cal_loops <= LAPIC_CAL_LOOPS) {
-		/* Wait for a tick to elapse */
-		while (1) {
-			if (tsc_khz) {
-				u64 tsc_now = rdtsc();
-				if ((tsc_now - tsc_start) >= tsc_perj) {
-					tsc_start += tsc_perj;
-					break;
-				}
-			} else {
-				unsigned long jif_now = READ_ONCE(jiffies);
-
-				if (time_after(jif_now, jif_start)) {
-					jif_start = jif_now;
-					break;
-				}
-			}
-			cpu_relax();
-		}
-
-		/* Invoke the calibration routine */
-		local_irq_disable();
-		lapic_cal_handler(NULL);
-		local_irq_enable();
-	}
+	while (lapic_cal_loops <= LAPIC_CAL_LOOPS)
+		cpu_relax();
 
 	local_irq_disable();
+
+	/* Restore the real event handler */
+	global_clock_event->event_handler = real_handler;
 
 	/* Build delta t1-t2 as apic timer counts down */
 	delta = lapic_cal_t1 - lapic_cal_t2;
@@ -961,11 +909,10 @@ static int __init calibrate_APIC_clock(void)
 	levt->features &= ~CLOCK_EVT_FEAT_DUMMY;
 
 	/*
-	 * PM timer calibration failed or not turned on so lets try APIC
-	 * timer based calibration, if a global clockevent device is
-	 * available.
+	 * PM timer calibration failed or not turned on
+	 * so lets try APIC timer based calibration
 	 */
-	if (!pm_referenced && global_clock_event) {
+	if (!pm_referenced) {
 		apic_printk(APIC_VERBOSE, "... verify APIC timer\n");
 
 		/*
@@ -1470,72 +1417,53 @@ static void lapic_setup_esr(void)
 			oldvalue, value);
 }
 
-#define APIC_IR_REGS		APIC_ISR_NR
-#define APIC_IR_BITS		(APIC_IR_REGS * 32)
-#define APIC_IR_MAPSIZE		(APIC_IR_BITS / BITS_PER_LONG)
-
-union apic_ir {
-	unsigned long	map[APIC_IR_MAPSIZE];
-	u32		regs[APIC_IR_REGS];
-};
-
-static bool apic_check_and_ack(union apic_ir *irr, union apic_ir *isr)
-{
-	int i, bit;
-
-	/* Read the IRRs */
-	for (i = 0; i < APIC_IR_REGS; i++)
-		irr->regs[i] = apic_read(APIC_IRR + i * 0x10);
-
-	/* Read the ISRs */
-	for (i = 0; i < APIC_IR_REGS; i++)
-		isr->regs[i] = apic_read(APIC_ISR + i * 0x10);
-
-	/*
-	 * If the ISR map is not empty. ACK the APIC and run another round
-	 * to verify whether a pending IRR has been unblocked and turned
-	 * into a ISR.
-	 */
-	if (!bitmap_empty(isr->map, APIC_IR_BITS)) {
-		/*
-		 * There can be multiple ISR bits set when a high priority
-		 * interrupt preempted a lower priority one. Issue an ACK
-		 * per set bit.
-		 */
-		for_each_set_bit(bit, isr->map, APIC_IR_BITS)
-			ack_APIC_irq();
-		return true;
-	}
-
-	return !bitmap_empty(irr->map, APIC_IR_BITS);
-}
-
-/*
- * After a crash, we no longer service the interrupts and a pending
- * interrupt from previous kernel might still have ISR bit set.
- *
- * Most probably by now the CPU has serviced that pending interrupt and it
- * might not have done the ack_APIC_irq() because it thought, interrupt
- * came from i8259 as ExtInt. LAPIC did not get EOI so it does not clear
- * the ISR bit and cpu thinks it has already serivced the interrupt. Hence
- * a vector might get locked. It was noticed for timer irq (vector
- * 0x31). Issue an extra EOI to clear ISR.
- *
- * If there are pending IRR bits they turn into ISR bits after a higher
- * priority ISR bit has been acked.
- */
 static void apic_pending_intr_clear(void)
 {
-	union apic_ir irr, isr;
-	unsigned int i;
+	long long max_loops = cpu_khz ? cpu_khz : 1000000;
+	unsigned long long tsc = 0, ntsc;
+	unsigned int queued;
+	unsigned long value;
+	int i, j, acked = 0;
 
-	/* 512 loops are way oversized and give the APIC a chance to obey. */
-	for (i = 0; i < 512; i++) {
-		if (!apic_check_and_ack(&irr, &isr))
-			return;
-	}
-	/* Dump the IRR/ISR content if that failed */
-	pr_warn("APIC: Stale IRR: %256pb ISR: %256pb\n", irr.map, isr.map);
+	if (boot_cpu_has(X86_FEATURE_TSC))
+		tsc = rdtsc();
+	/*
+	 * After a crash, we no longer service the interrupts and a pending
+	 * interrupt from previous kernel might still have ISR bit set.
+	 *
+	 * Most probably by now CPU has serviced that pending interrupt and
+	 * it might not have done the ack_APIC_irq() because it thought,
+	 * interrupt came from i8259 as ExtInt. LAPIC did not get EOI so it
+	 * does not clear the ISR bit and cpu thinks it has already serivced
+	 * the interrupt. Hence a vector might get locked. It was noticed
+	 * for timer irq (vector 0x31). Issue an extra EOI to clear ISR.
+	 */
+	do {
+		queued = 0;
+		for (i = APIC_ISR_NR - 1; i >= 0; i--)
+			queued |= apic_read(APIC_IRR + i*0x10);
+
+		for (i = APIC_ISR_NR - 1; i >= 0; i--) {
+			value = apic_read(APIC_ISR + i*0x10);
+			for_each_set_bit(j, &value, 32) {
+				ack_APIC_irq();
+				acked++;
+			}
+		}
+		if (acked > 256) {
+			pr_err("LAPIC pending interrupts after %d EOI\n", acked);
+			break;
+		}
+		if (queued) {
+			if (boot_cpu_has(X86_FEATURE_TSC) && cpu_khz) {
+				ntsc = rdtsc();
+				max_loops = (cpu_khz << 10) - (ntsc - tsc);
+			} else {
+				max_loops--;
+			}
+		}
+	} while (queued && max_loops > 0);
+	WARN_ON(max_loops <= 0);
 }
 
 /**
@@ -1548,20 +1476,15 @@ static void setup_local_APIC(void)
 {
 	int cpu = smp_processor_id();
 	unsigned int value;
+#ifdef CONFIG_X86_32
+	int logical_apicid, ldr_apicid;
+#endif
 
 
 	if (disable_apic) {
 		disable_ioapic_support();
 		return;
 	}
-
-	/*
-	 * If this comes from kexec/kcrash the APIC might be enabled in
-	 * SPIV. Soft disable it before doing further initialization.
-	 */
-	value = apic_read(APIC_SPIV);
-	value &= ~APIC_SPIV_APIC_ENABLED;
-	apic_write(APIC_SPIV, value);
 
 #ifdef CONFIG_X86_32
 	/* Pound the ESR really hard over the head with a big hammer - mbligh */
@@ -1588,21 +1511,16 @@ static void setup_local_APIC(void)
 	apic->init_apic_ldr();
 
 #ifdef CONFIG_X86_32
-	if (apic->dest_logical) {
-		int logical_apicid, ldr_apicid;
-
-		/*
-		 * APIC LDR is initialized.  If logical_apicid mapping was
-		 * initialized during get_smp_config(), make sure it matches
-		 * the actual value.
-		 */
-		logical_apicid = early_per_cpu(x86_cpu_to_logical_apicid, cpu);
-		ldr_apicid = GET_APIC_LOGICAL_ID(apic_read(APIC_LDR));
-		if (logical_apicid != BAD_APICID)
-			WARN_ON(logical_apicid != ldr_apicid);
-		/* Always use the value from LDR. */
-		early_per_cpu(x86_cpu_to_logical_apicid, cpu) = ldr_apicid;
-	}
+	/*
+	 * APIC LDR is initialized.  If logical_apicid mapping was
+	 * initialized during get_smp_config(), make sure it matches the
+	 * actual value.
+	 */
+	logical_apicid = early_per_cpu(x86_cpu_to_logical_apicid, cpu);
+	ldr_apicid = GET_APIC_LOGICAL_ID(apic_read(APIC_LDR));
+	WARN_ON(logical_apicid != BAD_APICID && logical_apicid != ldr_apicid);
+	/* always use the value from LDR */
+	early_per_cpu(x86_cpu_to_logical_apicid, cpu) = ldr_apicid;
 #endif
 
 	/*
@@ -1613,7 +1531,6 @@ static void setup_local_APIC(void)
 	value &= ~APIC_TPRI_MASK;
 	apic_write(APIC_TASKPRI, value);
 
-	/* Clear eventually stale ISR/IRR bits */
 	apic_pending_intr_clear();
 
 	/*
@@ -1833,22 +1750,20 @@ static __init void try_to_enable_x2apic(int remap_mode)
 		return;
 
 	if (remap_mode != IRQ_REMAP_X2APIC_MODE) {
-		/*
-		 * Using X2APIC without IR is not architecturally supported
-		 * on bare metal but may be supported in guests.
+		/* IR is required if there is APIC ID > 255 even when running
+		 * under KVM
 		 */
-		if (!x86_init.hyper.x2apic_available()) {
+		if (max_physical_apicid > 255 ||
+		    !x86_init.hyper.x2apic_available()) {
 			pr_info("x2apic: IRQ remapping doesn't support X2APIC mode\n");
 			x2apic_disable();
 			return;
 		}
 
 		/*
-		 * Without IR, all CPUs can be addressed by IOAPIC/MSI only
-		 * in physical mode, and CPUs with an APIC ID that cannnot
-		 * be addressed must not be brought online.
+		 * without IR all CPUs can be addressed by IOAPIC/MSI
+		 * only in physical mode
 		 */
-		x2apic_set_max_apicid(255);
 		x2apic_phys = 1;
 	}
 	x2apic_enable();
@@ -2047,8 +1962,7 @@ void __init init_apic_mappings(void)
 {
 	unsigned int new_apicid;
 
-	if (apic_validate_deadline_timer())
-		pr_info("TSC deadline timer available\n");
+	apic_check_deadline_errata();
 
 	if (x2apic_mode) {
 		boot_cpu_physical_apicid = read_apic_id();
@@ -2119,32 +2033,21 @@ __visible void __irq_entry smp_spurious_interrupt(struct pt_regs *regs)
 	entering_irq();
 	trace_spurious_apic_entry(vector);
 
-	inc_irq_stat(irq_spurious_count);
-
 	/*
-	 * If this is a spurious interrupt then do not acknowledge
-	 */
-	if (vector == SPURIOUS_APIC_VECTOR) {
-		/* See SDM vol 3 */
-		pr_info("Spurious APIC interrupt (vector 0xFF) on CPU#%d, should never happen.\n",
-			smp_processor_id());
-		goto out;
-	}
-
-	/*
-	 * If it is a vectored one, verify it's set in the ISR. If set,
-	 * acknowledge it.
+	 * Check if this really is a spurious interrupt and ACK it
+	 * if it is a vectored one.  Just in case...
+	 * Spurious interrupts should not be ACKed.
 	 */
 	v = apic_read(APIC_ISR + ((vector & ~0x1f) >> 1));
-	if (v & (1 << (vector & 0x1f))) {
-		pr_info("Spurious interrupt (vector 0x%02x) on CPU#%d. Acked\n",
-			vector, smp_processor_id());
+	if (v & (1 << (vector & 0x1f)))
 		ack_APIC_irq();
-	} else {
-		pr_info("Spurious interrupt (vector 0x%02x) on CPU#%d. Not pending!\n",
-			vector, smp_processor_id());
-	}
-out:
+
+	inc_irq_stat(irq_spurious_count);
+
+	/* see sw-dev-man vol 3, chapter 7.4.13.5 */
+	pr_info("spurious APIC interrupt through vector %02x on CPU#%d, "
+		"should never happen.\n", vector, smp_processor_id());
+
 	trace_spurious_apic_exit(vector);
 	exiting_irq();
 }
@@ -2296,11 +2199,6 @@ static int nr_logical_cpuids = 1;
 static int cpuid_to_apicid[] = {
 	[0 ... NR_CPUS - 1] = -1,
 };
-
-bool arch_match_cpu_phys_id(int cpu, u64 phys_id)
-{
-	return phys_id == cpuid_to_apicid[cpu];
-}
 
 #ifdef CONFIG_SMP
 /**
@@ -2525,7 +2423,6 @@ void __init apic_bsp_setup(bool upmode)
 	end_local_APIC_setup();
 	irq_remap_enable_fault_handling();
 	setup_IO_APIC();
-	lapic_update_legacy_vectors();
 }
 
 #ifdef CONFIG_UP_LATE_INIT

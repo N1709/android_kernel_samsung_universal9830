@@ -29,7 +29,7 @@
 
 #include <asm/sections.h>
 #include <asm/page.h>
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 #include <asm/vaddrs.h>
 #include <asm/pgalloc.h>	/* bug in asm-generic/tlb.h: check_pgt_cache */
 #include <asm/setup.h>
@@ -197,9 +197,6 @@ unsigned long __init bootmem_init(unsigned long *pages_avail)
 
 	size = memblock_phys_mem_size() - memblock_reserved_size();
 	*pages_avail = (size >> PAGE_SHIFT) - high_pages;
-
-	/* Only allow low memory to be allocated via memblock allocation */
-	memblock_set_current_limit(max_low_pfn << PAGE_SHIFT);
 
 	return max_pfn;
 }

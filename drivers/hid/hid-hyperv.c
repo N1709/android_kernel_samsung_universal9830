@@ -205,8 +205,7 @@ static void mousevsc_on_receive_device_info(struct mousevsc_dev *input_device,
 	if (!input_device->hid_desc)
 		goto cleanup;
 
-	input_device->report_desc_size = le16_to_cpu(
-					desc->rpt_desc.wDescriptorLength);
+	input_device->report_desc_size = desc->desc[0].wDescriptorLength;
 	if (input_device->report_desc_size == 0) {
 		input_device->dev_info_status = -EINVAL;
 		goto cleanup;
@@ -222,7 +221,7 @@ static void mousevsc_on_receive_device_info(struct mousevsc_dev *input_device,
 
 	memcpy(input_device->report_desc,
 	       ((unsigned char *)desc) + desc->bLength,
-	       le16_to_cpu(desc->rpt_desc.wDescriptorLength));
+	       desc->desc[0].wDescriptorLength);
 
 	/* Send the ack */
 	memset(&ack, 0, sizeof(struct mousevsc_prt_msg));
@@ -323,24 +322,60 @@ static void mousevsc_on_receive(struct hv_device *device,
 
 static void mousevsc_on_channel_callback(void *context)
 {
+	const int packet_size = 0x100;
+	int ret;
 	struct hv_device *device = context;
+	u32 bytes_recvd;
+	u64 req_id;
 	struct vmpacket_descriptor *desc;
+	unsigned char	*buffer;
+	int	bufferlen = packet_size;
 
-	foreach_vmbus_pkt(desc, device->channel) {
-		switch (desc->type) {
-		case VM_PKT_COMP:
+	buffer = kmalloc(bufferlen, GFP_ATOMIC);
+	if (!buffer)
+		return;
+
+	do {
+		ret = vmbus_recvpacket_raw(device->channel, buffer,
+					bufferlen, &bytes_recvd, &req_id);
+
+		switch (ret) {
+		case 0:
+			if (bytes_recvd <= 0) {
+				kfree(buffer);
+				return;
+			}
+			desc = (struct vmpacket_descriptor *)buffer;
+
+			switch (desc->type) {
+			case VM_PKT_COMP:
+				break;
+
+			case VM_PKT_DATA_INBAND:
+				mousevsc_on_receive(device, desc);
+				break;
+
+			default:
+				pr_err("unhandled packet type %d, tid %llx len %d\n",
+					desc->type, req_id, bytes_recvd);
+				break;
+			}
+
 			break;
 
-		case VM_PKT_DATA_INBAND:
-			mousevsc_on_receive(device, desc);
-			break;
+		case -ENOBUFS:
+			kfree(buffer);
+			/* Handle large packet */
+			bufferlen = bytes_recvd;
+			buffer = kmalloc(bytes_recvd, GFP_ATOMIC);
 
-		default:
-			pr_err("Unhandled packet type %d, tid %llx len %d\n",
-			       desc->type, desc->trans_id, desc->len8 * 8);
+			if (!buffer)
+				return;
+
 			break;
 		}
-	}
+	} while (1);
+
 }
 
 static int mousevsc_connect_to_vsp(struct hv_device *device)
@@ -501,7 +536,7 @@ static int mousevsc_probe(struct hv_device *device,
 
 	ret = hid_add_device(hid_dev);
 	if (ret)
-		goto probe_err2;
+		goto probe_err1;
 
 
 	ret = hid_parse(hid_dev);

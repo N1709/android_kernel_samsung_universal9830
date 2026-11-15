@@ -32,9 +32,10 @@ PHDRS {
 SECTIONS
 {
 	. = 0x100000;
+	_stext = .;		/* Start of text section */
 	.text : {
-		_stext = .;		/* Start of text section */
-		_text = .;		/* Text and read-only data */
+		/* Text and read-only data */
+		_text = .;
 		HEAD_TEXT
 		TEXT_TEXT
 		SCHED_TEXT
@@ -46,9 +47,10 @@ SECTIONS
 		*(.text.*_indirect_*)
 		*(.fixup)
 		*(.gnu.warning)
-		. = ALIGN(PAGE_SIZE);
-		_etext = .;		/* End of text section */
 	} :text = 0x0700
+
+	. = ALIGN(PAGE_SIZE);
+	_etext = .;		/* End of text section */
 
 	NOTES :text :note
 
@@ -123,7 +125,6 @@ SECTIONS
 	/*
 	 * Table with the patch locations to undo expolines
 	*/
-	. = ALIGN(4);
 	.nospec_call_table : {
 		__nospec_call_start = . ;
 		*(.s390_indirect*)
@@ -170,6 +171,5 @@ SECTIONS
 	DISCARDS
 	/DISCARD/ : {
 		*(.eh_frame)
-		*(.interp)
 	}
 }

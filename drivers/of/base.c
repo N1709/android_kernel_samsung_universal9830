@@ -116,6 +116,9 @@ int __weak of_node_to_nid(struct device_node *np)
 }
 #endif
 
+static struct device_node **phandle_cache;
+static u32 phandle_cache_mask;
+
 /*
  * Assumptions behind phandle_cache implementation:
  *   - phandle property values are in a contiguous range of 1..n
@@ -124,66 +127,6 @@ int __weak of_node_to_nid(struct device_node *np)
  *   - the phandle lookup overhead reduction provided by the cache
  *     will likely be less
  */
-
-static struct device_node **phandle_cache;
-static u32 phandle_cache_mask;
-
-/*
- * Caller must hold devtree_lock.
- */
-static void __of_free_phandle_cache(void)
-{
-	u32 cache_entries = phandle_cache_mask + 1;
-	u32 k;
-
-	if (!phandle_cache)
-		return;
-
-	for (k = 0; k < cache_entries; k++)
-		of_node_put(phandle_cache[k]);
-
-	kfree(phandle_cache);
-	phandle_cache = NULL;
-}
-
-int of_free_phandle_cache(void)
-{
-	unsigned long flags;
-
-	raw_spin_lock_irqsave(&devtree_lock, flags);
-
-	__of_free_phandle_cache();
-
-	raw_spin_unlock_irqrestore(&devtree_lock, flags);
-
-	return 0;
-}
-#if !defined(CONFIG_MODULES)
-late_initcall_sync(of_free_phandle_cache);
-#endif
-
-/*
- * Caller must hold devtree_lock.
- */
-void __of_free_phandle_cache_entry(phandle handle)
-{
-	phandle masked_handle;
-	struct device_node *np;
-
-	if (!handle)
-		return;
-
-	masked_handle = handle & phandle_cache_mask;
-
-	if (phandle_cache) {
-		np = phandle_cache[masked_handle];
-		if (np && handle == np->phandle) {
-			of_node_put(np);
-			phandle_cache[masked_handle] = NULL;
-		}
-	}
-}
-
 void of_populate_phandle_cache(void)
 {
 	unsigned long flags;
@@ -193,7 +136,8 @@ void of_populate_phandle_cache(void)
 
 	raw_spin_lock_irqsave(&devtree_lock, flags);
 
-	__of_free_phandle_cache();
+	kfree(phandle_cache);
+	phandle_cache = NULL;
 
 	for_each_of_allnodes(np)
 		if (np->phandle && np->phandle != OF_PHANDLE_ILLEGAL)
@@ -211,14 +155,29 @@ void of_populate_phandle_cache(void)
 		goto out;
 
 	for_each_of_allnodes(np)
-		if (np->phandle && np->phandle != OF_PHANDLE_ILLEGAL) {
-			of_node_get(np);
+		if (np->phandle && np->phandle != OF_PHANDLE_ILLEGAL)
 			phandle_cache[np->phandle & phandle_cache_mask] = np;
-		}
 
 out:
 	raw_spin_unlock_irqrestore(&devtree_lock, flags);
 }
+
+int of_free_phandle_cache(void)
+{
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&devtree_lock, flags);
+
+	kfree(phandle_cache);
+	phandle_cache = NULL;
+
+	raw_spin_unlock_irqrestore(&devtree_lock, flags);
+
+	return 0;
+}
+#if !defined(CONFIG_MODULES)
+late_initcall_sync(of_free_phandle_cache);
+#endif
 
 void __init of_core_init(void)
 {
@@ -945,10 +904,10 @@ struct device_node *of_find_node_opts_by_path(const char *path, const char **opt
 	/* The path could begin with an alias */
 	if (*path != '/') {
 		int len;
-		const char *p = strchrnul(path, '/');
+		const char *p = separator;
 
-		if (separator && separator < p)
-			p = separator;
+		if (!p)
+			p = strchrnul(path, '/');
 		len = p - path;
 
 		/* of_aliases must not be NULL */
@@ -1231,23 +1190,13 @@ struct device_node *of_find_node_by_phandle(phandle handle)
 		if (phandle_cache[masked_handle] &&
 		    handle == phandle_cache[masked_handle]->phandle)
 			np = phandle_cache[masked_handle];
-		if (np && of_node_check_flag(np, OF_DETACHED)) {
-			WARN_ON(1); /* did not uncache np on node removal */
-			of_node_put(np);
-			phandle_cache[masked_handle] = NULL;
-			np = NULL;
-		}
 	}
 
 	if (!np) {
 		for_each_of_allnodes(np)
-			if (np->phandle == handle &&
-			    !of_node_check_flag(np, OF_DETACHED)) {
-				if (phandle_cache) {
-					/* will put when removed from cache */
-					of_node_get(np);
+			if (np->phandle == handle) {
+				if (phandle_cache)
 					phandle_cache[masked_handle] = np;
-				}
 				break;
 			}
 	}
@@ -1280,13 +1229,6 @@ int of_phandle_iterator_init(struct of_phandle_iterator *it,
 	int size;
 
 	memset(it, 0, sizeof(*it));
-
-	/*
-	 * one of cell_count or cells_name must be provided to determine the
-	 * argument length.
-	 */
-	if (cell_count < 0 && !cells_name)
-		return -EINVAL;
 
 	list = of_get_property(np, list_name, &size);
 	if (!list)
@@ -1337,20 +1279,11 @@ int of_phandle_iterator_next(struct of_phandle_iterator *it)
 
 			if (of_property_read_u32(it->node, it->cells_name,
 						 &count)) {
-				/*
-				 * If both cell_count and cells_name is given,
-				 * fall back to cell_count in absence
-				 * of the cells_name property
-				 */
-				if (it->cell_count >= 0) {
-					count = it->cell_count;
-				} else {
-					pr_err("%pOF: could not get %s for %pOF\n",
-					       it->parent,
-					       it->cells_name,
-					       it->node);
-					goto err;
-				}
+				pr_err("%pOF: could not get %s for %pOF\n",
+				       it->parent,
+				       it->cells_name,
+				       it->node);
+				goto err;
 			}
 		} else {
 			count = it->cell_count;
@@ -1398,7 +1331,6 @@ int of_phandle_iterator_args(struct of_phandle_iterator *it,
 
 	return count;
 }
-EXPORT_SYMBOL_GPL(of_phandle_iterator_args);
 
 static int __of_parse_phandle_with_args(const struct device_node *np,
 					const char *list_name,
@@ -1514,17 +1446,10 @@ int of_parse_phandle_with_args(const struct device_node *np, const char *list_na
 				const char *cells_name, int index,
 				struct of_phandle_args *out_args)
 {
-	int cell_count = -1;
-
 	if (index < 0)
 		return -EINVAL;
-
-	/* If cells_name is NULL we assume a cell count of 0 */
-	if (!cells_name)
-		cell_count = 0;
-
-	return __of_parse_phandle_with_args(np, list_name, cells_name,
-					    cell_count, index, out_args);
+	return __of_parse_phandle_with_args(np, list_name, cells_name, 0,
+					    index, out_args);
 }
 EXPORT_SYMBOL(of_parse_phandle_with_args);
 
@@ -1606,7 +1531,7 @@ int of_parse_phandle_with_args_map(const struct device_node *np,
 	if (!pass_name)
 		goto free;
 
-	ret = __of_parse_phandle_with_args(np, list_name, cells_name, -1, index,
+	ret = __of_parse_phandle_with_args(np, list_name, cells_name, 0, index,
 					   out_args);
 	if (ret)
 		goto free;
@@ -1649,10 +1574,8 @@ int of_parse_phandle_with_args_map(const struct device_node *np,
 			map_len--;
 
 			/* Check if not found */
-			if (!new) {
-				ret = -EINVAL;
+			if (!new)
 				goto put;
-			}
 
 			if (!of_device_is_available(new))
 				match = 0;
@@ -1662,20 +1585,17 @@ int of_parse_phandle_with_args_map(const struct device_node *np,
 				goto put;
 
 			/* Check for malformed properties */
-			if (WARN_ON(new_size > MAX_PHANDLE_ARGS) ||
-			    map_len < new_size) {
-				ret = -EINVAL;
+			if (WARN_ON(new_size > MAX_PHANDLE_ARGS))
 				goto put;
-			}
+			if (map_len < new_size)
+				goto put;
 
 			/* Move forward by new node's #<list>-cells amount */
 			map += new_size;
 			map_len -= new_size;
 		}
-		if (!match) {
-			ret = -ENOENT;
+		if (!match)
 			goto put;
-		}
 
 		/* Get the <list>-map-pass-thru property (optional) */
 		pass = of_get_property(cur, pass_name, NULL);
@@ -1687,6 +1607,7 @@ int of_parse_phandle_with_args_map(const struct device_node *np,
 		 * specifier into the out_args structure, keeping the
 		 * bits specified in <list>-map-pass-thru.
 		 */
+		match_array = map - new_size;
 		for (i = 0; i < new_size; i++) {
 			__be32 val = *(map - new_size + i);
 
@@ -1695,7 +1616,6 @@ int of_parse_phandle_with_args_map(const struct device_node *np,
 				val |= cpu_to_be32(out_args->args[i]) & pass[i];
 			}
 
-			initial_match_array[i] = val;
 			out_args->args[i] = be32_to_cpu(val);
 		}
 		out_args->args_count = list_size = new_size;
@@ -1703,7 +1623,6 @@ int of_parse_phandle_with_args_map(const struct device_node *np,
 		out_args->np = new;
 		of_node_put(cur);
 		cur = new;
-		new = NULL;
 	}
 put:
 	of_node_put(cur);
@@ -1780,24 +1699,7 @@ int of_count_phandle_with_args(const struct device_node *np, const char *list_na
 	struct of_phandle_iterator it;
 	int rc, cur_index = 0;
 
-	/*
-	 * If cells_name is NULL we assume a cell count of 0. This makes
-	 * counting the phandles trivial as each 32bit word in the list is a
-	 * phandle and no arguments are to consider. So we don't iterate through
-	 * the list but just use the length to determine the phandle count.
-	 */
-	if (!cells_name) {
-		const __be32 *list;
-		int size;
-
-		list = of_get_property(np, list_name, &size);
-		if (!list)
-			return -ENOENT;
-
-		return size / sizeof(*list);
-	}
-
-	rc = of_phandle_iterator_init(&it, np, list_name, cells_name, -1);
+	rc = of_phandle_iterator_init(&it, np, list_name, cells_name, 0);
 	if (rc)
 		return rc;
 

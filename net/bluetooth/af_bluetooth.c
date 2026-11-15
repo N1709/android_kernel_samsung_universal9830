@@ -154,25 +154,15 @@ void bt_sock_unlink(struct bt_sock_list *l, struct sock *sk)
 }
 EXPORT_SYMBOL(bt_sock_unlink);
 
-void bt_accept_enqueue(struct sock *parent, struct sock *sk, bool bh)
+void bt_accept_enqueue(struct sock *parent, struct sock *sk)
 {
 	BT_DBG("parent %p, sk %p", parent, sk);
 
 	sock_hold(sk);
-
-	if (bh)
-		bh_lock_sock_nested(sk);
-	else
-		lock_sock_nested(sk, SINGLE_DEPTH_NESTING);
-
+	lock_sock_nested(sk, SINGLE_DEPTH_NESTING);
 	list_add_tail(&bt_sk(sk)->accept_q, &bt_sk(parent)->accept_q);
 	bt_sk(sk)->parent = parent;
-
-	if (bh)
-		bh_unlock_sock(sk);
-	else
-		release_sock(sk);
-
+	release_sock(sk);
 	parent->sk_ack_backlog++;
 }
 EXPORT_SYMBOL(bt_accept_enqueue);
@@ -460,7 +450,7 @@ __poll_t bt_sock_poll(struct file *file, struct socket *sock,
 	if (sk->sk_state == BT_LISTEN)
 		return bt_accept_poll(sk);
 
-	if (sk->sk_err || !skb_queue_empty_lockless(&sk->sk_error_queue))
+	if (sk->sk_err || !skb_queue_empty(&sk->sk_error_queue))
 		mask |= EPOLLERR |
 			(sock_flag(sk, SOCK_SELECT_ERR_QUEUE) ? EPOLLPRI : 0);
 
@@ -470,7 +460,7 @@ __poll_t bt_sock_poll(struct file *file, struct socket *sock,
 	if (sk->sk_shutdown == SHUTDOWN_MASK)
 		mask |= EPOLLHUP;
 
-	if (!skb_queue_empty_lockless(&sk->sk_receive_queue))
+	if (!skb_queue_empty(&sk->sk_receive_queue))
 		mask |= EPOLLIN | EPOLLRDNORM;
 
 	if (sk->sk_state == BT_CLOSED)
@@ -743,7 +733,7 @@ static int __init bt_init(void)
 
 	err = bt_sysfs_init();
 	if (err < 0)
-		goto cleanup_led;
+		return err;
 
 	err = sock_register(&bt_sock_family_ops);
 	if (err)
@@ -779,9 +769,6 @@ unregister_socket:
 	sock_unregister(PF_BLUETOOTH);
 cleanup_sysfs:
 	bt_sysfs_cleanup();
-cleanup_led:
-	bt_leds_cleanup();
-	debugfs_remove_recursive(bt_debugfs);
 	return err;
 }
 

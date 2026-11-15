@@ -28,7 +28,6 @@ flow_offload_fill_dir(struct flow_offload *flow, struct nf_conn *ct,
 {
 	struct flow_offload_tuple *ft = &flow->tuplehash[dir].tuple;
 	struct nf_conntrack_tuple *ctt = &ct->tuplehash[dir].tuple;
-	struct dst_entry *other_dst = route->tuple[!dir].dst;
 	struct dst_entry *dst = route->tuple[dir].dst;
 
 	ft->dir = dir;
@@ -51,8 +50,8 @@ flow_offload_fill_dir(struct flow_offload *flow, struct nf_conn *ct,
 	ft->src_port = ctt->src.u.tcp.port;
 	ft->dst_port = ctt->dst.u.tcp.port;
 
-	ft->iifidx = other_dst->dev->ifindex;
-	ft->oifidx = dst->dev->ifindex;
+	ft->iifidx = route->tuple[dir].ifindex;
+	ft->oifidx = route->tuple[!dir].ifindex;
 	ft->dst_cache = dst;
 }
 
@@ -185,26 +184,14 @@ static const struct rhashtable_params nf_flow_offload_rhash_params = {
 
 int flow_offload_add(struct nf_flowtable *flow_table, struct flow_offload *flow)
 {
-	int err;
+	flow->timeout = (u32)jiffies;
 
-	flow->timeout = (u32)jiffies + NF_FLOW_TIMEOUT;
-
-	err = rhashtable_insert_fast(&flow_table->rhashtable,
-				     &flow->tuplehash[0].node,
-				     nf_flow_offload_rhash_params);
-	if (err < 0)
-		return err;
-
-	err = rhashtable_insert_fast(&flow_table->rhashtable,
-				     &flow->tuplehash[1].node,
-				     nf_flow_offload_rhash_params);
-	if (err < 0) {
-		rhashtable_remove_fast(&flow_table->rhashtable,
-				       &flow->tuplehash[0].node,
-				       nf_flow_offload_rhash_params);
-		return err;
-	}
-
+	rhashtable_insert_fast(&flow_table->rhashtable,
+			       &flow->tuplehash[FLOW_OFFLOAD_DIR_ORIGINAL].node,
+			       nf_flow_offload_rhash_params);
+	rhashtable_insert_fast(&flow_table->rhashtable,
+			       &flow->tuplehash[FLOW_OFFLOAD_DIR_REPLY].node,
+			       nf_flow_offload_rhash_params);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(flow_offload_add);
@@ -347,7 +334,7 @@ static int nf_flow_nat_port_tcp(struct sk_buff *skb, unsigned int thoff,
 		return -1;
 
 	tcph = (void *)(skb_network_header(skb) + thoff);
-	inet_proto_csum_replace2(&tcph->check, skb, port, new_port, false);
+	inet_proto_csum_replace2(&tcph->check, skb, port, new_port, true);
 
 	return 0;
 }
@@ -364,7 +351,7 @@ static int nf_flow_nat_port_udp(struct sk_buff *skb, unsigned int thoff,
 	udph = (void *)(skb_network_header(skb) + thoff);
 	if (udph->check || skb->ip_summed == CHECKSUM_PARTIAL) {
 		inet_proto_csum_replace2(&udph->check, skb, port,
-					 new_port, false);
+					 new_port, true);
 		if (!udph->check)
 			udph->check = CSUM_MANGLED_0;
 	}

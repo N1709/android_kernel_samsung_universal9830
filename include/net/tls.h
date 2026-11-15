@@ -145,13 +145,12 @@ struct tls_sw_context_tx {
 struct tls_sw_context_rx {
 	struct crypto_aead *aead_recv;
 	struct crypto_wait async_wait;
+
 	struct strparser strp;
-	struct sk_buff_head rx_list;	/* list of decrypted 'data' records */
 	void (*saved_data_ready)(struct sock *sk);
 
 	struct sk_buff *recv_pkt;
 	u8 control;
-	int async_capable;
 	bool decrypted;
 	atomic_t decrypt_pending;
 	bool async_notify;
@@ -190,16 +189,6 @@ struct tls_offload_context_tx {
 
 enum {
 	TLS_PENDING_CLOSED_RECORD
-};
-
-enum tls_context_flags {
-	TLS_RX_SYNC_RUNNING = 0,
-	/* tls_dev_del was called for the RX side, device state was released,
-	 * but tls_ctx->netdev might still be kept, because TX-side driver
-	 * resources might not be released yet. Used to prevent the second
-	 * tls_dev_del call in tls_device_down if it happens simultaneously.
-	 */
-	TLS_RX_DEV_CLOSED = 2,
 };
 
 struct cipher_context {
@@ -272,7 +261,6 @@ struct tls_offload_context_rx {
 	(ALIGN(sizeof(struct tls_offload_context_rx), sizeof(void *)) + \
 	 TLS_DRIVER_STATE_SIZE)
 
-void tls_ctx_free(struct tls_context *ctx);
 int wait_on_pending_writer(struct sock *sk, long *timeo);
 int tls_sk_query(struct sock *sk, int optname, char __user *optval,
 		int __user *optlen);
@@ -374,7 +362,7 @@ tls_validate_xmit_skb(struct sock *sk, struct net_device *dev,
 static inline bool tls_is_sk_tx_device_offloaded(struct sock *sk)
 {
 #ifdef CONFIG_SOCK_VALIDATE_XMIT
-	return sk_fullsock(sk) &&
+	return sk_fullsock(sk) &
 	       (smp_load_acquire(&sk->sk_validate_xmit_skb) ==
 	       &tls_validate_xmit_skb);
 #else
@@ -471,27 +459,6 @@ tls_offload_ctx_tx(const struct tls_context *tls_ctx)
 {
 	return (struct tls_offload_context_tx *)tls_ctx->priv_ctx_tx;
 }
-
-static inline bool tls_sw_has_ctx_tx(const struct sock *sk)
-{
-	struct tls_context *ctx = tls_get_ctx(sk);
-
-	if (!ctx)
-		return false;
-	return !!tls_sw_ctx_tx(ctx);
-}
-
-static inline bool tls_sw_has_ctx_rx(const struct sock *sk)
-{
-	struct tls_context *ctx = tls_get_ctx(sk);
-
-	if (!ctx)
-		return false;
-	return !!tls_sw_ctx_rx(ctx);
-}
-
-void tls_sw_write_space(struct sock *sk, struct tls_context *ctx);
-void tls_device_write_space(struct sock *sk, struct tls_context *ctx);
 
 static inline struct tls_offload_context_rx *
 tls_offload_ctx_rx(const struct tls_context *tls_ctx)

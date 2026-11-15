@@ -22,7 +22,7 @@
 
 #include <asm/meminit.h>
 #include <asm/pgalloc.h>
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
 #include <asm/sections.h>
 #include <asm/mca.h>
 
@@ -81,7 +81,7 @@ skip:
 	return __per_cpu_start + __per_cpu_offset[smp_processor_id()];
 }
 
-static inline __init void
+static inline void
 alloc_per_cpu_data(void)
 {
 	cpu_data = memblock_alloc_from(PERCPU_PAGE_SIZE * num_possible_cpus(),

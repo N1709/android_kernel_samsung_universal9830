@@ -49,7 +49,7 @@ nfs4_file_open(struct inode *inode, struct file *filp)
 		return err;
 
 	if ((openflags & O_ACCMODE) == 3)
-		return nfs_open(inode, filp);
+		openflags--;
 
 	/* We can't create new files here */
 	openflags &= ~(O_CREAT|O_EXCL);
@@ -73,13 +73,13 @@ nfs4_file_open(struct inode *inode, struct file *filp)
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
 		switch (err) {
-		default:
+		case -EPERM:
+		case -EACCES:
+		case -EDQUOT:
+		case -ENOSPC:
+		case -EROFS:
 			goto out_put_ctx;
-		case -ENOENT:
-		case -ESTALE:
-		case -EISDIR:
-		case -ENOTDIR:
-		case -ELOOP:
+		default:
 			goto out_drop;
 		}
 	}
@@ -129,31 +129,18 @@ nfs4_file_flush(struct file *file, fl_owner_t id)
 }
 
 #ifdef CONFIG_NFS_V4_2
-static ssize_t __nfs4_copy_file_range(struct file *file_in, loff_t pos_in,
-				      struct file *file_out, loff_t pos_out,
-				      size_t count, unsigned int flags)
-{
-	/* Only offload copy if superblock is the same */
-	if (file_inode(file_in)->i_sb != file_inode(file_out)->i_sb)
-		return -EXDEV;
-	if (!nfs_server_capable(file_inode(file_out), NFS_CAP_COPY))
-		return -EOPNOTSUPP;
-	if (file_inode(file_in) == file_inode(file_out))
-		return -EOPNOTSUPP;
-	return nfs42_proc_copy(file_in, pos_in, file_out, pos_out, count);
-}
-
 static ssize_t nfs4_copy_file_range(struct file *file_in, loff_t pos_in,
 				    struct file *file_out, loff_t pos_out,
 				    size_t count, unsigned int flags)
 {
 	ssize_t ret;
 
-	ret = __nfs4_copy_file_range(file_in, pos_in, file_out, pos_out, count,
-				     flags);
-	if (ret == -EOPNOTSUPP || ret == -EXDEV)
-		ret = generic_copy_file_range(file_in, pos_in, file_out,
-					      pos_out, count, flags);
+	if (file_inode(file_in) == file_inode(file_out))
+		return -EINVAL;
+retry:
+	ret = nfs42_proc_copy(file_in, pos_in, file_out, pos_out, count);
+	if (ret == -EAGAIN)
+		goto retry;
 	return ret;
 }
 
@@ -165,7 +152,7 @@ static loff_t nfs4_file_llseek(struct file *filep, loff_t offset, int whence)
 	case SEEK_HOLE:
 	case SEEK_DATA:
 		ret = nfs42_proc_llseek(filep, offset, whence);
-		if (ret != -EOPNOTSUPP)
+		if (ret != -ENOTSUPP)
 			return ret;
 		/* Fall through */
 	default:

@@ -34,17 +34,12 @@
 #include <asm/x86_init.h>
 #include <asm/reboot.h>
 #include <asm/cache.h>
-#include <asm/nospec-branch.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/nmi.h>
 
-/*
- * An emergency handler can be set in any context including NMI
- */
 struct nmi_desc {
 	raw_spinlock_t lock;
-	nmi_handler_t emerg_handler;
 	struct list_head head;
 };
 
@@ -106,41 +101,25 @@ static int __init nmi_warning_debugfs(void)
 }
 fs_initcall(nmi_warning_debugfs);
 
-static void nmi_check_duration(struct nmiaction *action, u64 duration)
+static void nmi_max_handler(struct irq_work *w)
 {
+	struct nmiaction *a = container_of(w, struct nmiaction, irq_work);
 	int remainder_ns, decimal_msecs;
+	u64 whole_msecs = READ_ONCE(a->max_duration);
 
-	if (duration < nmi_longest_ns || duration < action->max_duration)
-		return;
-
-	action->max_duration = duration;
-
-	remainder_ns = do_div(duration, (1000 * 1000));
+	remainder_ns = do_div(whole_msecs, (1000 * 1000));
 	decimal_msecs = remainder_ns / 1000;
 
 	printk_ratelimited(KERN_INFO
 		"INFO: NMI handler (%ps) took too long to run: %lld.%03d msecs\n",
-		action->handler, duration, decimal_msecs);
+		a->handler, whole_msecs, decimal_msecs);
 }
 
 static int nmi_handle(unsigned int type, struct pt_regs *regs)
 {
 	struct nmi_desc *desc = nmi_to_desc(type);
-	nmi_handler_t ehandler;
 	struct nmiaction *a;
 	int handled=0;
-
-	/*
-	 * Call the emergency handler, if set
-	 *
-	 * In the case of crash_nmi_callback() emergency handler, it will
-	 * return in the case of the crashing CPU to enable it to complete
-	 * other necessary crashing actions ASAP. Other handlers in the
-	 * linked list won't need to be run.
-	 */
-	ehandler = desc->emerg_handler;
-	if (ehandler)
-		return ehandler(type, regs);
 
 	rcu_read_lock();
 
@@ -160,7 +139,11 @@ static int nmi_handle(unsigned int type, struct pt_regs *regs)
 		delta = sched_clock() - delta;
 		trace_nmi_handler(a->handler, (int)delta, thishandled);
 
-		nmi_check_duration(a, delta);
+		if (delta < nmi_longest_ns || delta < a->max_duration)
+			continue;
+
+		a->max_duration = delta;
+		irq_work_queue(&a->irq_work);
 	}
 
 	rcu_read_unlock();
@@ -177,6 +160,8 @@ int __register_nmi_handler(unsigned int type, struct nmiaction *action)
 
 	if (!action->handler)
 		return -EINVAL;
+
+	init_irq_work(&action->irq_work, nmi_max_handler);
 
 	raw_spin_lock_irqsave(&desc->lock, flags);
 
@@ -226,31 +211,6 @@ void unregister_nmi_handler(unsigned int type, const char *name)
 	synchronize_rcu();
 }
 EXPORT_SYMBOL_GPL(unregister_nmi_handler);
-
-/**
- * set_emergency_nmi_handler - Set emergency handler
- * @type:    NMI type
- * @handler: the emergency handler to be stored
- *
- * Set an emergency NMI handler which, if set, will preempt all the other
- * handlers in the linked list. If a NULL handler is passed in, it will clear
- * it. It is expected that concurrent calls to this function will not happen
- * or the system is screwed beyond repair.
- */
-void set_emergency_nmi_handler(unsigned int type, nmi_handler_t handler)
-{
-	struct nmi_desc *desc = nmi_to_desc(type);
-
-	if (WARN_ON_ONCE(desc->emerg_handler == handler))
-		return;
-	desc->emerg_handler = handler;
-
-	/*
-	 * Ensure the emergency handler is visible to other CPUs before
-	 * function return
-	 */
-	smp_wmb();
-}
 
 static void
 pci_serr_error(unsigned char reason, struct pt_regs *regs)
@@ -573,9 +533,6 @@ nmi_restart:
 		write_cr2(this_cpu_read(nmi_cr2));
 	if (this_cpu_dec_return(nmi_state))
 		goto nmi_restart;
-
-	if (user_mode(regs))
-		mds_user_clear_cpu_buffers();
 }
 NOKPROBE_SYMBOL(do_nmi);
 

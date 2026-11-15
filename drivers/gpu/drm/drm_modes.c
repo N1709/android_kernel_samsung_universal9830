@@ -758,7 +758,7 @@ int drm_mode_hsync(const struct drm_display_mode *mode)
 	if (mode->hsync)
 		return mode->hsync;
 
-	if (mode->htotal <= 0)
+	if (mode->htotal < 0)
 		return 0;
 
 	calc_val = (mode->clock * 1000) / mode->htotal; /* hsync in Hz */
@@ -1753,7 +1753,6 @@ int drm_mode_convert_umode(struct drm_device *dev,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(drm_mode_convert_umode);
 
 /**
  * drm_mode_is_420_only - if a given videomode can be only supported in YCBCR420

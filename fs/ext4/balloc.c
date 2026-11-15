@@ -270,7 +270,6 @@ struct ext4_group_desc * ext4_get_group_desc(struct super_block *sb,
 	ext4_group_t ngroups = ext4_get_groups_count(sb);
 	struct ext4_group_desc *desc;
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
-	struct buffer_head *bh_p;
 
 	if (block_group >= ngroups) {
 		ext4_error(sb, "block_group >= groups_count - block_group = %u,"
@@ -281,14 +280,7 @@ struct ext4_group_desc * ext4_get_group_desc(struct super_block *sb,
 
 	group_desc = block_group >> EXT4_DESC_PER_BLOCK_BITS(sb);
 	offset = block_group & (EXT4_DESC_PER_BLOCK(sb) - 1);
-	bh_p = sbi_array_rcu_deref(sbi, s_group_desc, group_desc);
-	/*
-	 * sbi_array_rcu_deref returns with rcu unlocked, this is ok since
-	 * the pointer being dereferenced won't be dereferenced again. By
-	 * looking at the usage in add_new_gdb() the value isn't modified,
-	 * just the pointer, and so it remains valid.
-	 */
-	if (!bh_p) {
+	if (!sbi->s_group_desc[group_desc]) {
 		ext4_error(sb, "Group descriptor not loaded - "
 			   "block_group = %u, group_desc = %u, desc = %u",
 			   block_group, group_desc, offset);
@@ -296,27 +288,11 @@ struct ext4_group_desc * ext4_get_group_desc(struct super_block *sb,
 	}
 
 	desc = (struct ext4_group_desc *)(
-		(__u8 *)bh_p->b_data +
+		(__u8 *)sbi->s_group_desc[group_desc]->b_data +
 		offset * EXT4_DESC_SIZE(sb));
 	if (bh)
-		*bh = bh_p;
+		*bh = sbi->s_group_desc[group_desc];
 	return desc;
-}
-
-static ext4_fsblk_t ext4_valid_block_bitmap_padding(struct super_block *sb,
-						    ext4_group_t block_group,
-						    struct buffer_head *bh)
-{
-	ext4_grpblk_t next_zero_bit;
-	unsigned long bitmap_size = sb->s_blocksize * 8;
-	unsigned int offset = num_clusters_in_group(sb, block_group);
-
-	if (bitmap_size <= offset)
-		return 0;
-
-	next_zero_bit = ext4_find_next_zero_bit(bh->b_data, bitmap_size, offset);
-
-	return (next_zero_bit < bitmap_size ? next_zero_bit : 0);
 }
 
 /*
@@ -409,15 +385,6 @@ static int ext4_validate_block_bitmap(struct super_block *sb,
 			   block_group, blk);
 		ext4_mark_group_bitmap_corrupted(sb, block_group,
 					EXT4_GROUP_INFO_BBITMAP_CORRUPT);
-		return -EFSCORRUPTED;
-	}
-	blk = ext4_valid_block_bitmap_padding(sb, block_group, bh);
-	if (unlikely(blk != 0)) {
-		ext4_unlock_group(sb, block_group);
-		ext4_error(sb, "bg %u: block %llu: padding at end of block bitmap is not set",
-			   block_group, blk);
-		ext4_mark_group_bitmap_corrupted(sb, block_group,
-						 EXT4_GROUP_INFO_BBITMAP_CORRUPT);
 		return -EFSCORRUPTED;
 	}
 	set_buffer_verified(bh);
@@ -609,8 +576,8 @@ static int ext4_has_free_clusters(struct ext4_sb_info *sbi,
 	/* Hm, nope.  Are (enough) root reserved clusters available? */
 	if (uid_eq(sbi->s_resuid, current_fsuid()) ||
 	    (!gid_eq(sbi->s_resgid, GLOBAL_ROOT_GID) && in_group_p(sbi->s_resgid)) ||
-	    (flags & EXT4_MB_USE_ROOT_BLOCKS) ||
-	    capable(CAP_SYS_RESOURCE)) {
+	    capable(CAP_SYS_RESOURCE) ||
+	    (flags & EXT4_MB_USE_ROOT_BLOCKS)) {
 
 		if (free_clusters >= (nclusters + dirty_clusters +
 				      resv_clusters))

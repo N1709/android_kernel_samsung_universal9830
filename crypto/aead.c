@@ -45,7 +45,8 @@ static int setkey_unaligned(struct crypto_aead *tfm, const u8 *key,
 	alignbuffer = (u8 *)ALIGN((unsigned long)buffer, alignmask + 1);
 	memcpy(alignbuffer, key, keylen);
 	ret = crypto_aead_alg(tfm)->setkey(tfm, alignbuffer, keylen);
-	kzfree(buffer);
+	memset(alignbuffer, 0, keylen);
+	kfree(buffer);
 	return ret;
 }
 
@@ -60,10 +61,8 @@ int crypto_aead_setkey(struct crypto_aead *tfm,
 	else
 		err = crypto_aead_alg(tfm)->setkey(tfm, key, keylen);
 
-	if (unlikely(err)) {
-		crypto_aead_set_flags(tfm, CRYPTO_TFM_NEED_KEY);
+	if (err)
 		return err;
-	}
 
 	crypto_aead_clear_flags(tfm, CRYPTO_TFM_NEED_KEY);
 	return 0;

@@ -152,39 +152,20 @@ int iavf_send_vf_config_msg(struct iavf_adapter *adapter)
 }
 
 /**
-<<<<<<<< HEAD:drivers/net/ethernet/intel/iavf/i40evf_virtchnl.c
- * i40evf_validate_num_queues
-========
  * iavf_validate_num_queues
->>>>>>>> v4.20:drivers/net/ethernet/intel/iavf/iavf_virtchnl.c
  * @adapter: adapter structure
  *
  * Validate that the number of queues the PF has sent in
  * VIRTCHNL_OP_GET_VF_RESOURCES is not larger than the VF can handle.
  **/
-<<<<<<<< HEAD:drivers/net/ethernet/intel/iavf/i40evf_virtchnl.c
-static void i40evf_validate_num_queues(struct i40evf_adapter *adapter)
-{
-	if (adapter->vf_res->num_queue_pairs > I40EVF_MAX_REQ_QUEUES) {
-========
 static void iavf_validate_num_queues(struct iavf_adapter *adapter)
 {
 	if (adapter->vf_res->num_queue_pairs > IAVF_MAX_REQ_QUEUES) {
->>>>>>>> v4.20:drivers/net/ethernet/intel/iavf/iavf_virtchnl.c
 		struct virtchnl_vsi_resource *vsi_res;
 		int i;
 
 		dev_info(&adapter->pdev->dev, "Received %d queues, but can only have a max of %d\n",
 			 adapter->vf_res->num_queue_pairs,
-<<<<<<<< HEAD:drivers/net/ethernet/intel/iavf/i40evf_virtchnl.c
-			 I40EVF_MAX_REQ_QUEUES);
-		dev_info(&adapter->pdev->dev, "Fixing by reducing queues to %d\n",
-			 I40EVF_MAX_REQ_QUEUES);
-		adapter->vf_res->num_queue_pairs = I40EVF_MAX_REQ_QUEUES;
-		for (i = 0; i < adapter->vf_res->num_vsis; i++) {
-			vsi_res = &adapter->vf_res->vsi_res[i];
-			vsi_res->num_queue_pairs = I40EVF_MAX_REQ_QUEUES;
-========
 			 IAVF_MAX_REQ_QUEUES);
 		dev_info(&adapter->pdev->dev, "Fixing by reducing queues to %d\n",
 			 IAVF_MAX_REQ_QUEUES);
@@ -192,17 +173,12 @@ static void iavf_validate_num_queues(struct iavf_adapter *adapter)
 		for (i = 0; i < adapter->vf_res->num_vsis; i++) {
 			vsi_res = &adapter->vf_res->vsi_res[i];
 			vsi_res->num_queue_pairs = IAVF_MAX_REQ_QUEUES;
->>>>>>>> v4.20:drivers/net/ethernet/intel/iavf/iavf_virtchnl.c
 		}
 	}
 }
 
 /**
-<<<<<<<< HEAD:drivers/net/ethernet/intel/iavf/i40evf_virtchnl.c
- * i40evf_get_vf_config
-========
  * iavf_get_vf_config
->>>>>>>> v4.20:drivers/net/ethernet/intel/iavf/iavf_virtchnl.c
  * @adapter: private adapter structure
  *
  * Get VF configuration from PF and populate hw structure. Must be called after
@@ -247,13 +223,8 @@ int iavf_get_vf_config(struct iavf_adapter *adapter)
 	 * we aren't getting too many queues
 	 */
 	if (!err)
-<<<<<<<< HEAD:drivers/net/ethernet/intel/iavf/i40evf_virtchnl.c
-		i40evf_validate_num_queues(adapter);
-	i40e_vf_parse_hw_config(hw, adapter->vf_res);
-========
 		iavf_validate_num_queues(adapter);
 	iavf_vf_parse_hw_config(hw, adapter->vf_res);
->>>>>>>> v4.20:drivers/net/ethernet/intel/iavf/iavf_virtchnl.c
 out_alloc:
 	kfree(event.msg_buf);
 out:
@@ -1375,13 +1346,8 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 			  IAVF_MAX_VF_VSI *
 			  sizeof(struct virtchnl_vsi_resource);
 		memcpy(adapter->vf_res, msg, min(msglen, len));
-<<<<<<<< HEAD:drivers/net/ethernet/intel/iavf/i40evf_virtchnl.c
-		i40evf_validate_num_queues(adapter);
-		i40e_vf_parse_hw_config(&adapter->hw, adapter->vf_res);
-========
 		iavf_validate_num_queues(adapter);
 		iavf_vf_parse_hw_config(&adapter->hw, adapter->vf_res);
->>>>>>>> v4.20:drivers/net/ethernet/intel/iavf/iavf_virtchnl.c
 		if (is_zero_ether_addr(adapter->hw.mac.addr)) {
 			/* restore current mac address */
 			ether_addr_copy(adapter->hw.mac.addr, netdev->dev_addr);
@@ -1391,11 +1357,7 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 			ether_addr_copy(netdev->perm_addr,
 					adapter->hw.mac.addr);
 		}
-<<<<<<<< HEAD:drivers/net/ethernet/intel/iavf/i40evf_virtchnl.c
-		i40evf_process_config(adapter);
-========
 		iavf_process_config(adapter);
->>>>>>>> v4.20:drivers/net/ethernet/intel/iavf/iavf_virtchnl.c
 		}
 		break;
 	case VIRTCHNL_OP_ENABLE_QUEUES:

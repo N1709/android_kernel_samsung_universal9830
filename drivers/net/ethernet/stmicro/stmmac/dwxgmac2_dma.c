@@ -148,6 +148,10 @@ static void dwxgmac2_dma_rx_mode(void __iomem *ioaddr, int mode,
 	value |= (rqs << XGMAC_RQS_SHIFT) & XGMAC_RQS;
 
 	writel(value, ioaddr + XGMAC_MTL_RXQ_OPMODE(channel));
+
+	/* Enable MTL RX overflow */
+	value = readl(ioaddr + XGMAC_MTL_QINTEN(channel));
+	writel(value | XGMAC_RXOIE, ioaddr + XGMAC_MTL_QINTEN(channel));
 }
 
 static void dwxgmac2_dma_tx_mode(void __iomem *ioaddr, int mode,
@@ -259,7 +263,6 @@ static int dwxgmac2_dma_interrupt(void __iomem *ioaddr,
 				  struct stmmac_extra_stats *x, u32 chan)
 {
 	u32 intr_status = readl(ioaddr + XGMAC_DMA_CH_STATUS(chan));
-	u32 intr_en = readl(ioaddr + XGMAC_DMA_CH_INT_EN(chan));
 	int ret = 0;
 
 	/* ABNORMAL interrupts */
@@ -279,7 +282,8 @@ static int dwxgmac2_dma_interrupt(void __iomem *ioaddr,
 		x->normal_irq_n++;
 
 		if (likely(intr_status & XGMAC_RI)) {
-			if (likely(intr_en & XGMAC_RIE)) {
+			u32 value = readl(ioaddr + XGMAC_DMA_CH_INT_EN(chan));
+			if (likely(value & XGMAC_RIE)) {
 				x->rx_normal_irq_n++;
 				ret |= handle_rx;
 			}
@@ -291,7 +295,7 @@ static int dwxgmac2_dma_interrupt(void __iomem *ioaddr,
 	}
 
 	/* Clear interrupts */
-	writel(intr_en & intr_status, ioaddr + XGMAC_DMA_CH_STATUS(chan));
+	writel(~0x0, ioaddr + XGMAC_DMA_CH_STATUS(chan));
 
 	return ret;
 }
@@ -393,8 +397,7 @@ static void dwxgmac2_set_bfsize(void __iomem *ioaddr, int bfsize, u32 chan)
 	u32 value;
 
 	value = readl(ioaddr + XGMAC_DMA_CH_RX_CONTROL(chan));
-	value &= ~XGMAC_RBSZ;
-	value |= bfsize << XGMAC_RBSZ_SHIFT;
+	value |= bfsize << 1;
 	writel(value, ioaddr + XGMAC_DMA_CH_RX_CONTROL(chan));
 }
 

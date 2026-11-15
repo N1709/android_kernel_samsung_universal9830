@@ -35,9 +35,7 @@
 #include "ggc.h"
 #include "timevar.h"
 
-#if BUILDING_GCC_VERSION < 10000
 #include "params.h"
-#endif
 
 #if BUILDING_GCC_VERSION <= 4009
 #include "pointer-set.h"
@@ -152,12 +150,8 @@ void print_gimple_expr(FILE *, gimple, int, int);
 void dump_gimple_stmt(pretty_printer *, gimple, int, int);
 #endif
 
-#ifndef __unused
 #define __unused __attribute__((__unused__))
-#endif
-#ifndef __visible
 #define __visible __attribute__((visibility("default")))
-#endif
 
 #define DECL_NAME_POINTER(node) IDENTIFIER_POINTER(DECL_NAME(node))
 #define DECL_NAME_LENGTH(node) IDENTIFIER_LENGTH(DECL_NAME(node))
@@ -180,38 +174,6 @@ static inline tree build_const_char_string(int len, const char *str)
 	TREE_READONLY(cstr) = 1;
 	TREE_STATIC(cstr) = 1;
 	return cstr;
-}
-
-static inline void __add_type_attr(tree type, const char *attr, tree args)
-{
-	tree oldattr;
-
-	if (type == NULL_TREE)
-		return;
-	oldattr = lookup_attribute(attr, TYPE_ATTRIBUTES(type));
-	if (oldattr != NULL_TREE) {
-		gcc_assert(TREE_VALUE(oldattr) == args || TREE_VALUE(TREE_VALUE(oldattr)) == TREE_VALUE(args));
-		return;
-	}
-
-	TYPE_ATTRIBUTES(type) = copy_list(TYPE_ATTRIBUTES(type));
-	TYPE_ATTRIBUTES(type) = tree_cons(get_identifier(attr), args, TYPE_ATTRIBUTES(type));
-}
-
-static inline void add_type_attr(tree type, const char *attr, tree args)
-{
-	tree main_variant = TYPE_MAIN_VARIANT(type);
-
-	__add_type_attr(TYPE_CANONICAL(type), attr, args);
-	__add_type_attr(TYPE_CANONICAL(main_variant), attr, args);
-	__add_type_attr(main_variant, attr, args);
-
-	for (type = TYPE_NEXT_VARIANT(main_variant); type; type = TYPE_NEXT_VARIANT(type)) {
-		if (!lookup_attribute(attr, TYPE_ATTRIBUTES(type)))
-			TYPE_ATTRIBUTES(type) = TYPE_ATTRIBUTES(main_variant);
-
-		__add_type_attr(TYPE_CANONICAL(type), attr, args);
-	}
 }
 
 #define PASS_INFO(NAME, REF, ID, POS)		\
@@ -881,7 +843,6 @@ static inline gimple gimple_build_assign_with_ops(enum tree_code subcode, tree l
 	return gimple_build_assign(lhs, subcode, op1, op2 PASS_MEM_STAT);
 }
 
-#if BUILDING_GCC_VERSION < 10000
 template <>
 template <>
 inline bool is_a_helper<const ggoto *>::test(const_gimple gs)
@@ -895,7 +856,6 @@ inline bool is_a_helper<const greturn *>::test(const_gimple gs)
 {
 	return gs->code == GIMPLE_RETURN;
 }
-#endif
 
 static inline gasm *as_a_gasm(gimple stmt)
 {
@@ -1007,10 +967,6 @@ static inline void debug_gimple_stmt(const_gimple s)
 #if BUILDING_GCC_VERSION < 7000
 #define SET_DECL_ALIGN(decl, align)	DECL_ALIGN(decl) = (align)
 #define SET_DECL_MODE(decl, mode)	DECL_MODE(decl) = (mode)
-#endif
-
-#if BUILDING_GCC_VERSION >= 14000
-#define last_stmt(x)			last_nondebug_stmt(x)
 #endif
 
 #endif

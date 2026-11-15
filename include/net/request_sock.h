@@ -45,13 +45,6 @@ struct request_sock_ops {
 
 int inet_rtx_syn_ack(const struct sock *parent, struct request_sock *req);
 
-struct saved_syn {
-	u32 mac_hdrlen;
-	u32 network_hdrlen;
-	u32 tcp_hdrlen;
-	u8 data[];
-};
-
 /* struct request_sock - mini sock to represent a connection request
  */
 struct request_sock {
@@ -71,7 +64,7 @@ struct request_sock {
 	struct timer_list		rsk_timer;
 	const struct request_sock_ops	*rsk_ops;
 	struct sock			*sk;
-	struct saved_syn		*saved_syn;
+	u32				*saved_syn;
 	u32				secid;
 	u32				peer_secid;
 };
@@ -190,7 +183,7 @@ void reqsk_fastopen_remove(struct sock *sk, struct request_sock *req,
 
 static inline bool reqsk_queue_empty(const struct request_sock_queue *queue)
 {
-	return READ_ONCE(queue->rskq_accept_head) == NULL;
+	return queue->rskq_accept_head == NULL;
 }
 
 static inline struct request_sock *reqsk_queue_remove(struct request_sock_queue *queue,
@@ -202,7 +195,7 @@ static inline struct request_sock *reqsk_queue_remove(struct request_sock_queue 
 	req = queue->rskq_accept_head;
 	if (req) {
 		sk_acceptq_removed(parent);
-		WRITE_ONCE(queue->rskq_accept_head, req->dl_next);
+		queue->rskq_accept_head = req->dl_next;
 		if (queue->rskq_accept_head == NULL)
 			queue->rskq_accept_tail = NULL;
 	}

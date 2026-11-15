@@ -634,15 +634,15 @@ static int flexrm_spu_dma_map(struct device *dev, struct brcm_message *msg)
 
 	rc = dma_map_sg(dev, msg->spu.src, sg_nents(msg->spu.src),
 			DMA_TO_DEVICE);
-	if (!rc)
-		return -EIO;
+	if (rc < 0)
+		return rc;
 
 	rc = dma_map_sg(dev, msg->spu.dst, sg_nents(msg->spu.dst),
 			DMA_FROM_DEVICE);
-	if (!rc) {
+	if (rc < 0) {
 		dma_unmap_sg(dev, msg->spu.src, sg_nents(msg->spu.src),
 			     DMA_TO_DEVICE);
-		return -EIO;
+		return rc;
 	}
 
 	return 0;
@@ -1396,9 +1396,9 @@ static void flexrm_shutdown(struct mbox_chan *chan)
 
 	/* Clear ring flush state */
 	timeout = 1000; /* timeout of 1s */
-	writel_relaxed(0x0, ring->regs + RING_CONTROL);
+	writel_relaxed(0x0, ring + RING_CONTROL);
 	do {
-		if (!(readl_relaxed(ring->regs + RING_FLUSH_DONE) &
+		if (!(readl_relaxed(ring + RING_FLUSH_DONE) &
 		      FLUSH_DONE_MASK))
 			break;
 		mdelay(1);

@@ -293,8 +293,8 @@ struct ib_rss_caps {
 };
 
 enum ib_tm_cap_flags {
-	/*  Support tag matching with rendezvous offload for RC transport */
-	IB_TM_CAP_RNDV_RC = 1 << 0,
+	/*  Support tag matching on RC transport */
+	IB_TM_CAP_RC		    = 1 << 0,
 };
 
 struct ib_tm_caps {
@@ -312,7 +312,7 @@ struct ib_tm_caps {
 
 struct ib_cq_init_attr {
 	unsigned int	cqe;
-	u32		comp_vector;
+	int		comp_vector;
 	u32		flags;
 };
 
@@ -3896,9 +3896,6 @@ static inline int ib_check_mr_access(int flags)
 	 */
 	if (flags & (IB_ACCESS_REMOTE_ATOMIC | IB_ACCESS_REMOTE_WRITE) &&
 	    !(flags & IB_ACCESS_LOCAL_WRITE))
-		return -EINVAL;
-
-	if (flags & ~IB_ACCESS_SUPPORTED)
 		return -EINVAL;
 
 	return 0;

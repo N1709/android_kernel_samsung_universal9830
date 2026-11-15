@@ -21,13 +21,13 @@ struct stm32_i2c_dma *stm32_i2c_dma_request(struct device *dev,
 
 	dma = devm_kzalloc(dev, sizeof(*dma), GFP_KERNEL);
 	if (!dma)
-		return ERR_PTR(-ENOMEM);
+		return NULL;
 
 	/* Request and configure I2C TX dma channel */
-	dma->chan_tx = dma_request_chan(dev, "tx");
-	if (IS_ERR(dma->chan_tx)) {
+	dma->chan_tx = dma_request_slave_channel(dev, "tx");
+	if (!dma->chan_tx) {
 		dev_dbg(dev, "can't request DMA tx channel\n");
-		ret = PTR_ERR(dma->chan_tx);
+		ret = -EINVAL;
 		goto fail_al;
 	}
 
@@ -43,10 +43,10 @@ struct stm32_i2c_dma *stm32_i2c_dma_request(struct device *dev,
 	}
 
 	/* Request and configure I2C RX dma channel */
-	dma->chan_rx = dma_request_chan(dev, "rx");
-	if (IS_ERR(dma->chan_rx)) {
+	dma->chan_rx = dma_request_slave_channel(dev, "rx");
+	if (!dma->chan_rx) {
 		dev_err(dev, "can't request DMA rx channel\n");
-		ret = PTR_ERR(dma->chan_rx);
+		ret = -EINVAL;
 		goto fail_tx;
 	}
 
@@ -76,7 +76,7 @@ fail_al:
 	devm_kfree(dev, dma);
 	dev_info(dev, "can't use DMA\n");
 
-	return ERR_PTR(ret);
+	return NULL;
 }
 
 void stm32_i2c_dma_free(struct stm32_i2c_dma *dma)
@@ -99,6 +99,7 @@ int stm32_i2c_prep_dma_xfer(struct device *dev, struct stm32_i2c_dma *dma,
 			    void *dma_async_param)
 {
 	struct dma_async_tx_descriptor *txdesc;
+	struct device *chan_dev;
 	int ret;
 
 	if (rd_wr) {
@@ -112,10 +113,11 @@ int stm32_i2c_prep_dma_xfer(struct device *dev, struct stm32_i2c_dma *dma,
 	}
 
 	dma->dma_len = len;
+	chan_dev = dma->chan_using->device->dev;
 
-	dma->dma_buf = dma_map_single(dev, buf, dma->dma_len,
+	dma->dma_buf = dma_map_single(chan_dev, buf, dma->dma_len,
 				      dma->dma_data_dir);
-	if (dma_mapping_error(dev, dma->dma_buf)) {
+	if (dma_mapping_error(chan_dev, dma->dma_buf)) {
 		dev_err(dev, "DMA mapping failed\n");
 		return -EINVAL;
 	}
@@ -145,7 +147,7 @@ int stm32_i2c_prep_dma_xfer(struct device *dev, struct stm32_i2c_dma *dma,
 	return 0;
 
 err:
-	dma_unmap_single(dev, dma->dma_buf, dma->dma_len,
+	dma_unmap_single(chan_dev, dma->dma_buf, dma->dma_len,
 			 dma->dma_data_dir);
 	return ret;
 }

@@ -69,11 +69,11 @@
 #include <string.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
-#include <sys/time.h>
 #include <unistd.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <bits/wordsize.h>
 #include <linux/mei.h>
 
 /*****************************************************************************
@@ -117,7 +117,7 @@ static bool mei_init(struct mei *me, const uuid_le *guid,
 
 	me->verbose = verbose;
 
-	me->fd = open("/dev/mei0", O_RDWR);
+	me->fd = open("/dev/mei", O_RDWR);
 	if (me->fd == -1) {
 		mei_err(me, "Cannot establish a handle to the Intel MEI driver\n");
 		goto err;

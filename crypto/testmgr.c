@@ -1894,21 +1894,14 @@ static int alg_test_crc32c(const struct alg_test_desc *desc,
 
 	err = alg_test_hash(desc, driver, type, mask);
 	if (err)
-		return err;
+		goto out;
 
 	tfm = crypto_alloc_shash(driver, type, mask);
 	if (IS_ERR(tfm)) {
-		if (PTR_ERR(tfm) == -ENOENT) {
-			/*
-			 * This crc32c implementation is only available through
-			 * ahash API, not the shash API, so the remaining part
-			 * of the test is not applicable to it.
-			 */
-			return 0;
-		}
 		printk(KERN_ERR "alg: crc32c: Failed to load transform for %s: "
 		       "%ld\n", driver, PTR_ERR(tfm));
-		return PTR_ERR(tfm);
+		err = PTR_ERR(tfm);
+		goto out;
 	}
 
 	do {
@@ -1935,6 +1928,7 @@ static int alg_test_crc32c(const struct alg_test_desc *desc,
 
 	crypto_free_shash(tfm);
 
+out:
 	return err;
 }
 
@@ -2410,18 +2404,6 @@ static int alg_test_null(const struct alg_test_desc *desc,
 /* Please keep this list sorted by algorithm name. */
 static const struct alg_test_desc alg_test_descs[] = {
 	{
-		.alg = "adiantum(xchacha12,aes)",
-		.test = alg_test_skcipher,
-		.suite = {
-			.cipher = __VECS(adiantum_xchacha12_aes_tv_template)
-		},
-	}, {
-		.alg = "adiantum(xchacha20,aes)",
-		.test = alg_test_skcipher,
-		.suite = {
-			.cipher = __VECS(adiantum_xchacha20_aes_tv_template)
-		},
-	}, {
 		.alg = "aegis128",
 		.test = alg_test_aead,
 		.suite = {
@@ -2617,58 +2599,6 @@ static const struct alg_test_desc alg_test_descs[] = {
 		.test = alg_test_null,
 		.fips_allowed = 1,
 	}, {
-		.alg = "blake2b-160",
-		.test = alg_test_hash,
-		.fips_allowed = 0,
-		.suite = {
-			.hash = __VECS(blake2b_160_tv_template)
-		}
-	}, {
-		.alg = "blake2b-256",
-		.test = alg_test_hash,
-		.fips_allowed = 0,
-		.suite = {
-			.hash = __VECS(blake2b_256_tv_template)
-		}
-	}, {
-		.alg = "blake2b-384",
-		.test = alg_test_hash,
-		.fips_allowed = 0,
-		.suite = {
-			.hash = __VECS(blake2b_384_tv_template)
-		}
-	}, {
-		.alg = "blake2b-512",
-		.test = alg_test_hash,
-		.fips_allowed = 0,
-		.suite = {
-			.hash = __VECS(blake2b_512_tv_template)
-		}
-	}, {
-		.alg = "blake2s-128",
-		.test = alg_test_hash,
-		.suite = {
-			.hash = __VECS(blakes2s_128_tv_template)
-		}
-	}, {
-		.alg = "blake2s-160",
-		.test = alg_test_hash,
-		.suite = {
-			.hash = __VECS(blakes2s_160_tv_template)
-		}
-	}, {
-		.alg = "blake2s-224",
-		.test = alg_test_hash,
-		.suite = {
-			.hash = __VECS(blakes2s_224_tv_template)
-		}
-	}, {
-		.alg = "blake2s-256",
-		.test = alg_test_hash,
-		.suite = {
-			.hash = __VECS(blakes2s_256_tv_template)
-		}
-	}, {
 		.alg = "cbc(aes)",
 		.test = alg_test_skcipher,
 		.fips_allowed = 1,
@@ -2760,13 +2690,6 @@ static const struct alg_test_desc alg_test_descs[] = {
 				.dec = __VECS(aes_ccm_dec_tv_template)
 			}
 		}
-	}, {
-		.alg = "cfb(aes)",
-		.test = alg_test_skcipher,
-		.fips_allowed = 1,
-		.suite = {
-			.cipher = __VECS(aes_cfb_tv_template)
-		},
 	}, {
 		.alg = "chacha20",
 		.test = alg_test_skcipher,
@@ -2884,12 +2807,6 @@ static const struct alg_test_desc alg_test_descs[] = {
 		.test = alg_test_skcipher,
 		.suite = {
 			.cipher = __VECS(cts_mode_tv_template)
-		}
-	}, {
-		.alg = "curve25519",
-		.test = alg_test_kpp,
-		.suite = {
-			.kpp = __VECS(curve25519_tv_template)
 		}
 	}, {
 		.alg = "deflate",
@@ -3375,12 +3292,6 @@ static const struct alg_test_desc alg_test_descs[] = {
 			}
 		}
 	}, {
-		.alg = "nhpoly1305",
-		.test = alg_test_hash,
-		.suite = {
-			.hash = __VECS(nhpoly1305_tv_template)
-		}
-	}, {
 		.alg = "ofb(aes)",
 		.test = alg_test_skcipher,
 		.fips_allowed = 1,
@@ -3633,18 +3544,6 @@ static const struct alg_test_desc alg_test_descs[] = {
 		.suite = {
 			.hash = __VECS(aes_xcbc128_tv_template)
 		}
-	}, {
-		.alg = "xchacha12",
-		.test = alg_test_skcipher,
-		.suite = {
-			.cipher = __VECS(xchacha12_tv_template)
-		},
-	}, {
-		.alg = "xchacha20",
-		.test = alg_test_skcipher,
-		.suite = {
-			.cipher = __VECS(xchacha20_tv_template)
-		},
 	}, {
 		.alg = "xts(aes)",
 		.test = alg_test_skcipher,

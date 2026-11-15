@@ -10,7 +10,6 @@
 #include <linux/seq_file.h>
 #include <linux/blk-mq.h>
 #include <scsi/scsi.h>
-#include <linux/android_kabi.h>
 
 struct request_queue;
 struct block_device;
@@ -326,7 +325,6 @@ struct scsi_host_template {
 #define SCSI_ADAPTER_RESET	1
 #define SCSI_FIRMWARE_RESET	2
 
-	void (* tw_ctrl)(struct scsi_device *, int);
 
 	/*
 	 * Name of proc directory
@@ -486,14 +484,6 @@ struct scsi_host_template {
 	 */
 	unsigned int cmd_size;
 	struct scsi_host_cmd_pool *cmd_pool;
-
-	/* Delay for runtime autosuspend */
-	int rpm_autosuspend_delay;
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 };
 
 /*
@@ -665,12 +655,6 @@ struct Scsi_Host {
 	unsigned short_inquiry:1;
 
 	/*
-	 * Set "DBD" field in mode_sense caching mode page in case it is
-	 * mandatory by LLD standard.
-	 */
-	unsigned set_dbd_for_caching:1;
-
-	/*
 	 * Optional work queue to be utilized by the transport
 	 */
 	char work_q_name[20];
@@ -702,7 +686,6 @@ struct Scsi_Host {
 	
 
 	enum scsi_host_state shost_state;
-	bool wlun_clr_uac;
 
 	/* ldm bits */
 	struct device		shost_gendev, shost_dev;
@@ -718,20 +701,6 @@ struct Scsi_Host {
 	 * Needed just in case we have virtual hosts.
 	 */
 	struct device *dma_dev;
-#ifdef CONFIG_USB_STORAGE_DETECT
-	unsigned int  by_usb;
-#endif
-	unsigned int  by_ufs;
-	unsigned int medium_err_cnt;
-	unsigned int hw_err_cnt;
-#define SEC_MAX_LBA_LOGGING	10 
-#define SEC_ISSUE_REGION_STEP	(200*1024/4)	/* 200MB : 1 LBA = 4KB */ 
-	unsigned long issue_LBA_list[SEC_MAX_LBA_LOGGING]; 
-	unsigned int issue_LBA_count; 
-	u64 issue_region_map; 
-	sector_t  ufs_system_start;
-	sector_t  ufs_system_end;
-	bool ufs_sys_log_en;
 
 	/*
 	 * We should ensure that this is aligned, both for better performance
@@ -791,7 +760,7 @@ extern void scsi_remove_host(struct Scsi_Host *);
 extern struct Scsi_Host *scsi_host_get(struct Scsi_Host *);
 extern int scsi_host_busy(struct Scsi_Host *shost);
 extern void scsi_host_put(struct Scsi_Host *t);
-extern struct Scsi_Host *scsi_host_lookup(unsigned int hostnum);
+extern struct Scsi_Host *scsi_host_lookup(unsigned short);
 extern const char *scsi_host_state_name(enum scsi_host_state);
 extern void scsi_cmd_get_serial(struct Scsi_Host *, struct scsi_cmnd *);
 
@@ -818,9 +787,6 @@ static inline int scsi_host_scan_allowed(struct Scsi_Host *shost)
 
 extern void scsi_unblock_requests(struct Scsi_Host *);
 extern void scsi_block_requests(struct Scsi_Host *);
-#ifdef CONFIG_BLK_TURBO_WRITE
-extern void scsi_reset_tw_state(struct Scsi_Host *);
-#endif
 
 struct class_container;
 

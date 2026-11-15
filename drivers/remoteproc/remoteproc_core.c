@@ -397,7 +397,7 @@ rproc_parse_vring(struct rproc_vdev *rvdev, struct fw_rsc_vdev *rsc, int i)
 void rproc_free_vring(struct rproc_vring *rvring)
 {
 	struct rproc *rproc = rvring->rvdev->rproc;
-	int idx = rvring - rvring->rvdev->vring;
+	int idx = rvring->rvdev->vring - rvring;
 	struct fw_rsc_vdev *rsc;
 
 	idr_remove(&rproc->notifyids, rvring->notifyid);
@@ -1965,7 +1965,6 @@ struct rproc *rproc_alloc(struct device *dev, const char *name,
 	rproc->dev.type = &rproc_type;
 	rproc->dev.class = &rproc_class;
 	rproc->dev.driver_data = rproc;
-	idr_init(&rproc->notifyids);
 
 	/* Assign a unique device index and name */
 	rproc->index = ida_simple_get(&rproc_dev_index, 0, 0, GFP_KERNEL);
@@ -1989,6 +1988,8 @@ struct rproc *rproc_alloc(struct device *dev, const char *name,
 	}
 
 	mutex_init(&rproc->lock);
+
+	idr_init(&rproc->notifyids);
 
 	INIT_LIST_HEAD(&rproc->carveouts);
 	INIT_LIST_HEAD(&rproc->mappings);
@@ -2152,7 +2153,7 @@ static int __init remoteproc_init(void)
 
 	return 0;
 }
-subsys_initcall(remoteproc_init);
+module_init(remoteproc_init);
 
 static void __exit remoteproc_exit(void)
 {
