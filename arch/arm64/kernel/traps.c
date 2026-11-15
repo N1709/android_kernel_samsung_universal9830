@@ -35,6 +35,8 @@
 #include <linux/sizes.h>
 #include <linux/syscalls.h>
 #include <linux/mm_types.h>
+#include <linux/printk.h>
+#include <linux/debug-snapshot.h>
 
 #include <asm/atomic.h>
 #include <asm/bug.h>
@@ -64,6 +66,16 @@ static void dump_backtrace_entry(unsigned long where)
 {
 	printk(" %pS\n", (void *)where);
 }
+
+#ifdef CONFIG_SEC_DEBUG_AUTO_COMMENT
+static void dump_backtrace_entry_auto_summary(unsigned long where)
+{
+	/*
+	 * Note that 'where' can have a physical address, but it's not handled.
+	 */
+	pr_auto(ASL2, "%pS\n", (void *) where);
+}
+#endif
 
 static void __dump_instr(const char *lvl, struct pt_regs *regs)
 {
@@ -98,12 +110,23 @@ static void dump_instr(const char *lvl, struct pt_regs *regs)
 	}
 }
 
+#ifdef CONFIG_SEC_DEBUG_LIMIT_BACKTRACE
+#define MAX_UNWINDING_LOOP 256 /* maximum number of unwind frame */
+#endif
+
 void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 {
 	struct stackframe frame;
-	int skip;
+	int skip = 0;
+	int cnt = 0;
 
 	pr_debug("%s(regs = %p tsk = %p)\n", __func__, regs, tsk);
+
+	if (regs) {
+		if (user_mode(regs))
+			return;
+		skip = 1;
+	}
 
 	if (!tsk)
 		tsk = current;
@@ -125,12 +148,19 @@ void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 	frame.graph = tsk->curr_ret_stack;
 #endif
 
-	skip = !!regs;
 	printk("Call trace:\n");
 	do {
+#ifdef CONFIG_SEC_DEBUG_LIMIT_BACKTRACE
+		if (MAX_UNWINDING_LOOP < cnt) {
+			pr_info("%s: Forcely break dump_backtrace to avoid infinity backtrace\n", __func__);
+			break;
+		}
+#endif
+
 		/* skip until specified stack frame */
 		if (!skip) {
 			dump_backtrace_entry(frame.pc);
+			dbg_snapshot_save_log(raw_smp_processor_id(), frame.pc);
 		} else if (frame.fp == regs->regs[29]) {
 			skip = 0;
 			/*
@@ -141,17 +171,95 @@ void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 			 * instead.
 			 */
 			dump_backtrace_entry(regs->pc);
+			dbg_snapshot_save_log(raw_smp_processor_id(), regs->pc);
 		}
+		cnt++;
 	} while (!unwind_frame(tsk, &frame));
 
 	put_task_stack(tsk);
 }
+
+#ifdef CONFIG_SEC_DEBUG_AUTO_COMMENT
+void dump_backtrace_auto_summary(struct pt_regs *regs, struct task_struct *tsk)
+{
+	struct stackframe frame;
+	int skip = 0;
+	int cnt = 0;
+
+	pr_debug("%s(regs = %p tsk = %p)\n", __func__, regs, tsk);
+
+	if (regs) {
+		if (user_mode(regs))
+			return;
+		skip = 1;
+	}
+
+	if (!tsk)
+		tsk = current;
+
+	if (!try_get_task_stack(tsk))
+		return;
+
+	if (tsk == current) {
+		frame.fp = (unsigned long)__builtin_frame_address(0);
+		frame.pc = (unsigned long)dump_backtrace_auto_summary;
+	} else {
+		/*
+		 * task blocked in __switch_to
+		 */
+		frame.fp = thread_saved_fp(tsk);
+		frame.pc = thread_saved_pc(tsk);
+	}
+#ifdef CONFIG_FUNCTION_GRAPH_TRACER
+	frame.graph = tsk->curr_ret_stack;
+#endif
+
+	pr_auto_once(2);
+	pr_auto(ASL2, "Call trace:\n");
+	do {
+#ifdef CONFIG_SEC_DEBUG_LIMIT_BACKTRACE
+		if (MAX_UNWINDING_LOOP < cnt) {
+			pr_info("%s: Forcely break dump_backtrace to avoid infinity backtrace\n", __func__);
+			break;
+		}
+#endif
+
+		/* skip until specified stack frame */
+		if (!skip) {
+			dump_backtrace_entry_auto_summary(frame.pc);
+			dbg_snapshot_save_log(raw_smp_processor_id(), frame.pc);
+		} else if (frame.fp == regs->regs[29]) {
+			skip = 0;
+			/*
+			 * Mostly, this is the case where this function is
+			 * called in panic/abort. As exception handler's
+			 * stack frame does not contain the corresponding pc
+			 * at which an exception has taken place, use regs->pc
+			 * instead.
+			 */
+			dump_backtrace_entry_auto_summary(regs->pc);
+			dbg_snapshot_save_log(raw_smp_processor_id(), regs->pc);
+		}
+		cnt++;
+	} while (!unwind_frame(tsk, &frame));
+
+	put_task_stack(tsk);
+}
+#endif
 
 void show_stack(struct task_struct *tsk, unsigned long *sp)
 {
 	dump_backtrace(NULL, tsk);
 	barrier();
 }
+
+#ifdef CONFIG_SEC_DEBUG_AUTO_COMMENT
+void show_stack_auto_comment(struct task_struct *tsk, unsigned long *sp)
+{
+	dump_backtrace_auto_summary(NULL, tsk);
+	barrier();
+}
+#endif /* CONFIG_SEC_DEBUG_AUTO_COMMENT */
 
 #ifdef CONFIG_PREEMPT
 #define S_PREEMPT " PREEMPT"
@@ -180,10 +288,14 @@ static int __die(const char *str, int err, struct pt_regs *regs)
 		 TASK_COMM_LEN, tsk->comm, task_pid_nr(tsk),
 		 end_of_stack(tsk));
 
-	if (!user_mode(regs)) {
+#ifdef CONFIG_SEC_DEBUG_AUTO_COMMENT
+	dump_backtrace_auto_summary(regs, NULL);
+#else
+	if (!user_mode(regs))
 		dump_backtrace(regs, tsk);
+#endif
+	if (!user_mode(regs))
 		dump_instr(KERN_EMERG, regs);
-	}
 
 	return ret;
 }
