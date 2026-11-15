@@ -11,7 +11,7 @@
 	defined(CONFIG_ARCH_HAS_SYNC_DMA_FOR_CPU_ALL)
 static inline bool dev_is_dma_coherent(struct device *dev)
 {
-	return dev->dma_coherent;
+	return dev->archdata.dma_coherent;
 }
 #else
 static inline bool dev_is_dma_coherent(struct device *dev)

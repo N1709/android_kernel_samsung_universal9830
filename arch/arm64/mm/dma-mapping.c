@@ -722,7 +722,7 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
 	if (!dev->dma_ops)
 		dev->dma_ops = &swiotlb_dma_ops;
 
-	dev->dma_coherent = coherent;
+	dev->archdata.dma_coherent = coherent;
 	__iommu_setup_dma_ops(dev, dma_base, size, iommu);
 
 #ifdef CONFIG_XEN
