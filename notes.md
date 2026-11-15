@@ -2,20 +2,20 @@
 
 Working document. Updated as the merge progresses.
 
-## Status terkini (15 Nov 2026)
+## Current status (15 Nov 2026)
 
-| Tahap | Status |
+| Stage | Status |
 |---|---|
-| Merge v4.20 | ✅ selesai — `3027a77146cf`, 1239 konflik resolved |
-| Build-fix v4.20 | ✅ commit `962ddc46b`, sudah di-push ke `origin/lineage-24.0` |
-| Build v4.20 | ⏸️ **dilakukan di laptop**, bukan di HP (HP thermal throttling / app force close) |
-| Boot test v4.20 | ⏸️ menunggu hasil build laptop |
-| Merge v5.0 | ⏸️ **ditunda** sampai v4.20 lolos build + boot test |
+| v4.20 merge | done — `3027a77146cf`, 1239 conflicts resolved |
+| v4.20 build fixes | commit `962ddc46b`, pushed to `origin/lineage-24.0` |
+| v4.20 build | not run yet |
+| v4.20 boot test | pending build |
+| v5.0 merge | on hold until v4.20 builds and boots |
 
-Catatan penting: clone di HP ini **shallow** (hanya 1 commit, `.git/shallow`
-ada) dan **tidak punya tag** `v4.19.325`/`v4.20`/`v5.0`. Fetch
-`--filter=blob:none` untuk tag upstream pernah dijalankan tetapi dibatalkan.
-Sebelum merge v5.0, jalankan lagi:
+Important: the local clone is **shallow** (single commit, `.git/shallow`
+present) and has **no** `v4.19.325`/`v4.20`/`v5.0` tags. A
+`--filter=blob:none` fetch of the upstream tags was started but cancelled.
+Before merging v5.0, re-run:
 
 ```bash
 git fetch --unshallow --filter=blob:none origin
@@ -36,15 +36,15 @@ git merge-base HEAD v4.19.325     # harus a67e7cdde7cc...
 
 | Item | Value |
 |---|---|
-| Working dir (HP) | `/home/n1709/android_kernel_samsung_universal9830` |
-| Working dir (lama) | `/home/n1709/app/experimental/upstream-4.19-5.4` (sudah tidak dipakai) |
+| Working dir | `/home/n1709/android_kernel_samsung_universal9830` |
+| Working dir (legacy) | `/home/n1709/app/experimental/upstream-4.19-5.4` (no longer used) |
 | Base | fork N1709/android_kernel_samsung_universal9830, branch `lineage-24.0` |
-| Makefile sekarang | `4.20.0` |
+| Current Makefile | `4.20.0` |
 | Remote `origin` | `https://github.com/N1709/android_kernel_samsung_universal9830.git` |
 | Remote `stable` | `https://github.com/gregkh/linux.git` (tags `v4.19.325`, `v4.20`, `v5.0`) |
-| Clone | **shallow** (1 commit) + fetch tag upstream belum lengkap → jangan pakai `--depth`, jangan hapus remote |
+| Clone | **shallow** (1 commit), upstream tags not fetched yet → never use `--depth`, never drop remotes |
 | Arch | arm64, out-of-tree build into `out/` |
-| Work branch | `lineage-24.0` @ `962ddc46b` (tanpa branch baru) |
+| Work branch | `lineage-24.0` @ `962ddc46b` (no extra branch) |
 
 ## Required steps (checklist)
 
@@ -53,10 +53,10 @@ git merge-base HEAD v4.19.325     # harus a67e7cdde7cc...
 - [x] 3. `git checkout -b upgrade-5.0`
 - [x] 4. `git merge v4.20` → resolve → commit
   - [x] merge + resolve + commit (`3027a77146cf`)
-  - [x] build-fix akhir (`962ddc46b`) + push ke `lineage-24.0`
-  - [ ] **build passes — di laptop**
+  - [x] final build fixes (`962ddc46b`) + push to `lineage-24.0`
+  - [ ] **build passes**
   - [ ] **boot test — user**
-- [ ] 5. `git merge v5.0` → resolve → commit → build passes (**ditunda**)
+- [ ] 5. `git merge v5.0` → resolve → commit → build passes (**on hold**)
 - [ ] 6. STOP (user runs the boot test)
 
 ## Initial state of the v4.20 merge
@@ -299,38 +299,36 @@ features are kept):
 | `include/linux/cgroup-defs.h` | re-added `CGRP_ROOT_MEMORY_LOCAL_EVENTS` and `CGRP_ROOT_MEMORY_RECURSIVE_PROT` (used by the kept `mm/memcontrol.c`) |
 | `scripts/extract-cert.c` | guard the ENGINE/PKCS#11 code with `OPENSSL_NO_ENGINE` (host OpenSSL 4 has no ENGINE API) |
 | `include/vdso/datapage.h` | dropped `#include <linux/compat_time.h>`; that header never existed upstream and the file does not use any of its types |
-| `arch/arm64/mm/fault.c` | v4.20 API: `__do_page_fault(struct mm_struct *, ...)` + `find_vma()` di dalam; `do_debug_exception()` param `addr`, cek watchpoint pakai `instruction_pointer(regs)` |
-| `include/linux/cryptohash.h` | tambah `SHA_MESSAGE_BYTES` (dibutuhkan v4.20 `include/linux/filter.h`) |
-| `include/linux/memblock.h` | deklarasikan `enum memsize_kernel_type` + `set_memsize_*`/`record_memsize_*`/`free_memsize_reserved()` (dipakai `mm/memblock.c` dan `arch/arm64/mm/init.c`) |
-| `include/linux/random.h`, `mm/util.c` | hapus duplikat `randomize_page()`; di v4.20 pemiliknya `drivers/char/random.c` |
+| `arch/arm64/mm/fault.c` | v4.20 API: `__do_page_fault(struct mm_struct *, ...)` + `find_vma()` inside; `do_debug_exception()` takes `addr`, watchpoint check uses `instruction_pointer(regs)` |
+| `include/linux/cryptohash.h` | added `SHA_MESSAGE_BYTES` (needed by v4.20 `include/linux/filter.h`) |
+| `include/linux/memblock.h` | declare `enum memsize_kernel_type` + `set_memsize_*`/`record_memsize_*`/`free_memsize_reserved()` (used by `mm/memblock.c` and `arch/arm64/mm/init.c`) |
+| `include/linux/random.h`, `mm/util.c` | drop the duplicate `randomize_page()`; in v4.20 it is owned by `drivers/char/random.c` |
 
 Side effect to remember: because `kernel/cgroup/` is v4.20, the cgroup core
 never sets `CGRP_ROOT_MEMORY_RECURSIVE_PROT`, so the memory cgroup recursive
 protection knob from the Lineage backport is inactive. It compiles and does
 not affect boot.
 
-## Build di laptop (x86_64)
-
-Jangan build di HP: Exynos 990 throttle dan aplikasi pernah force close.
+## Build
 
 ```bash
-# 1. clone branch hasil merge
+# 1. clone the merged branch
 git clone -b lineage-24.0 \
   https://github.com/N1709/android_kernel_samsung_universal9830.git kernel-5.0
 cd kernel-5.0
-git log --oneline -2        # harus ada 962ddc46b
+git log --oneline -2        # must contain 80c7ad927 (or newer)
 
-# 2. dependency (Ubuntu/Debian)
+# 2. dependencies (Ubuntu/Debian)
 sudo apt install -y clang lld llvm gcc-aarch64-linux-gnu \
   binutils-aarch64-linux-gnu libssl-dev bc bison flex libelf-dev \
   libncurses-dev kmod cpio rsync zstd python3 make
 
-# 3. WAJIB export CC (Kconfig membaca CC dari environment, bukan dari argumen make)
+# 3. CC MUST be exported (Kconfig reads CC from the environment, not from make args)
 export CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm \
        OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
        CROSS_COMPILE=aarch64-linux-gnu-
 
-# 4. config: base + fragment S20 Ultra (z3s)
+# 4. config: base + S20 Ultra fragment (z3s)
 make O=out ARCH=arm64 exynos9830_defconfig
 make O=out ARCH=arm64 z3s.config
 
@@ -338,36 +336,35 @@ make O=out ARCH=arm64 z3s.config
 make O=out ARCH=arm64 -j$(nproc)
 ```
 
-Hasil:
+Output:
 
 ```
 out/arch/arm64/boot/Image
 out/arch/arm64/boot/Image.gz
-out/arch/arm64/boot/dts/exynos/*.dtb
+out/arch/arm64/boot/dts/samsung/exynos990-z3s*.dtb
 ```
 
-Catatan:
-- Jangan pakai `build_kernel.sh` — script itu menunjuk
-  `exynos9830-x1slte_defconfig` yang tidak ada di tree ini.
-- Defconfig aslinya dibuat dengan Android clang 14.0.6 + LLD. Kalau clang
-  host (18/19+) memunculkan error aneh, pakai prebuilt AOSP clang 14
-  (`clang-r450784d`) dan arahkan `CC`/`LD` ke situ.
-- `z3s.config` hanya fragment (`CONFIG_MODEL_Z3S`, kamera, dsb). Kalau target
-  boot test cukup memakai `exynos9830_defconfig` saja, fragmen ini opsional.
+Notes:
+- Do not use `build_kernel.sh` — it refers to `exynos9830-x1slte_defconfig`,
+  which does not exist in this tree.
+- The defconfig was originally generated with Android clang 14.0.6 + LLD. If
+  the host clang (18/19+) produces odd errors, switch to the AOSP clang 14
+  prebuilt (`clang-r450784d`) and point `CC`/`LD` at it.
+- `z3s.config` is only a fragment (`CONFIG_MODEL_Z3S`, camera, ...). For a pure
+  boot test, `exynos9830_defconfig` alone is enough.
 
 ## Log
 
-- Merge-base OK (`a67e7cdd`), branch `upgrade-5.0` dibuat, rerere enabled.
+- Merge-base OK (`a67e7cdd`), branch `upgrade-5.0` created, rerere enabled.
 - `git merge --no-commit --no-ff v4.20` → 1239 conflicts.
-- Bulk `--theirs` atas 1165 file generik.
-- Merge v4.20 selesai + commit `3027a77`, push ke `lineage-24.0`.
-- Build-fix checkpoint `d25ce9a` (push).
-- Fix terakhir yang sempat hilang (clone baru) diterapkan ulang + commit
-  `962ddc46b`:
+- Bulk `--theirs` over 1165 generic files.
+- v4.20 merge completed and committed as `3027a77`, pushed to `lineage-24.0`.
+- Build-fix checkpoint `d25ce9a` pushed.
+- Last fixes that were lost when the tree was re-cloned re-applied and
+  committed as `962ddc46b`:
   `mm/util.c`, `include/linux/random.h`, `include/linux/memblock.h`,
   `arch/arm64/mm/fault.c`, `include/linux/cryptohash.h`.
-- Push `d25ce9a98..962ddc46b` ke `origin/lineage-24.0`.
-- Build penuh **dipindah ke laptop**; HP hanya untuk merge/commit/push.
-- Merge v5.0 belum dimulai (menunggu v4.20 lolos build + boot).
-- Blocker untuk v5.0: clone HP masih shallow & tag upstream belum ada —
-  fetch ulang seperti di bagian "Status terkini".
+- Pushed `d25ce9a98..962ddc46b` to `origin/lineage-24.0`.
+- v5.0 merge not started yet (waiting for the v4.20 build and boot test).
+- v5.0 blocker: the local clone is still shallow and has no upstream tags —
+  re-run the fetch from "Current status" first.
