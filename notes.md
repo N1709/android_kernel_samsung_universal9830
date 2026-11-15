@@ -7,10 +7,13 @@ Working document. Updated as the merge progresses.
 | Stage | Status |
 |---|---|
 | v4.20 merge | done — `3027a77146cf`, 1239 conflicts resolved |
-| v4.20 build fixes | commit `962ddc46b`, pushed to `origin/lineage-24.0` |
-| v4.20 build | not run yet |
+| v4.20 normalization | `a838f89fb`, 9838 non-vendor files at v4.20 |
+| v4.20 Kconfig/header seams | `efd91f859` |
+| v4.20 vDSO config | `a448d5c26` — `source "lib/vdso/Kconfig"` in `lib/Kconfig` |
+| v4.20 build | full `-j2` build running |
 | v4.20 boot test | pending build |
 | v5.0 merge | on hold until v4.20 builds and boots |
+| Branch | `K4.20` (GitHub default); `lineage-24.0` removed |
 
 Important: the local clone is **shallow** (single commit, `.git/shallow`
 present) and has **no** `v4.19.325`/`v4.20`/`v5.0` tags. A
@@ -38,13 +41,13 @@ git merge-base HEAD v4.19.325     # harus a67e7cdde7cc...
 |---|---|
 | Working dir | `/home/n1709/android_kernel_samsung_universal9830` |
 | Working dir (legacy) | `/home/n1709/app/experimental/upstream-4.19-5.4` (no longer used) |
-| Base | fork N1709/android_kernel_samsung_universal9830, branch `lineage-24.0` |
+| Base | fork N1709/android_kernel_samsung_universal9830, branch `K4.20` |
 | Current Makefile | `4.20.0` |
 | Remote `origin` | `https://github.com/N1709/android_kernel_samsung_universal9830.git` |
 | Remote `stable` | `https://github.com/gregkh/linux.git` (tags `v4.19.325`, `v4.20`, `v5.0`) |
-| Clone | **shallow** (1 commit), upstream tags not fetched yet → never use `--depth`, never drop remotes |
+| Clone | partial (`blob:none`), shallow, tags `v4.20` and `v5.0` present, no `v4.19.325` |
 | Arch | arm64, out-of-tree build into `out/` |
-| Work branch | `lineage-24.0` @ `962ddc46b` (no extra branch) |
+| Work branch | `K4.20` @ `a448d5c26` (no extra branch) |
 
 ## Required steps (checklist)
 
@@ -313,7 +316,7 @@ not affect boot.
 
 ```bash
 # 1. clone the merged branch
-git clone -b lineage-24.0 \
+git clone -b K4.20 \
   https://github.com/N1709/android_kernel_samsung_universal9830.git kernel-5.0
 cd kernel-5.0
 
@@ -396,3 +399,15 @@ Notes:
 - v5.0 merge not started yet (waiting for the v4.20 build and boot test).
 - v5.0 blocker: the local clone is still shallow and has no upstream tags —
   re-run the fetch from "Current status" first.
+- Branch renamed `lineage-24.0` → `K4.20` and set as the GitHub default;
+  `lineage-24.0` removed locally and remotely. Commit subjects no longer use
+  the `UPSTREAM:` prefix.
+- `a838f89fb`: 9838 non-vendor files normalized byte-for-byte to v4.20; only
+  `Makefile` and `.gitignore` differ on purpose.
+- `efd91f859`: Kconfig/header seams — 4.19 kconfig parser, `as-instr` helper,
+  4.19 gcc-plugins Kconfig, dtc lexer, removed `include/linux/limits.h`,
+  `page_kasan_tag()`, `CAP_CHECKPOINT_RESTORE`, `classmap.h` host guard.
+- `a448d5c26`: restored `source "lib/vdso/Kconfig"` in `lib/Kconfig`, which
+  enables `CONFIG_GENERIC_GETTIMEOFDAY` and fixes the arm64 vDSO build.
+- Cluster build (`/tmp/opencode/cluster1.sh`, 12 seam targets incl. vDSO):
+  rc=0, all targets clean. Full `-j2` build started after that.
