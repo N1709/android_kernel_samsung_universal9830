@@ -26,25 +26,28 @@ DEVICE="z3s"
 JOBS="$(nproc)"
 CLEAN=0
 DO_DTBS=1
+KEEP=0
 
 usage() {
 	cat <<'EOF'
-Usage: ./build.sh [-d DEVICE] [-j JOBS] [-c] [-n]
+Usage: ./build.sh [-d DEVICE] [-j JOBS] [-c] [-n] [-k]
 
   -d DEVICE   device fragment in arch/arm64/configs (default: z3s)
               known: z3s, x1s, y2s, x1slte, y2slte, c1s, c2s, r8s
   -j JOBS     parallel jobs (default: nproc)
   -c          remove out/ before building
   -n          do not build dtbs (kernel image only)
+  -k          keep going after errors (make -k), collects every error
 EOF
 }
 
-while getopts 'd:j:cnh' opt; do
+while getopts 'd:j:cnkh' opt; do
 	case "$opt" in
 		d) DEVICE="$OPTARG" ;;
 		j) JOBS="$OPTARG" ;;
 		c) CLEAN=1 ;;
 		n) DO_DTBS=0 ;;
+		k) KEEP=1 ;;
 		h) usage; exit 0 ;;
 		*) usage; exit 1 ;;
 	esac
@@ -115,10 +118,12 @@ targets=(Image.gz)
 [ "$DO_DTBS" -eq 1 ] && targets+=(dtbs)
 
 echo "==> build: ${targets[*]} with -j${JOBS} (log: ${LOG})"
-if ! make O=out ARCH=arm64 "${TCVARS[@]}" -j"${JOBS}" "${targets[@]}" 2>&1 | tee "$LOG"; then
+make_args=(-j"${JOBS}")
+[ "$KEEP" -eq 1 ] && make_args+=(-k)
+if ! make O=out ARCH=arm64 "${TCVARS[@]}" "${make_args[@]}" "${targets[@]}" 2>&1 | tee "$LOG"; then
 	echo
 	echo "build failed; first errors:" >&2
-	grep -E 'error:|fatal error|Error [0-9]' "$LOG" | head -40 >&2 || true
+	grep -E 'error:|fatal error' "$LOG" | sort -u | head -60 >&2 || true
 	exit 1
 fi
 

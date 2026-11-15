@@ -2,13 +2,6 @@
 #ifndef __VDSO_MATH64_H
 #define __VDSO_MATH64_H
 
-#ifdef __LINUX_MATH64_H
-/*
- * include/linux/math64.h is already in scope and provides
- * __iter_div_u64_rem(); defining it again would clash.
- */
-#else
-
 static __always_inline u32
 __iter_div_u64_rem(u64 dividend, u32 divisor, u64 *remainder)
 {
@@ -27,7 +20,5 @@ __iter_div_u64_rem(u64 dividend, u32 divisor, u64 *remainder)
 
 	return ret;
 }
-
-#endif /* __LINUX_MATH64_H */
 
 #endif /* __VDSO_MATH64_H */
