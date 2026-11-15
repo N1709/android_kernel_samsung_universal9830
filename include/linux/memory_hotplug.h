@@ -303,6 +303,8 @@ extern int offline_pages(unsigned long start_pfn, unsigned long nr_pages);
 extern void remove_memory(int nid, u64 start, u64 size);
 extern void __remove_memory(int nid, u64 start, u64 size);
 
+extern void mem_stop_offline(void);
+
 #else
 static inline bool is_mem_section_removable(unsigned long pfn,
 					unsigned long nr_pages)

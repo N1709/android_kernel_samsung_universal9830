@@ -257,6 +257,9 @@
  * arch/arm/mach-s3c2410/ directory.
 */
 
+typedef void (*s3c_wake_peer_t)(struct uart_port *port);
+extern s3c_wake_peer_t s3c2410_serial_wake_peer[CONFIG_SERIAL_SAMSUNG_UARTS];
+
 struct s3c2410_uartcfg {
 	unsigned char	   hwport;	 /* hardware port number */
 	unsigned char	   unused;
@@ -269,6 +272,8 @@ struct s3c2410_uartcfg {
 	unsigned long	   ucon;	 /* value of ucon for port */
 	unsigned long	   ulcon;	 /* value of ulcon for port */
 	unsigned long	   ufcon;	 /* value of ufcon for port */
+
+	s3c_wake_peer_t wake_peer[CONFIG_SERIAL_SAMSUNG_UARTS];
 };
 
 #endif /* __ASSEMBLY__ */

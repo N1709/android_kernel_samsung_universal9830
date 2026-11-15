@@ -73,4 +73,17 @@ of_cpufreq_cooling_register(struct cpufreq_policy *policy)
 }
 #endif /* defined(CONFIG_THERMAL_OF) && defined(CONFIG_CPU_THERMAL) */
 
+#ifdef CONFIG_THERMAL_OF
+struct thermal_cooling_device *
+exynos_cpufreq_cooling_register(struct device_node *np,
+				struct cpufreq_policy *policy);
+#else
+static inline struct thermal_cooling_device *
+exynos_cpufreq_cooling_register(struct device_node *np,
+				struct cpufreq_policy *policy)
+{
+	return NULL;
+}
+#endif
+
 #endif /* __CPU_COOLING_H__ */

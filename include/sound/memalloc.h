@@ -57,6 +57,8 @@ struct snd_dma_device {
 #else
 #define SNDRV_DMA_TYPE_DEV_IRAM	SNDRV_DMA_TYPE_DEV
 #endif
+#define SNDRV_DMA_TYPE_DEV_UC		5	/* non-consistent mappings */
+#define SNDRV_DMA_TYPE_DEV_UC_SG	6	/* SG-buffer with WC pages */
 
 /*
  * info for buffer allocation
