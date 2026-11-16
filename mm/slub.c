@@ -748,10 +748,15 @@ static int check_bytes_and_report(struct kmem_cache *s, struct page *page,
 	while (end > fault && end[-1] == value)
 		end--;
 
+	pr_auto_once(7);
 	slab_bug(s, "%s overwritten", what);
-	pr_err("INFO: 0x%p-0x%p. First byte 0x%x instead of 0x%x\n",
+	pr_auto(ASL7, "INFO: 0x%p-0x%p. First byte 0x%x instead of 0x%x\n",
 					fault, end - 1, fault[0], value);
 	print_trailer(s, page, object);
+	pr_auto_disable(7);
+#ifdef CONFIG_SEC_DEBUG_BUG_ON_SLUB_CORRUPTION
+	BUG();
+#endif
 
 	restore_bytes(s, what, value, fault, end);
 	return 0;
@@ -848,6 +853,10 @@ static int slab_pad_check(struct kmem_cache *s, struct page *page)
 	slab_err(s, page, "Padding overwritten. 0x%p-0x%p", fault, end - 1);
 	print_section(KERN_ERR, "Padding ", pad, remainder);
 
+#ifdef CONFIG_SEC_DEBUG_BUG_ON_SLUB_CORRUPTION
+	BUG();
+#endif
+
 	restore_bytes(s, "slab padding", POISON_INUSE, fault, end);
 	return 0;
 }
@@ -897,6 +906,9 @@ static int check_object(struct kmem_cache *s, struct page *page,
 	/* Check free pointer validity */
 	if (!check_valid_pointer(s, page, get_freepointer(s, p))) {
 		object_err(s, page, p, "Freepointer corrupt");
+#ifdef CONFIG_SEC_DEBUG_BUG_ON_SLUB_CORRUPTION
+		BUG();
+#endif
 		/*
 		 * No choice but to zap it and thus lose the remainder
 		 * of the free objects in this slab. May cause
@@ -954,9 +966,15 @@ static int on_freelist(struct kmem_cache *s, struct page *page, void *search)
 			if (object) {
 				object_err(s, page, object,
 					"Freechain corrupt");
+#ifdef CONFIG_SEC_DEBUG_BUG_ON_SLUB_CORRUPTION
+				BUG();
+#endif
 				set_freepointer(s, object, NULL);
 			} else {
 				slab_err(s, page, "Freepointer corrupt");
+#ifdef CONFIG_SEC_DEBUG_BUG_ON_SLUB_CORRUPTION
+				BUG();
+#endif
 				page->freelist = NULL;
 				page->inuse = page->objects;
 				slab_fix(s, "Freelist cleared");
@@ -976,12 +994,18 @@ static int on_freelist(struct kmem_cache *s, struct page *page, void *search)
 	if (page->objects != max_objects) {
 		slab_err(s, page, "Wrong number of objects. Found %d but should be %d",
 			 page->objects, max_objects);
+#ifdef CONFIG_SEC_DEBUG_BUG_ON_SLUB_CORRUPTION
+		BUG();
+#endif
 		page->objects = max_objects;
 		slab_fix(s, "Number of objects adjusted.");
 	}
 	if (page->inuse != page->objects - nr) {
 		slab_err(s, page, "Wrong object count. Counter is %d but counted were %d",
 			 page->inuse, page->objects - nr);
+#ifdef CONFIG_SEC_DEBUG_BUG_ON_SLUB_CORRUPTION
+		BUG();
+#endif
 		page->inuse = page->objects - nr;
 		slab_fix(s, "Object count adjusted.");
 	}
@@ -1110,6 +1134,9 @@ static noinline int alloc_debug_processing(struct kmem_cache *s,
 	return 1;
 
 bad:
+#ifdef CONFIG_SEC_DEBUG_BUG_ON_SLUB_CORRUPTION
+	BUG();
+#endif
 	if (PageSlab(page)) {
 		/*
 		 * If this is a slab page then lets do the best we can
@@ -1197,14 +1224,24 @@ next_object:
 	ret = 1;
 
 out:
-	if (cnt != bulk_cnt)
+	if (cnt != bulk_cnt) {
 		slab_err(s, page, "Bulk freelist count(%d) invalid(%d)\n",
 			 bulk_cnt, cnt);
+#ifdef CONFIG_SEC_DEBUG_BUG_ON_SLUB_CORRUPTION
+		BUG();
+#endif
+	}
 
 	slab_unlock(page);
 	spin_unlock_irqrestore(&n->list_lock, flags);
-	if (!ret)
+	if (!ret) {
+#ifdef CONFIG_SEC_DEBUG_BUG_ON_SLUB_CORRUPTION
+		BUG();
+#endif
 		slab_fix(s, "Object at 0x%p not freed", object);
+	}
+
+	BUG_ON(!ret);
 	return ret;
 }
 
