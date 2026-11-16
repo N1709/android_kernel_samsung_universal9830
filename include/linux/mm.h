@@ -2221,6 +2221,20 @@ extern void show_mem(unsigned int flags, nodemask_t *nodemask);
 /* Samsung memory management helpers */
 extern bool need_memory_boosting(struct pglist_data *pgdat);
 extern void wake_ion_rbin_heap_shrink(void);
+
+/* rbincache.c */
+int init_rbincache(unsigned long pfn, unsigned long nr_pages);
+extern unsigned long totalrbin_pages;
+extern atomic_t rbin_allocated_pages;
+extern atomic_t rbin_cached_pages;
+extern atomic_t rbin_pool_pages;
+
+/* rbincache.c */
+int init_rbincache(unsigned long pfn, unsigned long nr_pages);
+extern unsigned long totalrbin_pages;
+extern atomic_t rbin_allocated_pages;
+extern atomic_t rbin_cached_pages;
+extern atomic_t rbin_pool_pages;
 extern int init_rbincache(unsigned long pfn, unsigned long nr_pages);
 extern long si_mem_available(void);
 extern void si_meminfo(struct sysinfo * val);

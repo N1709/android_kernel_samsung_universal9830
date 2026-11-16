@@ -1770,6 +1770,9 @@ enum netdev_priv_flags {
  *	moves out.
  */
 
+struct udp_tunnel_nic_info;
+struct udp_tunnel_nic;
+
 struct net_device {
 	char			name[IFNAMSIZ];
 	struct hlist_node	name_hlist;
@@ -2050,6 +2053,8 @@ struct net_device {
 	struct lock_class_key	*qdisc_running_key;
 	bool			proto_down;
 	unsigned		wol_enabled:1;
+	const struct udp_tunnel_nic_info	*udp_tunnel_nic_info;
+	struct udp_tunnel_nic	*udp_tunnel_nic;
 };
 #define to_net_dev(d) container_of(d, struct net_device, dev)
 

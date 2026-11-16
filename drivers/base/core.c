@@ -234,7 +234,7 @@ struct device_link *device_link_add(struct device *consumer,
 				link = NULL;
 				goto out;
 			}
-			link->rpm_active = true;
+			refcount_set(&link->rpm_active, 1);
 		}
 		pm_runtime_new_link(consumer);
 		/*

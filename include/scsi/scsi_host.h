@@ -701,6 +701,16 @@ struct Scsi_Host {
 	 * Needed just in case we have virtual hosts.
 	 */
 	struct device *dma_dev;
+#ifdef CONFIG_USB_STORAGE_DETECT
+	unsigned int  by_usb;
+#endif
+	unsigned int  by_ufs;
+	unsigned int medium_err_cnt;
+	unsigned int hw_err_cnt;
+#define SEC_MAX_LBA_LOGGING	10
+#define SEC_ISSUE_REGION_STEP	(200*1024/4)
+	unsigned long issue_LBA_list[SEC_MAX_LBA_LOGGING];
+	unsigned int issue_LBA_count;
 
 	/*
 	 * We should ensure that this is aligned, both for better performance

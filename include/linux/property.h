@@ -161,6 +161,12 @@ static inline int fwnode_property_read_u16(const struct fwnode_handle *fwnode,
 	return fwnode_property_read_u16_array(fwnode, propname, val, 1);
 }
 
+static inline int fwnode_property_count_u16(const struct fwnode_handle *fwnode,
+					    const char *propname)
+{
+	return fwnode_property_read_u16_array(fwnode, propname, NULL, 0);
+}
+
 static inline int fwnode_property_read_u32(const struct fwnode_handle *fwnode,
 					   const char *propname, u32 *val)
 {

@@ -457,4 +457,5 @@ static inline void memcpy_and_pad(void *dest, size_t dest_len,
 		memcpy(dest, src, dest_len);
 }
 
+int ptr_to_hashval(const void *ptr, unsigned long *hashval_out);
 #endif /* _LINUX_STRING_H_ */

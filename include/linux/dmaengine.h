@@ -749,6 +749,8 @@ struct dma_device {
 
 	int dev_id;
 	struct device *dev;
+	struct module *owner;
+	struct module *owner;
 
 	u32 src_addr_widths;
 	u32 dst_addr_widths;
@@ -793,7 +795,7 @@ struct dma_device {
 	struct dma_async_tx_descriptor *(*device_prep_dma_cyclic)(
 		struct dma_chan *chan, dma_addr_t buf_addr, size_t buf_len,
 		size_t period_len, enum dma_transfer_direction direction,
-		unsigned long flags);
+		unsigned long flags, void *context);
 	struct dma_async_tx_descriptor *(*device_prep_interleaved_dma)(
 		struct dma_chan *chan, struct dma_interleaved_template *xt,
 		unsigned long flags);

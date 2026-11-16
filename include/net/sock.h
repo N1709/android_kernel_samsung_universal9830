@@ -2523,4 +2523,5 @@ static inline bool sk_dev_equal_l3scope(struct sock *sk, int dif)
 	return false;
 }
 
+int sock_bindtoindex(struct sock *sk, int ifindex, bool lock_sk);
 #endif	/* _SOCK_H */

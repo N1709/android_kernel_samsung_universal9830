@@ -26,6 +26,7 @@ struct extcon_dev;
 
 /* Following APIs register/unregister the extcon device. */
 extern int extcon_dev_register(struct extcon_dev *edev);
+extern int extcon_dev_register_by_name(struct extcon_dev *edev, const char *name);
 extern void extcon_dev_unregister(struct extcon_dev *edev);
 extern int devm_extcon_dev_register(struct device *dev,
 				struct extcon_dev *edev);
@@ -70,6 +71,11 @@ extern int extcon_set_property_capability(struct extcon_dev *edev,
 				unsigned int id, unsigned int prop);
 
 #else /* CONFIG_EXTCON */
+static inline int extcon_dev_register_by_name(struct extcon_dev *edev, const char *name)
+{
+	return -ENODEV;
+}
+
 static inline int extcon_dev_register(struct extcon_dev *edev)
 {
 	return 0;

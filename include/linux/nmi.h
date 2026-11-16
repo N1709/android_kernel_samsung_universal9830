@@ -283,4 +283,6 @@ extern int proc_watchdog_cpumask(struct ctl_table *, int,
 #include <asm/nmi.h>
 #endif
 
+extern void update_hardlockup_type(unsigned int cpu);
+extern unsigned long long get_dss_softlockup_thresh(void);
 #endif

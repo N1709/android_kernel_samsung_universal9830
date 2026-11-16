@@ -155,6 +155,19 @@ extern void dw_mci_reg_dump(struct dw_mci *host);
 
 #define SDMMC_FORCE_CLK_STOP	0x0b0
 
+/* MPSCTRL register defines (aliases of DWMCI_*) */
+#define SDMMC_MPSCTRL_SECURE_READ_BIT		BIT(7)
+#define SDMMC_MPSCTRL_SECURE_WRITE_BIT		BIT(6)
+#define SDMMC_MPSCTRL_NON_SECURE_READ_BIT	BIT(5)
+#define SDMMC_MPSCTRL_NON_SECURE_WRITE_BIT	BIT(4)
+#define SDMMC_MPSCTRL_USE_FUSE_KEY		BIT(3)
+#define SDMMC_MPSCTRL_ECB_MODE			BIT(2)
+#define SDMMC_MPSCTRL_ENCRYPTION		BIT(1)
+#define SDMMC_MPSCTRL_VALID			BIT(0)
+
+/* 64-bit descriptor CLKSEL register (Exynos7 SMU) */
+#define SDMMC_CLKSEL64			(SDMMC_BUFADDRU + SFR_OFFSET)
+
 /* CLKSEL register defines */
 #define SDMMC_CLKSEL_CCLK_SAMPLE(x)	(((x) & 7) << 0)
 #define SDMMC_CLKSEL_CCLK_FINE_SAMPLE(x)	(((x) & 0xF) << 0)
