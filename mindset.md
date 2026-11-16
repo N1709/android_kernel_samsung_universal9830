@@ -417,8 +417,11 @@ Commit style used in this branch:
 
 Commits that bring in upstream code (the v4.20/v5.0 merges, upstream
 backports, and restorations taken from an upstream tag) use the
-`UPSTREAM:` prefix. Local seam fixes use a plain subsystem prefix
-(`kbuild:`, `kconfig:`, `arm64:`, `docs:`).
+`UPSTREAM:` prefix or explicit version prefix. To keep the history
+informative and clean:
+- Specify the subsystem and nature of change (e.g., `UPSTREAM: block: sync to v4.20` or `v4.20: sync block layer`).
+- Local seam fixes use a plain subsystem prefix (`kbuild:`, `kconfig:`, `arm64:`, `docs:`).
+- Above all, commit subjects must be clear and direct (e.g., `lib: restore v4.20 files that the merge dropped`) so the intent is immediately understandable when inspecting git log months later.
 
 Leave `notes.md` in English, no emoji, no commentary about where the
 build was run. Update it when a milestone changes, not for every commit.
