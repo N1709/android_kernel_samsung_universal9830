@@ -95,20 +95,4 @@ int dst_cache_init(struct dst_cache *dst_cache, gfp_t gfp);
  */
 void dst_cache_destroy(struct dst_cache *dst_cache);
 
-/**
- *	dst_cache_reset_now - invalidate the cache contents immediately
- *	@dst_cache: the cache
- */
-static inline void dst_cache_reset_now(struct dst_cache *dst_cache)
-{
-	int i;
-
-	if (!dst_cache->cache)
-		return;
-
-	dst_cache->reset_ts = jiffies;
-	for_each_possible_cpu(i)
-		dst_cache_per_cpu(dst_cache, i)->cookie = 0;
-}
-
 #endif

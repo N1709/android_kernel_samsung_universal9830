@@ -503,6 +503,5 @@ static inline void ip_tunnel_info_opts_set(struct ip_tunnel_info *info,
 
 #endif /* CONFIG_INET */
 
-__be16 ip_tunnel_parse_protocol(const struct sk_buff *skb);
 
 #endif /* __NET_IP_TUNNELS_H */

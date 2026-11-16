@@ -524,15 +524,12 @@ static inline void skb_dst_update_pmtu_no_confirm(struct sk_buff *skb, u32 mtu)
 	struct dst_entry *dst = skb_dst(skb);
 
 	if (dst && dst->ops->update_pmtu)
-		dst->ops->update_pmtu(dst, NULL, skb, mtu, false);
+		dst->ops->update_pmtu(dst, NULL, skb, mtu);
 }
 
 static inline void skb_dst_update_pmtu(struct sk_buff *skb, u32 mtu)
 {
-	struct dst_entry *dst = skb_dst(skb);
-
-	if (dst && dst->ops->update_pmtu)
-		dst->ops->update_pmtu(dst, NULL, skb, mtu, true);
+	skb_dst_update_pmtu_no_confirm(skb, mtu);
 }
 
 static inline void skb_tunnel_check_pmtu(struct sk_buff *skb,
