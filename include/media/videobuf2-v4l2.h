@@ -45,6 +45,7 @@ struct vb2_v4l2_buffer {
 	__u32			field;
 	struct v4l2_timecode	timecode;
 	__u32			sequence;
+	__u32			reserved2;
 	__s32			request_fd;
 	struct vb2_plane	planes[VB2_MAX_PLANES];
 };
