@@ -46,4 +46,13 @@ extern void				icmpv6_flow_init(struct sock *sk,
 							 const struct in6_addr *saddr,
 							 const struct in6_addr *daddr,
 							 int oif);
+#if IS_ENABLED(CONFIG_NF_NAT)
+void icmpv6_ndo_send(struct sk_buff *skb, u8 type, u8 code, __u32 info);
+#else
+static inline void icmpv6_ndo_send(struct sk_buff *skb, u8 type, u8 code, __u32 info)
+{
+	icmpv6_send(skb, type, code, info);
+}
+#endif
+
 #endif

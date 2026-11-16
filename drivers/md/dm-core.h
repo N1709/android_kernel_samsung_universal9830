@@ -18,6 +18,8 @@
 #include "dm.h"
 
 #define DM_RESERVED_MAX_IOS		1024
+#define DM_MAX_TARGETS			1048576
+#define DM_MAX_TARGET_PARAMS		1024
 
 struct dm_kobject_holder {
 	struct kobject kobj;
@@ -112,14 +114,25 @@ struct mapped_device {
 
 	struct dm_stats stats;
 
+	struct kthread_worker kworker;
+	struct task_struct *kworker_task;
+
+	/* for request-based merge heuristic in dm_request_fn() */
+	unsigned seq_rq_merge_deadline_usecs;
+	int last_rq_rw;
+	sector_t last_rq_pos;
+	ktime_t last_rq_start_time;
+
 	/* for blk-mq request-based DM support */
 	struct blk_mq_tag_set *tag_set;
+	bool use_blk_mq:1;
 	bool init_tio_pdu:1;
 
 	struct srcu_struct io_barrier;
 };
 
 int md_in_flight(struct mapped_device *md);
+void disable_discard(struct mapped_device *md);
 void disable_write_same(struct mapped_device *md);
 void disable_write_zeroes(struct mapped_device *md);
 

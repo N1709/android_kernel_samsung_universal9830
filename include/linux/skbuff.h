@@ -1400,6 +1400,10 @@ static inline int skb_queue_empty(const struct sk_buff_head *list)
  *
  *	Returns true if @skb is the last buffer on the list.
  */
+#define skb_list_walk_safe(first, skb, next_skb)				\
+	for ((skb) = (first), (next_skb) = (skb) ? (skb)->next : NULL; (skb);	\
+	     (skb) = (next_skb), (next_skb) = (skb) ? (skb)->next : NULL)
+
 static inline bool skb_queue_is_last(const struct sk_buff_head *list,
 				     const struct sk_buff *skb)
 {
