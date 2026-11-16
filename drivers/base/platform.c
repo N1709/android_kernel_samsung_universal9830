@@ -1202,11 +1202,14 @@ static u64 dma_default_get_required_mask(struct device *dev)
 u64 dma_get_required_mask(struct device *dev)
 {
 	const struct dma_map_ops *ops = get_dma_ops(dev);
+	u64 mask;
 
-		if (ops && ops->get_required_mask) {
-			mask = ops->get_required_mask(dev);
-		if (ops && ops->get_required_mask) {
-			mask = ops->get_required_mask(dev);
+	if (ops && ops->get_required_mask) {
+		mask = ops->get_required_mask(dev);
+		if (mask < dma_default_get_required_mask(dev))
+			return dma_default_get_required_mask(dev);
+		return mask;
+	}
 	return dma_default_get_required_mask(dev);
 }
 EXPORT_SYMBOL_GPL(dma_get_required_mask);
