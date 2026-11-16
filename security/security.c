@@ -27,6 +27,7 @@
 #include <linux/fsnotify.h>
 #include <linux/mman.h>
 #include <linux/mount.h>
+#include <linux/fs_parser.h>
 #include <linux/personality.h>
 #include <linux/backing-dev.h>
 #include <linux/string.h>
@@ -820,6 +821,12 @@ int security_sb_eat_lsm_opts(char *options, void **mnt_opts)
 }
 EXPORT_SYMBOL(security_sb_eat_lsm_opts);
 
+int security_sb_copy_data(char *orig, char *copy)
+{
+	return call_int_hook(sb_copy_data, 0, orig, copy);
+}
+EXPORT_SYMBOL(security_sb_copy_data);
+
 int security_sb_remount(struct super_block *sb,
 			void *mnt_opts)
 {
@@ -827,9 +834,9 @@ int security_sb_remount(struct super_block *sb,
 }
 EXPORT_SYMBOL(security_sb_remount);
 
-int security_sb_kern_mount(struct super_block *sb)
+int security_sb_kern_mount(struct super_block *sb, int flags, void *data)
 {
-	return call_int_hook(sb_kern_mount, 0, sb);
+	return call_int_hook(sb_kern_mount, 0, sb, flags, data);
 }
 
 int security_sb_show_options(struct seq_file *m, struct super_block *sb)

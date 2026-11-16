@@ -120,7 +120,7 @@ static int hpa_killer(void)
 		selected->comm, task_pid_nr(selected), selected_adj,
 		selected_tasksize * (PAGE_SIZE / SZ_1K));
 
-	do_send_sig_info(SIGKILL, SEND_SIG_FORCED, selected, true);
+	do_send_sig_info(SIGKILL, SEND_SIG_PRIV, selected, PIDTYPE_TGID);
 
 	put_task_struct(selected);
 

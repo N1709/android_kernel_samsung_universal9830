@@ -277,8 +277,9 @@ int security_sb_alloc(struct super_block *sb);
 void security_sb_free(struct super_block *sb);
 void security_free_mnt_opts(void **mnt_opts);
 int security_sb_eat_lsm_opts(char *options, void **mnt_opts);
+int security_sb_copy_data(char *orig, char *copy);
 int security_sb_remount(struct super_block *sb, void *mnt_opts);
-int security_sb_kern_mount(struct super_block *sb);
+int security_sb_kern_mount(struct super_block *sb, int flags, void *data);
 int security_sb_show_options(struct seq_file *m, struct super_block *sb);
 int security_sb_statfs(struct dentry *dentry);
 int security_sb_mount(const char *dev_name, const struct path *path,
@@ -606,13 +607,19 @@ static inline int security_sb_eat_lsm_opts(char *options,
 	return 0;
 }
 
+static inline int security_sb_copy_data(char *orig, char *copy)
+{
+	return 0;
+}
+
 static inline int security_sb_remount(struct super_block *sb,
 				      void *mnt_opts)
 {
 	return 0;
 }
 
-static inline int security_sb_kern_mount(struct super_block *sb)
+static inline int security_sb_kern_mount(struct super_block *sb, int flags,
+					void *data)
 {
 	return 0;
 }
@@ -1939,5 +1946,28 @@ static inline int security_perf_event_write(struct perf_event *event)
 }
 #endif /* CONFIG_SECURITY */
 #endif /* CONFIG_PERF_EVENTS */
+
+#ifdef CONFIG_SECURITY
+
+static inline char *alloc_secdata(void)
+{
+	return (char *)get_zeroed_page(GFP_KERNEL);
+}
+
+static inline void free_secdata(void *secdata)
+{
+	free_page((unsigned long)secdata);
+}
+
+#else
+
+static inline char *alloc_secdata(void)
+{
+	return (char *)1;
+}
+
+static inline void free_secdata(void *secdata)
+{ }
+#endif /* CONFIG_SECURITY */
 
 #endif /* ! __LINUX_SECURITY_H */

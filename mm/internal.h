@@ -527,4 +527,46 @@ static inline bool is_migrate_highatomic_page(struct page *page)
 
 void setup_zone_pageset(struct zone *zone);
 extern struct page *alloc_new_node_page(struct page *page, unsigned long node);
+
+#if defined(CONFIG_PAGE_STEAL)
+int migrate_anon_page(struct page *page, struct page *newpage);
+int reclaim_pages_range(unsigned long start_pfn, unsigned long count,
+			int mode, int reason);
+int steal_pages(unsigned long pfn, unsigned int order);
+#else
+static inline int migrate_anon_page(struct page *page, struct page *newpage)
+{
+	return -EBUSY;
+}
+
+static inline int reclaim_pages_range(unsigned long start_pfn,
+				      unsigned long count, int mode,
+				      int reason)
+{
+	return -EBUSY;
+}
+static inline int steal_pages(unsigned long pfn, unsigned int order)
+{
+	return -EBUSY;
+}
+#endif
+
+/*
+ * A cached value of the page's pageblock's migratetype, used when the page is
+ * put on a pcplist. Used to avoid the pageblock migratetype lookup when
+ * freeing from pcplists in most cases, at the cost of possibly becoming stale.
+ * Also the migratetype set in the page does not necessarily match the pcplist
+ * index, e.g. page might have MIGRATE_CMA set but be on a pcplist with any
+ * other index - this ensures that it will be put on the correct CMA freelist.
+ */
+static inline int get_pcppage_migratetype(struct page *page)
+{
+	return page->index;
+}
+
+static inline void set_pcppage_migratetype(struct page *page, int migratetype)
+{
+	page->index = migratetype;
+}
+
 #endif	/* __MM_INTERNAL_H */
