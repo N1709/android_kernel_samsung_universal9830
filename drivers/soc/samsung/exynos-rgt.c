@@ -9,6 +9,7 @@
  * published by the Free Software Foundation.
  */
 #include <linux/kernel.h>
+#include <linux/debug-snapshot.h>
 #include <linux/module.h>
 #include <linux/of_address.h>
 #include <linux/of_platform.h>

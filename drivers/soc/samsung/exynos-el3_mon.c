@@ -11,6 +11,7 @@
  */
 
 #include <linux/slab.h>
+#include <linux/debug-snapshot.h>
 #include <linux/smc.h>
 #include <asm/cacheflush.h>
 #include <asm/memory.h>

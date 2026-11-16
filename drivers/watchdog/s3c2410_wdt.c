@@ -19,6 +19,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/debug-snapshot.h>
 #include <linux/moduleparam.h>
 #include <linux/types.h>
 #include <linux/timer.h>

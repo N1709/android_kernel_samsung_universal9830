@@ -50,7 +50,7 @@ static struct page *alloc_buffer_page(struct ion_system_heap *heap,
 {
 	struct ion_page_pool *pool = heap->pools[order_to_index(order)];
 
-	return ion_page_pool_alloc(pool);
+	return ion_page_pool_alloc(pool, buffer->flags);
 }
 
 static void free_buffer_page(struct ion_system_heap *heap,

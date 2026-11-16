@@ -8,12 +8,53 @@
 #include <linux/list.h>
 #include <linux/slab.h>
 #include <linux/swap.h>
+#include <linux/sched/signal.h>
+
+#include <asm/cacheflush.h>
 
 #include "ion.h"
 
-static inline struct page *ion_page_pool_alloc_pages(struct ion_page_pool *pool)
+#ifdef CONFIG_HUGEPAGE_POOL
+#include <linux/hugepage_pool.h>
+#endif
+
+/*
+ * We avoid atomic_long_t to minimize cache flushes at the cost of possible
+ * race which would result in a small accounting inaccuracy that we can
+ * tolerate.
+ */
+static long nr_total_pages;
+
+static void *ion_page_pool_alloc_pages(struct ion_page_pool *pool, unsigned long flags)
 {
-	return alloc_pages(pool->gfp_mask, pool->order);
+	gfp_t gfpmask = pool->gfp_mask;
+	struct page *page;
+
+	if (fatal_signal_pending(current))
+		return NULL;
+
+	if (flags & ION_FLAG_NOZEROED)
+		gfpmask &= ~__GFP_ZERO;
+
+	if (!(flags & ION_FLAG_MAY_HWRENDER))
+		gfpmask |= (__GFP_MOVABLE | __GFP_NOCMA);
+
+#ifdef CONFIG_HUGEPAGE_POOL
+	/* we assume that this path is only being used by system heap */
+	if (pool->order == HUGEPAGE_ORDER)
+		page = alloc_zeroed_hugepage(gfpmask, pool->order, true,
+					     HPAGE_ION);
+	else
+		page = alloc_pages(gfpmask, pool->order);
+#else
+	page = alloc_pages(gfpmask, pool->order);
+#endif
+	if (!page) {
+		if (pool->order == 0)
+			perrfn("failed to alloc order-0 page (gfp %pGg)", &gfpmask);
+		return NULL;
+	}
+	return page;
 }
 
 static void ion_page_pool_free_pages(struct ion_page_pool *pool,
@@ -25,7 +66,7 @@ static void ion_page_pool_free_pages(struct ion_page_pool *pool,
 static void ion_page_pool_add(struct ion_page_pool *pool, struct page *page)
 {
 	mutex_lock(&pool->mutex);
-	if (PageHighMem(page)) {
+	if (zone_idx(page_zone(page)) == ZONE_MOVABLE) {
 		list_add_tail(&page->lru, &pool->high_items);
 		pool->high_count++;
 	} else {
@@ -33,6 +74,7 @@ static void ion_page_pool_add(struct ion_page_pool *pool, struct page *page)
 		pool->low_count++;
 	}
 
+	nr_total_pages += 1 << pool->order;
 	mod_node_page_state(page_pgdat(page), NR_KERNEL_MISC_RECLAIMABLE,
 							1 << pool->order);
 	mutex_unlock(&pool->mutex);
@@ -53,33 +95,60 @@ static struct page *ion_page_pool_remove(struct ion_page_pool *pool, bool high)
 	}
 
 	list_del(&page->lru);
+	nr_total_pages -= 1 << pool->order;
 	mod_node_page_state(page_pgdat(page), NR_KERNEL_MISC_RECLAIMABLE,
 							-(1 << pool->order));
 	return page;
 }
 
-struct page *ion_page_pool_alloc(struct ion_page_pool *pool)
+struct page *ion_page_pool_only_alloc(struct ion_page_pool *pool)
+{
+	struct page *page = NULL;
+
+	BUG_ON(!pool);
+
+	if (!pool->high_count && !pool->low_count)
+		goto done;
+
+	if (mutex_trylock(&pool->mutex)) {
+		if (pool->high_count)
+			page = ion_page_pool_remove(pool, true);
+		else if (pool->low_count)
+			page = ion_page_pool_remove(pool, false);
+		mutex_unlock(&pool->mutex);
+	}
+done:
+	return page;
+}
+
+struct page *ion_page_pool_alloc(struct ion_page_pool *pool, unsigned long flags)
 {
 	struct page *page = NULL;
 
 	BUG_ON(!pool);
 
 	mutex_lock(&pool->mutex);
-	if (pool->high_count)
+	if (pool->high_count && !(flags & ION_FLAG_MAY_HWRENDER))
 		page = ion_page_pool_remove(pool, true);
 	else if (pool->low_count)
 		page = ion_page_pool_remove(pool, false);
 	mutex_unlock(&pool->mutex);
 
 	if (!page)
-		page = ion_page_pool_alloc_pages(pool);
+		return ion_page_pool_alloc_pages(pool, flags);
 
 	return page;
 }
 
 void ion_page_pool_free(struct ion_page_pool *pool, struct page *page)
 {
+#ifndef CONFIG_ION_RBIN_HEAP
+	/*
+	 * ION RBIN heap can utilize ion_page_pool_free() for pages which are
+	 * not compound pages. Thus, comment out the below line.
+	 */
 	BUG_ON(pool->order != compound_order(page));
+#endif
 
 	ion_page_pool_add(pool, page);
 }
@@ -94,6 +163,14 @@ static int ion_page_pool_total(struct ion_page_pool *pool, bool high)
 	return count << pool->order;
 }
 
+long ion_page_pool_nr_pages(void)
+{
+	/* Correct possible overflow caused by racing writes */
+	if (nr_total_pages < 0)
+		nr_total_pages = 0;
+	return nr_total_pages;
+}
+
 int ion_page_pool_shrink(struct ion_page_pool *pool, gfp_t gfp_mask,
 			 int nr_to_scan)
 {
@@ -103,7 +180,7 @@ int ion_page_pool_shrink(struct ion_page_pool *pool, gfp_t gfp_mask,
 	if (current_is_kswapd())
 		high = true;
 	else
-		high = !!(gfp_mask & __GFP_HIGHMEM);
+		high = !!(gfp_mask & GFP_HIGHUSER_MOVABLE);
 
 	if (nr_to_scan == 0)
 		return ion_page_pool_total(pool, high);
