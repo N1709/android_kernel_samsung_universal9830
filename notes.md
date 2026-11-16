@@ -680,3 +680,150 @@ Breakdown:
 Status: ALL identified errors fixed and pushed to origin/K4.20
 
 Next: Full incremental build with dtbs to verify zero errors remain, then boot test.
+
+
+---
+
+## Build Error Analysis (16 Nov 2026) - Token 84%
+
+### Latest Build Status
+- **Commit**: `495838a6e` - "net/gpio: fix final 2 errors - icmp_ndo_send header guard + devres.o rule"
+- **Build Command**: `./build.sh -k -j6` (keep going on errors)
+- **Result**: **FAILED** - Image.gz not built
+- **Total Error Categories**: ~20 major subsystems
+- **Estimated Error Count**: 175-200 unique compilation errors
+
+### Error Breakdown by Priority
+
+#### PHASE 1: Core Kernel APIs (High Priority)
+**WIREGUARD** (60+ errors)
+- `get_monotonic_boottime` redefinition (60x) - linuxver.h:926
+- `ktime_get_coarse_boottime_ns` missing (32x across multiple files)
+- `ip_tunnel_parse_protocol` missing (11x)
+- `dst_cache_reset_now` missing (2x)
+- `skb_list_walk_safe` missing (8x)
+- `icmpv6_ndo_send` missing (2x)
+- Files: drivers/net/wireguard/*, drivers/net/wireless/broadcom/bcmdhd_101_16/*
+
+**LIB/CORE** (5 errors)
+- lib/debug-snapshot-dpm.c: `linux/bootmem.h` not found (FATAL - use memblock.h)
+- lib/debug-snapshot-log.c: `get_hardlockup_thresh` missing
+- lib/strncpy_from_user.c: `user_access_begin` macro issues (2x)
+- lib/strnlen_user.c: `user_access_begin` macro issues (2x)
+
+**XFRM** (2 errors)
+- net/xfrm/xfrm_interface_core.c: `skb_dst_update_pmtu_no_confirm` missing
+- net/xfrm/xfrm_interface_core.c: `icmpv6_ndo_send` missing
+
+#### PHASE 2: Driver Subsystems (Medium Priority)
+**USB/XHCI** (20+ errors)
+- xhci.c: function signature conflicts (xhci_handshake, xhci_reset, xhci_shutdown)
+- xhci-pci.c: `XHCI_DEFAULT_PM_RUNTIME_ALLOW` undefined (3x)
+- xhci-hub.c: struct xhci_hub missing members (psi, psi_count, psi_uid_count)
+- xhci-debugfs.c: struct debugfs_regset32 missing 'dev' member
+- Multiple functions need extra parameters
+- Files: drivers/usb/host/xhci*.c
+
+**THERMAL** (17 errors)
+- of-thermal.c: `__thermal_zone` redefinition
+- of-thermal.c: `__thermal_bind_params` redefinition
+- Missing struct members: sensor_data, tcbp, count
+- Files: drivers/thermal/of-thermal.c
+
+**MEDIA/CAMERA** (20+ errors)
+- videobuf2-dma-sg.c: function pointer signature mismatches (6x)
+- vb2_ops missing `mem_flags` field
+- `V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_P010_VENUS` undefined
+- is-video.c: wrong argument counts (4x)
+- mfc_dec_v4l2.c, mfc_enc_v4l2.c: wrong arg counts (4x)
+- is-resourcemgr.c: pointer to integer conversion error
+- Files: drivers/media/*
+
+**MMC** (10 errors)
+- dw_mmc-exynos.c: `dw_mci_exynos_priv_data` redefinition
+- `SDMMC_CLKSEL_TIMING` undefined (5x)
+- struct dw_mci_drv_data missing `num_caps` field
+- execute_tuning function pointer signature mismatch
+- Files: drivers/mmc/host/dw_mmc-exynos.c
+
+**DEVICE MAPPER** (10 errors)
+- dm-rq.c: release_clone_rq needs 2 args not 1 (4x)
+- dm-target.c: function pointer signature mismatch
+- dm-crypt.c: `dm_table_device_name` missing (2x)
+- dm.c: `dm_remap_zone_report` signature conflict
+- Files: drivers/md/dm*.c
+
+**SCSI/UFS** (12 errors)
+- ufshcd.c: struct scsi_host_template missing fields (tw_ctrl, rpm_autosuspend_delay)
+- struct Scsi_Host missing members (wlun_clr_uac, issue_region_map)
+- struct scsi_device missing members (bootlunID, support_tw_lu, rpm_autosuspend)
+- `UFS_START_STOP_TIMEOUT` undefined
+- `scsi_reset_tw_state` function missing
+- Files: drivers/scsi/ufs/ufshcd.c
+
+#### PHASE 3: Samsung Vendor Code (Medium-Low Priority)
+**SOC/SAMSUNG** (7 errors)
+- exynos-sci.c: `dbg_snapshot_get_item_*` functions missing (3x)
+- exynos-rgt.c: `dbg_snapshot_regulator` missing
+- exynos-pm.c: `pm_system_wakeup_without_irq_num` undefined
+- exynos-el3_mon.c: `flush_icache_range_poc`, `dbg_snapshot_set_hardlockup` missing
+- exynos-cpupm.c: `CPUHP_AP_EXYNOS_CPU_*_POWER_CONTROL` undefined (2x)
+- exynos_perf_ncmemcpy.c: `flush_cache_louis` missing
+- Files: drivers/soc/samsung/exynos*.c
+
+**ION** (5 errors)
+- ion_system_heap.c: function needs 2 args not 1
+- ion_page_pool.c: `ion_page_pool_alloc` signature conflict
+- ion_hpa_heap.c: `alloc_pages_highorder_except` missing
+- ion_fdt_exynos.c: `SZ_8G` undefined
+- ion.c: `tracing_mark_begin`/`tracing_mark_end` missing (2x)
+- Files: drivers/staging/android/ion/*.c
+
+**MISC SAMSUNG** (6 errors)
+- watchdog/s3c2410_wdt.c: `dbg_snapshot_get_hardlockup` missing
+- samsung/sec_dump_sink.c: `free_memsize_reserved` missing
+- staging/android/freecess.c: `NETLINK_KFREECESS` undefined
+- regulator/core.c: `regulator_proxy_consumer_*` functions missing (4x)
+
+#### PHASE 4: Third-party Drivers (Low Priority)
+**BCMDHD/BROADCOM WIFI** (3 errors)
+- wl_cfgscan.c: VLA not allowed (C99 feature)
+- dhd_pno.c: VLA not allowed (C99 feature)
+- dhd_debug.c: unused global variable warning as error
+- Files: drivers/net/wireless/broadcom/bcmdhd_101_16/*
+
+### Root Cause Categories
+1. Missing v4.20 kernel APIs (time functions, network helpers)
+2. Changed function signatures (extra parameters added in v4.20)
+3. Changed struct definitions (members added/removed/renamed)
+4. Removed/relocated headers (bootmem.h → memblock.h)
+5. Samsung vendor-specific APIs not ported from 4.19
+6. Missing configuration constants
+7. Compiler warnings treated as errors (-Werror)
+
+### Recommended Fix Strategy
+1. **Phase 1**: Fix core kernel API compatibility (wireguard, lib, xfrm) - enables broader compilation
+2. **Phase 2**: Update driver subsystems to v4.20 signatures (usb, thermal, media, mmc, dm, scsi)
+3. **Phase 3**: Port Samsung vendor APIs or add compatibility layer
+4. **Phase 4**: Update/patch third-party drivers (bcmdhd, wireguard)
+
+### Files for Reference
+- Full error log: `build_with_k.log` (in repo root)
+- Error summary: `error_summary.txt` (in repo root)
+- Build script: `./build.sh -k -j6`
+
+### Previous Fixes Completed (353 total errors fixed)
+See earlier sections in this document for the complete history of:
+- drivers/base/core.c, drivers/base/dd.c fixes
+- DMA engine Samsung extensions
+- IPv6 stub redefinitions (280 errors)
+- inet6_bind signature wrapper
+- Sound SoC stream parameter fixes
+- Network stack compatibility (dst, xfrm)
+- GPIO devres Makefile fix
+- ICMP header guard placement
+
+### Next Actions
+User requested agent to build with `-k` flag to see all errors at once.
+Build completed, comprehensive error analysis documented above.
+Waiting for user decision on fix approach.
