@@ -1203,8 +1203,10 @@ u64 dma_get_required_mask(struct device *dev)
 {
 	const struct dma_map_ops *ops = get_dma_ops(dev);
 
-	if (ops->get_required_mask)
-		return ops->get_required_mask(dev);
+		if (ops && ops->get_required_mask) {
+			mask = ops->get_required_mask(dev);
+		if (ops && ops->get_required_mask) {
+			mask = ops->get_required_mask(dev);
 	return dma_default_get_required_mask(dev);
 }
 EXPORT_SYMBOL_GPL(dma_get_required_mask);

@@ -1236,6 +1236,7 @@ struct snd_soc_pcm_runtime {
 	/* bit field */
 	unsigned int dev_registered:1;
 	unsigned int pop_wait:1;
+	unsigned int params_select;
 };
 
 #define for_each_rtd_codec_dai(rtd, i, dai)\
