@@ -827,3 +827,38 @@ See earlier sections in this document for the complete history of:
 User requested agent to build with `-k` flag to see all errors at once.
 Build completed, comprehensive error analysis documented above.
 Waiting for user decision on fix approach.
+
+## Merge progress log (16 Nov 2026, continued)
+
+### Build loop status
+Full `./build.sh -j4 -k` runs are now used as the error-discovery loop; each
+run overwrites `out/build.log`. Targeted cluster builds run first so a single
+`make` is always the only one touching `out/`.
+
+### Clusters cleared in this round
+- `drivers/scsi/` whole subtree: zero errors after restoring the vendor UFS
+  stack plus the Samsung SCSI host/device fields (`tw_ctrl`, `wlun_clr_uac`,
+  `issue_region_map`, `rpm_autosuspend`, `bootlunID`, `support_tw_lu`,
+  `UFS_START_STOP_TIMEOUT`) and the turbo-write API.
+- Media: kept the vendor videobuf2/mem2mem ABI (explicit fences, two-argument
+  `vb2_qbuf`/`vb2_prepare_buf`) that MFC and the camera pipeline use, and
+  merged the Samsung videodev2 definitions into the v4.20 uapi header. The
+  `fence_fd` and `request_fd` fields now alias the same ABI word so both the
+  vendor fence code and the v4.20 request plumbing compile.
+- MMC: vendor card error log and `sdcard_uevent` hook restored.
+- mm: memsize reservation bookkeeping (with the `memblock_add_range` hook),
+  `__GFP_NOCMA`/`__GFP_CMA`, `flush_cache_louis()`,
+  `flush_icache_range_poc()`.
+- block: `cleanup_rq` blk-mq op restored and wired to SCSI; dm-bufio adapted
+  to the 4.20 three-argument `__vmalloc`.
+- soc/samsung: tracing markers, KFREECESS netlink id, `SZ_8G`,
+  `pm_system_wakeup_without_irq_num`, Exynos CPU up/down power-control
+  hotplug states, `debugfs_regset32.dev`, vendor ION page-pool flags.
+
+### Known limitation: turbo-write on MQ-only kernels
+`CONFIG_BLK_TURBO_WRITE` and `CONFIG_BLK_IO_VOLUME` stay enabled and the
+`blk_turbo_write` API plus SCSI/UFS plumbing are restored, but the io-volume
+accounting lives on the legacy request path. The vendor kernel also
+early-returns for `q->mq_ops`, so on this MQ-only 4.20 kernel turbo-write
+auto-tuning does not engage. This matches vendor behaviour rather than
+dropping the feature.
