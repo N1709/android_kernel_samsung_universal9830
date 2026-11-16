@@ -438,6 +438,59 @@ static inline int blkdev_reset_zones_ioctl(struct block_device *bdev,
 
 #endif /* CONFIG_BLK_DEV_ZONED */
 
+
+#ifdef CONFIG_BLK_TURBO_WRITE
+typedef void (blk_tw_try_on_fn) (struct request_queue *q);
+typedef void (blk_tw_try_off_fn) (struct request_queue *q);
+
+enum blk_tw_state {
+	TW_OFF = 0,
+	TW_ON_READY,
+	TW_OFF_READY,
+	TW_ON,
+
+	NR_TW_STATE
+};
+
+struct blk_turbo_write {
+	enum blk_tw_state	state;
+	unsigned long		state_ts;
+
+	long long		up_threshold_bytes;
+	int			up_threshold_rqs;
+	long long		down_threshold_bytes;
+	int			down_threshold_rqs;
+	int			on_delay;
+	int			off_delay;
+
+	unsigned long		prev_on_ready_ts;
+	int			on_interval;
+
+	blk_tw_try_on_fn	*try_on;
+	blk_tw_try_off_fn	*try_off;
+
+	int			curr_issued_kb;
+	unsigned int		total_issued_mb;
+	unsigned int		issued_size_cnt[4];
+};
+
+int blk_alloc_turbo_write(struct request_queue *q);
+void blk_free_turbo_write(struct request_queue *q);
+int blk_register_tw_try_on_fn(struct request_queue *q, blk_tw_try_on_fn *fn);
+int blk_register_tw_try_off_fn(struct request_queue *q, blk_tw_try_off_fn *fn);
+int blk_reset_tw_state(struct request_queue *q);
+void blk_update_tw_state(struct request_queue *q, int write_rqs, long long write_bytes);
+void blk_account_tw_io(struct request_queue *q, int opf, int bytes);
+#else
+#define blk_alloc_turbo_write(q)			do {} while (0)
+#define blk_free_turbo_write(q)				do {} while (0)
+#define blk_register_tw_try_on_fn(q, fn)		do {} while (0)
+#define blk_register_tw_try_off_fn(q, fn)		do {} while (0)
+#define blk_reset_tw_state(q)				do {} while (0)
+#define blk_update_tw_state(q, write_rqs, write_bytes)	do {} while (0)
+#define blk_account_tw_io(q, opf, bytes)		do {} while (0)
+#endif
+
 struct request_queue {
 	/*
 	 * Together with queue_head for cacheline sharing
@@ -685,6 +738,9 @@ struct request_queue {
 
 #define BLK_MAX_WRITE_HINTS	5
 	u64			write_hints[BLK_MAX_WRITE_HINTS];
+#ifdef CONFIG_BLK_TURBO_WRITE
+	struct blk_turbo_write	*tw;
+#endif
 };
 
 #define QUEUE_FLAG_QUEUED	0	/* uses generic tag queueing */

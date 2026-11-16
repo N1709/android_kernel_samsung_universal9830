@@ -325,6 +325,8 @@ struct scsi_host_template {
 #define SCSI_ADAPTER_RESET	1
 #define SCSI_FIRMWARE_RESET	2
 
+	void (* tw_ctrl)(struct scsi_device *, int);
+
 
 	/*
 	 * Name of proc directory
@@ -484,6 +486,9 @@ struct scsi_host_template {
 	 */
 	unsigned int cmd_size;
 	struct scsi_host_cmd_pool *cmd_pool;
+
+	/* Delay for runtime autosuspend */
+	int rpm_autosuspend_delay;
 };
 
 /*
@@ -686,6 +691,7 @@ struct Scsi_Host {
 	
 
 	enum scsi_host_state shost_state;
+	bool wlun_clr_uac;
 
 	/* ldm bits */
 	struct device		shost_gendev, shost_dev;
@@ -711,6 +717,10 @@ struct Scsi_Host {
 #define SEC_ISSUE_REGION_STEP	(200*1024/4)
 	unsigned long issue_LBA_list[SEC_MAX_LBA_LOGGING];
 	unsigned int issue_LBA_count;
+	u64 issue_region_map;
+	sector_t  ufs_system_start;
+	sector_t  ufs_system_end;
+	bool ufs_sys_log_en;
 
 	/*
 	 * We should ensure that this is aligned, both for better performance
@@ -797,6 +807,9 @@ static inline int scsi_host_scan_allowed(struct Scsi_Host *shost)
 
 extern void scsi_unblock_requests(struct Scsi_Host *);
 extern void scsi_block_requests(struct Scsi_Host *);
+#ifdef CONFIG_BLK_TURBO_WRITE
+extern void scsi_reset_tw_state(struct Scsi_Host *);
+#endif
 
 struct class_container;
 

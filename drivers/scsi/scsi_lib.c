@@ -1506,6 +1506,46 @@ static void scsi_unprep_fn(struct request_queue *q, struct request *req)
  *
  * Called with the queue_lock held.
  */
+
+#ifdef CONFIG_BLK_TURBO_WRITE
+static void scsi_tw_try_on_fn(struct request_queue *q)
+{
+	struct scsi_device *sdev = q->queuedata;
+	struct Scsi_Host *shost = sdev->host;
+
+	if (shost->hostt->tw_ctrl)
+		shost->hostt->tw_ctrl(sdev, 1);
+}
+
+static void scsi_tw_try_off_fn(struct request_queue *q)
+{
+	struct scsi_device *sdev = q->queuedata;
+	struct Scsi_Host *shost = sdev->host;
+
+	if (shost->hostt->tw_ctrl)
+		shost->hostt->tw_ctrl(sdev, 0);
+}
+
+void scsi_reset_tw_state(struct Scsi_Host *shost)
+{
+	struct scsi_device *sdev;
+
+	shost_for_each_device(sdev, shost)
+		blk_reset_tw_state(sdev->request_queue);
+}
+EXPORT_SYMBOL(scsi_reset_tw_state);
+
+void scsi_alloc_tw(struct scsi_device *sdev)
+{
+	if (sdev->support_tw_lu) {
+		blk_alloc_turbo_write(sdev->request_queue);
+		blk_register_tw_try_on_fn(sdev->request_queue, scsi_tw_try_on_fn);
+		blk_register_tw_try_off_fn(sdev->request_queue, scsi_tw_try_off_fn);
+		sdev_printk(KERN_INFO, sdev, "register scsi ufs tw interface\n");
+	}
+}
+#endif
+
 static inline int scsi_dev_queue_ready(struct request_queue *q,
 				  struct scsi_device *sdev)
 {

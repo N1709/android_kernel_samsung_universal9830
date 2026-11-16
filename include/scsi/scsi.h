@@ -280,4 +280,6 @@ static inline __u32 scsi_to_u32(__u8 *ptr)
 	return (ptr[0]<<24) + (ptr[1]<<16) + (ptr[2]<<8) + ptr[3];
 }
 
+#define UFS_START_STOP_TIMEOUT		(10 * HZ)
+
 #endif /* _SCSI_SCSI_H */

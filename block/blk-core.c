@@ -908,6 +908,177 @@ void blk_exit_rl(struct request_queue *q, struct request_list *rl)
 	}
 }
 
+
+#ifdef CONFIG_BLK_TURBO_WRITE
+#define set_tw_state(tw, s) ({(tw)->state = (s); (tw)->state_ts = jiffies;})
+#define tw_may_on(tw, write_bytes, write_rqs) \
+	((write_bytes) > (tw)->up_threshold_bytes || \
+	(write_rqs) > (tw)->up_threshold_rqs)
+#define tw_may_off(tw, write_bytes, write_rqs) \
+	((write_bytes) < (tw)->down_threshold_bytes && \
+	(write_rqs) < (tw)->down_threshold_rqs)
+
+int blk_alloc_turbo_write(struct request_queue *q)
+{
+	struct blk_turbo_write *new;
+
+	new = kmalloc(sizeof(struct blk_turbo_write), GFP_KERNEL);
+	if (!new)
+		return -ENOMEM;
+
+	set_tw_state(new, TW_OFF);
+
+	new->up_threshold_bytes = (12 * 1024 * 1024);
+	new->up_threshold_rqs = 50;
+	new->down_threshold_bytes = (10 * 1024 * 1024);
+	new->down_threshold_rqs = 40;
+	new->on_delay = msecs_to_jiffies(20);
+	new->off_delay = msecs_to_jiffies(5000);
+	new->prev_on_ready_ts = 0;
+	new->on_interval = msecs_to_jiffies(200);
+	new->try_on = NULL;
+	new->try_off = NULL;
+	new->curr_issued_kb = 0;
+	new->total_issued_mb = 0;
+	memset(new->issued_size_cnt, 0, sizeof(new->issued_size_cnt));
+
+	spin_lock_irq(q->queue_lock);
+	if (q->tw) {
+		spin_unlock_irq(q->queue_lock);
+		kfree(new);
+		return -EEXIST;
+	}
+	q->tw = new;
+	spin_unlock_irq(q->queue_lock);
+
+	return 0;
+}
+
+void blk_free_turbo_write(struct request_queue *q)
+{
+	spin_lock_irq(q->queue_lock);
+	if (!q->tw) {
+		spin_unlock_irq(q->queue_lock);
+		return;
+	}
+	kfree(q->tw);
+	q->tw = NULL;
+	spin_unlock_irq(q->queue_lock);
+}
+
+int blk_register_tw_try_on_fn(struct request_queue *q, blk_tw_try_on_fn *fn)
+{
+	spin_lock_irq(q->queue_lock);
+	if (!q->tw) {
+		spin_unlock_irq(q->queue_lock);
+		return -ENODEV;
+	}
+	q->tw->try_on = fn;
+	spin_unlock_irq(q->queue_lock);
+	return 0;
+}
+
+int blk_register_tw_try_off_fn(struct request_queue *q, blk_tw_try_off_fn *fn)
+{
+	spin_lock_irq(q->queue_lock);
+	if (!q->tw) {
+		spin_unlock_irq(q->queue_lock);
+		return -ENODEV;
+	}
+	q->tw->try_off = fn;
+	spin_unlock_irq(q->queue_lock);
+	return 0;
+}
+
+int blk_reset_tw_state(struct request_queue *q)
+{
+	spin_lock_irq(q->queue_lock);
+	if (!q->tw) {
+		spin_unlock_irq(q->queue_lock);
+		return -ENODEV;
+	}
+	set_tw_state(q->tw, TW_OFF);
+	spin_unlock_irq(q->queue_lock);
+	return 0;
+}
+
+static void blk_update_tw_stats(struct blk_turbo_write *tw)
+{
+	int idx;
+
+	if (tw->curr_issued_kb > 0) {
+		idx = fls(tw->curr_issued_kb >> 22);
+		idx = (idx < 4) ? idx : 3;
+		tw->issued_size_cnt[idx]++;
+		tw->total_issued_mb += tw->curr_issued_kb >> 10;
+		tw->curr_issued_kb = 0;
+	}
+}
+
+void blk_update_tw_state(struct request_queue *q, int write_rqs, long long write_bytes)
+{
+	struct blk_turbo_write *tw = q->tw;
+
+	lockdep_assert_held(q->queue_lock);
+	if (!tw)
+		return;
+
+	switch (tw->state) {
+	case TW_OFF:
+		if (tw_may_on(tw, write_bytes, write_rqs))
+			set_tw_state(tw, TW_ON_READY);
+		break;
+	case TW_ON_READY:
+		if (tw_may_off(tw, write_bytes, write_rqs)) {
+			tw->prev_on_ready_ts = tw->state_ts;
+			set_tw_state(tw, TW_OFF);
+		} else if (time_after_eq(jiffies, tw->state_ts + tw->on_delay) ||
+			   time_after_eq(tw->prev_on_ready_ts + tw->on_interval, tw->state_ts)) {
+			tw->prev_on_ready_ts = tw->state_ts;
+			set_tw_state(tw, TW_ON);
+			if (tw->try_on) {
+				spin_unlock_irq(q->queue_lock);
+				tw->try_on(q);
+				spin_lock_irq(q->queue_lock);
+			}
+		}
+		break;
+	case TW_OFF_READY:
+		if (tw_may_on(tw, write_bytes, write_rqs)) {
+			set_tw_state(tw, TW_ON);
+		} else if (time_after_eq(jiffies, tw->state_ts + tw->off_delay)) {
+			set_tw_state(tw, TW_OFF);
+			if (tw->try_off) {
+				spin_unlock_irq(q->queue_lock);
+				tw->try_off(q);
+				spin_lock_irq(q->queue_lock);
+			}
+			blk_update_tw_stats(tw);
+		}
+		break;
+	case TW_ON:
+		if (tw_may_off(tw, write_bytes, write_rqs))
+			set_tw_state(tw, TW_OFF_READY);
+		break;
+	default:
+		BUG();
+		break;
+	}
+}
+
+void blk_account_tw_io(struct request_queue *q, int opf, int bytes)
+{
+	struct blk_turbo_write *tw = q->tw;
+
+	lockdep_assert_held(q->queue_lock);
+	if (!tw)
+		return;
+
+	if (opf & REQ_OP_WRITE)
+		tw->curr_issued_kb += bytes >> 10;
+}
+#endif /* CONFIG_BLK_TURBO_WRITE */
+
 struct request_queue *blk_alloc_queue(gfp_t gfp_mask)
 {
 	return blk_alloc_queue_node(gfp_mask, NUMA_NO_NODE, NULL);

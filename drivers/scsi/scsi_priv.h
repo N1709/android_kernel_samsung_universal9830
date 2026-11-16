@@ -194,4 +194,8 @@ static inline void scsi_dh_release_device(struct scsi_device *sdev) { }
 
 #define SCSI_DEVICE_BLOCK_MAX_TIMEOUT	600	/* units in seconds */
 
+#ifdef CONFIG_BLK_TURBO_WRITE
+extern void scsi_alloc_tw(struct scsi_device *sdev);
+#endif
+
 #endif /* _SCSI_PRIV_H */
