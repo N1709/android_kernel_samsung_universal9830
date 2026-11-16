@@ -18,8 +18,8 @@ Working document. Updated as the merge progresses.
 | dropped v4.20 files | `lib/chacha20.c`, `mm/kasan/kasan.c`, `mm/kasan/kasan_init.c`, `crypto/memneq.c` restored in `1b6e32131` |
 | arch/arm64 cluster | rc=0, zero errors (kernel, mm, lib, crypto) |
 | vendor build wiring | restored after the v4.20 normalization silently dropped it; see "Vendor build wiring" below |
-| v4.20 build | green at `652069257`, `be4e5edf5`, `41f6c8713` and `e0902dd4c` |
-| v4.20 boot image | packed: `boot-v420-e0902dd4c.img`, 61,865,984 bytes; phone staging pending until adb sees the device |
+| v4.20 build | green at `652069257`, `be4e5edf5`, `41f6c8713`, `e0902dd4c` and `589312407` |
+| v4.20 boot image | packed: `boot-v420-f0d0cf852.img`, 61,865,984 bytes, sha256 `a909d2ab6572081381a2975bcf63a6d1a503b1d4fce61bfa72ec628ec9685090`; phone staging pending until adb sees the device |
 | v4.20 boot test | pending — no image with the restored Samsung memory layout and arch hooks has been flashed yet |
 | DTB packaging | verified: Samsung `d7b7ab1e` header, FDT at offset 64, big-endian size fields, `__symbols__` present, ramdisk preserved, AVB footer zeroed |
 | Boot log capture | prepared: `scripts/dump_dss.sh` and `scripts/parse_dss.py` for warm-reset TWRP dumps |
@@ -32,10 +32,92 @@ Working document. Updated as the merge progresses.
 |---|---:|---|
 | v4.20 merge and generic normalization | 100% | merge `3027a7714`; generic files normalized by `a838f89fb` and `466c12f3e` |
 | Samsung memory layout | 100% code | `be4e5edf5` restores `corememsize`, `ZONE_MOVABLE`, memblock cap, PASR and hotplug hooks; build is green |
-| Samsung arch and generic hooks | ~95% | `41f6c8713` and `e0902dd4c` restore the CPU/PSCI/fault/memsize/panic/DSS hooks; diagnostic kevent hooks remain deferred |
-| Build-clean | 100% through `e0902dd4c` | `0` errors in `out/build.log`; boot image repacked |
-| Boot and stability | 0% | no image has reached userspace; the splash hang is still unexplained |
-| Overall | ~93% | restores, build and packaging are done; the boot test and the v5.0 merge remain |
+| Samsung arch and generic hooks | ~96% | `41f6c8713`, `e0902dd4c`, `f0d0cf852` and `589312407` restore the CPU/PSCI/fault/memsize/panic/DSS and clocksource hooks; the traps/entry/irqflags hooks remain deferred |
+| Build-clean | 100% through `589312407` | `0` errors in `out/build.log`; boot image repacked |
+| Boot and stability | 0% | no image has reached userspace; the splash hang is still unexplained, but the arch-timer clocksource-only path is now restored |
+| Overall | ~94% | restores, build and packaging are done; the boot test and the v5.0 merge remain |
+
+## v4.20 clocksource split restore (f0d0cf852)
+
+The Exynos 9830 device tree marks the `arm,armv8-timer` node with
+`use-clocksource-only;` (`exynos9830.dts:1157`, and the same property is
+in the 9820 and 9830_evt0 DTS files). The vendor `arm_arch_timer.c`
+reads it, skips `__arch_timer_setup()` and the per-CPU PPI enable in
+`arch_timer_starting_cpu()`, and skips `arch_timer_stop()` in the dying
+callback, so the arch timer never registers a clockevent device and the
+MCT supplies all per-CPU tick devices.
+
+The v4.20 merge dropped the property and the whole path, so the arch
+timer became the clockevent source even though the DT asks otherwise.
+That is the strongest remaining explanation for the splash hang: with
+no working arch-timer PPI the kernel never takes a tick.
+
+The same commit restores the MCT half of the split:
+`exynos4_clocksource_init()` again registers the MCT clocksource and
+sched_clock only when `CONFIG_ARM_ARCH_TIMER` is disabled, and the
+`mct-frc` rating goes back to 450. With the arch timer enabled the MCT
+is now only the clockevent provider, exactly as in the 4.19 vendor
+kernel.
+
+Build result on the laptop: zero errors.
+
+| File | Size | SHA-256 |
+|---|---:|---|
+| `Image` | 44,934,608 | `b376a6ff06f521c0fbc01bec630855d728de691cfcfc57597e37e0dd26d2b60a` |
+| `Image.gz` | 19,241,230 | `8822450b493f52d19044102a570fb43c54d05498aceffdf7f95894c8f528c25e` |
+| wrapped DTB | 342,016 | `0ba4cbf7160f76768bdf9e89552e948600ab1d4e0835038d276caed7db8afb5c` |
+| `boot-v420-f0d0cf852.img` | 61,865,984 | `a909d2ab6572081381a2975bcf63a6d1a503b1d4fce61bfa72ec628ec9685090` |
+
+The repacked image keeps the working 4.19 ramdisk (1,834,424 bytes) and
+places the 342,016-byte wrapped DTB at load address `0x10000000`. It is
+staged on the laptop at `/home/n1709/Android/Download/`. `adb devices`
+was still empty at pack time, so it has not been copied to the phone.
+The commit has not been boot-tested.
+
+## v4.20 memsize procfs and SLUB panics (589312407)
+
+Two mm-side vendor features were still missing after the memory-layout
+restore:
+
+1. `/proc/memsize/kernel` and `/proc/memsize/reserved`. The accounting
+   hooks were already back in `mm/memblock.c`, but the seq_file views
+   and their registration were not. Both are restored verbatim from
+   the vendor file, including the `CONFIG_SAMSUNG_PRODUCT_SHIP` address
+   masking and the `CONFIG_ION_RBIN_HEAP` system-page accounting.
+2. `CONFIG_SEC_DEBUG_BUG_ON_SLUB_CORRUPTION=y` compiled out of
+   `mm/slub.c`. All ten vendor `BUG()` sites are back, together with the
+   `pr_auto_once(7)` / `pr_auto(ASL7, ...)` / `pr_auto_disable(7)`
+   logging in `check_bytes_and_report()`.
+
+## Remaining Samsung deltas found by the audit
+
+These are still missing from generic files. All of the relevant configs
+are enabled in the z3s defconfig:
+
+- `arch/arm64/kernel/traps.c`: `CONFIG_SEC_DEBUG_DISABLE_IRQ_IN_DIE`
+  locking, `CONFIG_SEC_DEBUG_PRINT_PCLR` panic text,
+  `secdbg_exin_set_backtrace()`, and the
+  `CONFIG_SEC_DEBUG_FAULT_MSG_ADV` `do_undefinstr(regs, esr)` path.
+- `arch/arm64/mm/fault.c`: `__do_kernel_fault_safe()` and the
+  `exynos-adv-tracer` include; the v4.20 fault signature changes mean
+  this needs a careful rebase rather than a straight copy.
+- `arch/arm64/kernel/entry.S`: `CONFIG_SEC_DEBUG_EXCEPTION_STACK`
+  preservation and `CONFIG_SEC_DEBUG_BAD_STACK_CAREFULLY` checks.
+- `arch/arm64/include/asm/irqflags.h` and
+  `include/linux/spinlock_api_smp.h`: `dbg_snapshot_irqs_disabled()`
+  and `dbg_snapshot_spinlock()` hooks.
+- `drivers/watchdog/softdog.c`: `secdbg_softdog_show_info()` and the
+  `CONFIG_SEC_DEBUG_SOFTDOG_PWDT` panic string.
+- `kernel/workqueue.c`: `CONFIG_SEC_DEBUG_WQ_LOCKUP_INFO` dump.
+- `include/linux/nmi.h` and the lockup detector:
+  `CONFIG_SEC_DEBUG_LOCKUP_INFO` softirq/hardlockup plumbing.
+- `drivers/hwtracing/coresight/coresight-cpu-debug.c`: Exynos PMU
+  offsets and `exynos_cpu.power_state()` filtering.
+- `drivers/clk/samsung/clk-exynos4.c`, `clk-exynos5420.c`,
+  `clk-exynos5250.c`, `pwm-samsung.c`: vendor behaviour for older
+  Exynos SoCs; not used by universal9830, lowest priority.
+- `kernel/power/process.c`, `timer.c`, `hrtimer.c`, `tick-common.c`,
+  `cpuidle.c`, `mm/page-writeback.c`: DSS / sec_debug instrumentation.
 
 ## v4.20 early boot fix (652069257)
 

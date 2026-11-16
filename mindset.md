@@ -693,3 +693,54 @@ hardware once.
   build log for `error:` and check the artifact hashes and sizes. A boot
   image packed from a stale `out/` wastes a manual flash cycle.
 
+## 17. Clocksource split, memsize and SLUB restores (17 Nov 2026)
+
+- **Device-tree properties are part of the vendor ABI.** The Exynos 9830
+  DTS has always carried `use-clocksource-only;` on the armv8 timer node.
+  The v4.20 arm-timer driver silently ignored it, so the arch timer
+  registered a clockevent even though the vendor design expects the MCT
+  to own per-CPU ticks. A property that no code reads is a dropped
+  feature, not a harmless comment.
+- **Restore both halves of a split.** Honouring the property in the
+  arm-timer driver is not enough: the vendor MCT code also refuses to
+  register `mct-frc` as a clocksource or sched_clock when
+  `CONFIG_ARM_ARCH_TIMER` is enabled, and keeps the 450 rating. Port the
+  consumer and the provider together or the timer topology stays wrong.
+- **Procfs views are part of the interface.** Restoring the memsize
+  accounting without `/proc/memsize/kernel` and `/proc/memsize/reserved`
+  leaves userspace and bug reports without the data the vendor ROM
+  expects. The views are small seq_file functions; copy them from the
+  vendor file rather than reimplementing them.
+- **Debug configs that compile to nothing are easy to miss.** The z3s
+  defconfig sets `CONFIG_SEC_DEBUG_BUG_ON_SLUB_CORRUPTION=y`, but the
+  merged `mm/slub.c` had no `BUG()` sites. Always grep the source for
+  each enabled `SEC_DEBUG_*` symbol; a `=y` line proves nothing.
+- **Audit generic files by deleted token count.** Counting `exynos`,
+  `samsung`, `dbg_snapshot`, `sec_debug`, `secdbg` and `memsize` on the
+  minus side of `git diff vendor..HEAD` ranks the remaining losses. The
+  next items are `arch/arm64/kernel/traps.c`, `arch/arm64/mm/fault.c`,
+  `arch/arm64/kernel/entry.S`, `irqflags.h`, `spinlock_api_smp.h`,
+  softdog, workqueue lockup info and coresight PMU handling.
+- **Separate boot-blocking restores from diagnostics.** The arch-timer
+  and MCT changes can change whether the kernel ticks; the traps, entry
+  and spinlock hooks only change what a crash log contains. Ship the
+  first group in the boot-test image and keep the second group for the
+  next round.
+
+## Status after the timer restore
+
+| Area | Estimate |
+|---|---:|
+| v4.20 merge and generic normalization | 100% |
+| Samsung memory and clocksource restores | ~96% |
+| Build-clean | 100% through `589312407` |
+| Boot and stability | 0% (no image has reached userspace yet) |
+| Overall | ~94% |
+
+The latest build at `f0d0cf852`/`589312407` is green with zero errors.
+`boot-v420-f0d0cf852.img` (61,865,984 bytes, sha256
+`a909d2ab6572081381a2975bcf63a6d1a503b1d4fce61bfa72ec628ec9685090`)
+is packed on the laptop and waiting for a manual flash. Only the boot
+test can prove whether the arch-timer clocksource-only restore fixes the
+splash hang.
+
