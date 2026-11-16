@@ -13,6 +13,7 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/debug-snapshot-helper.h>
+#include <linux/debug-snapshot.h>
 #include <linux/suspend.h>
 #include <linux/interrupt.h>
 #include <linux/of_irq.h>

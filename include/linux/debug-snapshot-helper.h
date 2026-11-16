@@ -1,3 +1,4 @@
+#include <linux/debug-snapshot.h>
 /*
  * Copyright (c) 2013 Samsung Electronics Co., Ltd.
  *		http://www.samsung.com

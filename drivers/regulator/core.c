@@ -1,3 +1,4 @@
+#include <linux/regulator/proxy-consumer.h>
 /*
  * core.c  --  Voltage/Current Regulator framework.
  *
