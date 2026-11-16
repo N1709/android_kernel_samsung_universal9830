@@ -18,9 +18,9 @@ Working document. Updated as the merge progresses.
 | dropped v4.20 files | `lib/chacha20.c`, `mm/kasan/kasan.c`, `mm/kasan/kasan_init.c`, `crypto/memneq.c` restored in `1b6e32131` |
 | arch/arm64 cluster | rc=0, zero errors (kernel, mm, lib, crypto) |
 | vendor build wiring | restored after the v4.20 normalization silently dropped it; see "Vendor build wiring" below |
-| v4.20 build | green — last full build on the build host at `3a5db8c3d` |
-| v4.20 boot test | failed at the Samsung splash; the bootloader rejects a plain FDT and the packed DTB was not in Samsung format |
-| DTB packaging | fixed in the build: `DTC_FLAGS_exynos9830 := -@`, `scripts/wrap_samsung_dtb.py`, `scripts/repack_bootimg.py` |
+| v4.20 build | green — `652069257` on the build host; `Image` reports `4.20.0-cip126-st10-g652069257` |
+| v4.20 boot test | pending — `boot-v420-ect.img` is packed and staged; the previous splash hang is traced to three dropped Samsung early-boot hooks |
+| DTB packaging | verified: Samsung `d7b7ab1e` header, FDT at offset 64, big-endian size fields, `__symbols__` present, ramdisk preserved, AVB footer zeroed |
 | Boot log capture | prepared: `scripts/dump_dss.sh` and `scripts/parse_dss.py` for warm-reset TWRP dumps |
 | v5.0 merge | on hold until v4.20 builds and boots |
 | Branch | `K4.20` (GitHub default); `lineage-24.0` removed |
@@ -30,11 +30,42 @@ Working document. Updated as the merge progresses.
 | Area | Estimate | Evidence |
 |---|---:|---|
 | v4.20 merge and generic normalization | 100% | merge `3027a7714`; generic files normalized by `a838f89fb` and `466c12f3e` |
-| Build-clean | 100% | the full build at `3a5db8c3d` links `Image.gz` and `dtbs` with zero errors |
-| Boot and stability | 0% | the v4.20 image stops at the Samsung splash; packaging fixes are ready but not yet boot-tested |
-| Overall | ~85% | build is green; boot diagnosis and the v5.0 merge remain |
+| Build-clean | 100% | `652069257` links `Image.gz` and `dtbs` with zero errors |
+| Boot and stability | 0% | `boot-v420-ect.img` is staged; the restored early-boot hooks have not been boot-tested yet |
+| Overall | ~90% | build and packaging are done; the boot test and the v5.0 merge remain |
 
-The build is green at `3a5db8c3d`; do not rebuild on the phone. The build
+## v4.20 early boot fix (652069257)
+
+The v4.20 normalization replaced `setup_machine_fdt()` with the generic
+arm64 version and dropped three universal9830 hooks that the working 4.19
+vendor kernel relies on:
+
+1. `early_init_dt_scan_ect()` reserves the ECT parameter block at
+   `0x90000000` and calls `ect_init()` before the clock/power drivers
+   probe. Without it `ect_address` stays zero, `ect_parse_binary_header()`
+   bails out, and `cal-if` cannot find any DVFS block.
+2. `dbg_snapshot_early_init_dt_scan_dpm()` parses the DSS dump-mode policy
+   from the flat DT before the debug-snapshot initcall runs.
+3. `memblock_reserve(dt_phys, fdt_totalsize())` protects the DTB blob; the
+   Samsung bootloader does not emit a `/memreserve/` entry for it.
+
+All three are restored in `arch/arm64/kernel/setup.c`. The build at
+`652069257` produces:
+
+- `Image`: `4.20.0-cip126-st10-g652069257`, 44,866,912 bytes,
+  sha256 `54bc0c49274a554537d43ef181a003dfd9297b7453dfd4c0f89ba23ec1bb92eb`
+- `exynos9830.dtb`: wrapped, 340,939 bytes in the Samsung header
+  (FDT 340,875 bytes), sha256
+  `0ba4cbf7160f76768bdf9e89552e948600ab1d4e0835038d276caed7db8afb5c`
+- `boot-v420-ect.img`: 61,865,984 bytes, ramdisk SHA verified against the
+  working 4.19 template, AVB footer zeroed, sha256
+  `fd295075658c187460288208dd633cc2072d5a1623898cfdcde0941e481e72e2`
+
+The image is staged at `/sdcard/Download/Andronix/boot-v420-ect.img`.
+Flashing is manual (user-controlled); if the splash hang persists, warm
+reset to TWRP and capture the DSS ring before any cold boot.
+
+The build is green at `652069257`; do not rebuild on the phone. The build
 host is the laptop. This section is kept for the v5.0 merge only.
 
 The local clone is shallow (`git rev-parse --is-shallow-repository` says

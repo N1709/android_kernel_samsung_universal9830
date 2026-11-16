@@ -621,3 +621,27 @@ hardware once.
 - **Reporting**: build-clean means compile and link only. Boot is a separate
   milestone and stays at 0% until the v4.20 image reaches userspace.
 
+### 13.7 v4.20 early-boot hooks and detached builds
+
+- **Diff vendor arch code explicitly.** The v4.20 normalization replaced
+  `arch/arm64/kernel/setup.c` with the generic arm64 version. Samsung's
+  `setup_machine_fdt()` carried three hooks that no generic file provides:
+  ECT init (`early_init_dt_scan_ect()`), DSS DPM scan
+  (`dbg_snapshot_early_init_dt_scan_dpm()`) and the DTB memblock reservation.
+  When normalizing an arch directory, diff the vendor file against the new
+  upstream file and list every vendor hunk before deleting it.
+- **ECT is a boot-critical dependency.** `CONFIG_ECT=y` and `CONFIG_CAL_IF=y`
+  are not enough; both need the early DT scan. Without it `ect_address` stays
+  zero and the DVFS/clock tables are never populated.
+- **Detach long builds from the SSH session.** A dropped SSH connection can
+  SIGHUP `make` after tens of minutes. Run `nohup setsid ./build.sh ...`
+  and check the log with short, separate SSH commands.
+- **Do not restart `build.sh` casually.** Each run re-applies the defconfig
+  and fragment, rewrites `include/generated/autoconf.h`, and can invalidate
+  a large part of the object tree. Restart only after a real failure.
+- **Verify the packed image, not just the files.** Check `UTS_RELEASE` for
+  the target commit, the ramdisk SHA against the template, the Samsung DTB
+  magic at the DTB offset, the FDT magic at +64, and that the AVB footer is
+  zero. The image may be byte-perfect and still fail in the bootloader if
+  one of these regresses.
+
