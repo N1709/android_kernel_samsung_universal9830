@@ -321,7 +321,7 @@ static void rtc_device_get_offset(struct rtc_device *rtc)
  *
  * Returns the pointer to the new struct class device.
  */
-static struct rtc_device *rtc_device_register(const char *name,
+struct rtc_device *rtc_device_register(const char *name,
 					      struct device *dev,
 					      const struct rtc_class_ops *ops,
 					      struct module *owner)
@@ -398,7 +398,7 @@ exit:
  *
  * @rtc: the RTC class device to destroy
  */
-static void rtc_device_unregister(struct rtc_device *rtc)
+void rtc_device_unregister(struct rtc_device *rtc)
 {
 	mutex_lock(&rtc->ops_lock);
 	/*

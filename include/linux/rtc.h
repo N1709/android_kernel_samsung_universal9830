@@ -22,6 +22,10 @@ extern int rtc_month_days(unsigned int month, unsigned int year);
 extern int rtc_year_days(unsigned int day, unsigned int month, unsigned int year);
 extern int rtc_valid_tm(struct rtc_time *tm);
 extern time64_t rtc_tm_to_time64(struct rtc_time *tm);
+#ifdef CONFIG_RTC_HIGH_RES
+extern int rtc_valid_hrtm(struct rtc_hrtime *tm);
+extern time64_t rtc_hrtm_to_time64(struct rtc_hrtime *tm);
+#endif
 extern void rtc_time64_to_tm(time64_t time, struct rtc_time *tm);
 ktime_t rtc_tm_to_ktime(struct rtc_time tm);
 struct rtc_time rtc_ktime_to_tm(ktime_t kt);
@@ -75,6 +79,9 @@ extern struct class *rtc_class;
 struct rtc_class_ops {
 	int (*ioctl)(struct device *, unsigned int, unsigned long);
 	int (*read_time)(struct device *, struct rtc_time *);
+#ifdef CONFIG_RTC_HIGH_RES
+	int (*read_hrtime)(struct device *, struct rtc_hrtime *);
+#endif
 	int (*set_time)(struct device *, struct rtc_time *);
 	int (*read_alarm)(struct device *, struct rtc_wkalrm *);
 	int (*set_alarm)(struct device *, struct rtc_wkalrm *);
@@ -138,7 +145,6 @@ struct rtc_device {
 
 	bool registered;
 
-	struct nvmem_device *nvmem;
 	/* Old ABI support */
 	bool nvram_old_abi;
 	struct bin_attribute *nvram;
@@ -163,20 +169,28 @@ struct rtc_device {
 #define to_rtc_device(d) container_of(d, struct rtc_device, dev)
 
 /* useful timestamps */
-#define RTC_TIMESTAMP_BEGIN_1900	-2208989361LL /* 1900-01-01 00:00:00 */
+#define RTC_TIMESTAMP_BEGIN_1900	-2208988800LL /* 1900-01-01 00:00:00 */
 #define RTC_TIMESTAMP_BEGIN_2000	946684800LL /* 2000-01-01 00:00:00 */
 #define RTC_TIMESTAMP_END_2099		4102444799LL /* 2099-12-31 23:59:59 */
 
+extern struct rtc_device *rtc_device_register(const char *name,
+					struct device *dev,
+					const struct rtc_class_ops *ops,
+					struct module *owner);
 extern struct rtc_device *devm_rtc_device_register(struct device *dev,
 					const char *name,
 					const struct rtc_class_ops *ops,
 					struct module *owner);
 struct rtc_device *devm_rtc_allocate_device(struct device *dev);
 int __rtc_register_device(struct module *owner, struct rtc_device *rtc);
+extern void rtc_device_unregister(struct rtc_device *rtc);
 extern void devm_rtc_device_unregister(struct device *dev,
 					struct rtc_device *rtc);
 
 extern int rtc_read_time(struct rtc_device *rtc, struct rtc_time *tm);
+#ifdef CONFIG_RTC_HIGH_RES
+extern int rtc_read_hrtime(struct rtc_device *rtc, struct rtc_hrtime *tm);
+#endif
 extern int rtc_set_time(struct rtc_device *rtc, struct rtc_time *tm);
 extern int rtc_set_ntp_time(struct timespec64 now, unsigned long *target_nsec);
 int __rtc_read_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm);
@@ -272,20 +286,4 @@ static inline int rtc_nvmem_register(struct rtc_device *rtc,
 static inline void rtc_nvmem_unregister(struct rtc_device *rtc) {}
 #endif
 
-#ifdef CONFIG_RTC_INTF_SYSFS
-int rtc_add_group(struct rtc_device *rtc, const struct attribute_group *grp);
-int rtc_add_groups(struct rtc_device *rtc, const struct attribute_group **grps);
-#else
-static inline
-int rtc_add_group(struct rtc_device *rtc, const struct attribute_group *grp)
-{
-	return 0;
-}
-
-static inline
-int rtc_add_groups(struct rtc_device *rtc, const struct attribute_group **grps)
-{
-	return 0;
-}
-#endif
 #endif /* _LINUX_RTC_H_ */

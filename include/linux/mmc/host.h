@@ -63,6 +63,7 @@ struct mmc_ios {
 #define MMC_TIMING_MMC_DDR52	8
 #define MMC_TIMING_MMC_HS200	9
 #define MMC_TIMING_MMC_HS400	10
+#define MMC_TIMING_MMC_HS400_ES	11
 
 	unsigned char	signal_voltage;		/* signalling voltage (1.8V or 3.3V) */
 
@@ -168,6 +169,9 @@ struct mmc_host_ops {
 	 */
 	int	(*multi_io_quirk)(struct mmc_card *card,
 				  unsigned int direction, int blk_size);
+	void    (*ssclk_control)(struct mmc_host *host, int enable);
+
+	void	(*restore_host)(struct mmc_host *mmc);
 };
 
 struct mmc_cqe_ops {
@@ -486,6 +490,15 @@ void mmc_request_done(struct mmc_host *, struct mmc_request *);
 void mmc_command_done(struct mmc_host *host, struct mmc_request *mrq);
 
 void mmc_cqe_request_done(struct mmc_host *host, struct mmc_request *mrq);
+
+/*
+ * May be called from host driver suspend/resume callbacks to know if
+ * SDIO IRQs have been claimed.
+ */
+static inline bool sdio_irq_claimed(struct mmc_host *host)
+{
+	return host->sdio_irqs > 0;
+}
 
 static inline void mmc_signal_sdio_irq(struct mmc_host *host)
 {
