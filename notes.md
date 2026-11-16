@@ -2,7 +2,7 @@
 
 Working document. Updated as the merge progresses.
 
-## Current status (16 Nov 2026)
+## Current status (17 Nov 2026)
 
 | Stage | Status |
 |---|---|
@@ -18,21 +18,23 @@ Working document. Updated as the merge progresses.
 | dropped v4.20 files | `lib/chacha20.c`, `mm/kasan/kasan.c`, `mm/kasan/kasan_init.c`, `crypto/memneq.c` restored in `1b6e32131` |
 | arch/arm64 cluster | rc=0, zero errors (kernel, mm, lib, crypto) |
 | vendor build wiring | restored after the v4.20 normalization silently dropped it; see "Vendor build wiring" below |
-| v4.20 build | green — `652069257` on the build host; `Image` reports `4.20.0-cip126-st10-g652069257` |
-| v4.20 boot test | pending — `boot-v420-ect.img` is packed and staged; the previous splash hang is traced to three dropped Samsung early-boot hooks |
+| v4.20 build | green at `652069257`, `be4e5edf5` and `41f6c8713`; `e0902dd4c` is building |
+| v4.20 boot test | pending — no image with the restored Samsung memory layout and arch hooks has been flashed yet |
 | DTB packaging | verified: Samsung `d7b7ab1e` header, FDT at offset 64, big-endian size fields, `__symbols__` present, ramdisk preserved, AVB footer zeroed |
 | Boot log capture | prepared: `scripts/dump_dss.sh` and `scripts/parse_dss.py` for warm-reset TWRP dumps |
 | v5.0 merge | on hold until v4.20 builds and boots |
 | Branch | `K4.20` (GitHub default); `lineage-24.0` removed |
 
-## Progress snapshot (16 Nov 2026)
+## Progress snapshot (17 Nov 2026)
 
 | Area | Estimate | Evidence |
 |---|---:|---|
 | v4.20 merge and generic normalization | 100% | merge `3027a7714`; generic files normalized by `a838f89fb` and `466c12f3e` |
-| Build-clean | 100% | `652069257` links `Image.gz` and `dtbs` with zero errors |
-| Boot and stability | 0% | `boot-v420-ect.img` is staged; the restored early-boot hooks have not been boot-tested yet |
-| Overall | ~90% | build and packaging are done; the boot test and the v5.0 merge remain |
+| Samsung memory layout | 100% code | `be4e5edf5` restores `corememsize`, `ZONE_MOVABLE`, memblock cap, PASR and hotplug hooks; build is green |
+| Samsung arch and generic hooks | ~95% | `41f6c8713` and `e0902dd4c` restore the CPU/PSCI/fault/memsize/panic/DSS hooks; diagnostic kevent hooks remain deferred |
+| Build-clean | 100% through `41f6c8713` | `0` errors in `out/build.log`; `e0902dd4c` build in progress |
+| Boot and stability | 0% | no image has reached userspace; the splash hang is still unexplained |
+| Overall | ~92% | restores and build are nearly done; the boot test and the v5.0 merge remain |
 
 ## v4.20 early boot fix (652069257)
 
@@ -65,8 +67,43 @@ The image is staged at `/sdcard/Download/Andronix/boot-v420-ect.img`.
 Flashing is manual (user-controlled); if the splash hang persists, warm
 reset to TWRP and capture the DSS ring before any cold boot.
 
-The build is green at `652069257`; do not rebuild on the phone. The build
-host is the laptop. This section is kept for the v5.0 merge only.
+## v4.20 memory layout restore (be4e5edf5)
+
+The v4.20 merge also dropped the Samsung memory layout that the working
+4.19 kernel uses:
+
+1. `corememsize=8G` from the Samsung bootloader was no longer parsed.
+   `required_corepages` stayed zero, `zone_sizes_init()` never carved the
+   top 4GB out as `ZONE_MOVABLE`, `memblock_set_current_limit()` was never
+   applied, and `dma_contiguous_reserve()` used the full DRAM limit.
+2. `arch/arm64/Kconfig` lost `ARCH_ENABLE_MEMORY_HOTPLUG` and
+   `ARCH_ENABLE_MEMORY_HOTREMOVE`. Both are hidden `def_bool` symbols, so
+   the defconfig requests for `CONFIG_MEMORY_HOTPLUG`,
+   `CONFIG_MEMORY_HOTREMOVE`, `CONFIG_MEMORY_HOTPLUG_SPARSE` and
+   `CONFIG_EXYNOS_PASR` were silently discarded when the config was
+   regenerated.
+3. `arch/arm64/mm/mmu.c` lost `arch_add_memory()`, `arch_remove_memory()`,
+   `remove_pagetable()` and the `vmemmap_free()` body.
+4. `drivers/base/memory.c` lost `memory_block_online()` and
+   `memory_block_offline()`, which the PASR driver calls.
+5. `mm/memory_hotplug.c` lost `mem_stop_offline()`, although
+   `drivers/base/power/wakeup.c` still calls it.
+
+`be4e5edf5` restores all of the above, keeps the v4.20 generic offline
+loop, and makes `CONFIG_EXYNOS_PASR` build again. The vendor parallel
+offline worker (`HP_WORK_COUNT`, watchdog keepalive) is not ported yet.
+It is a suspend-time speed optimization, not a correctness requirement;
+v4.20's generic `offline_pages()` path remains functional. Record this as
+the remaining PASR deferral.
+
+The 4.19 reference layout from dmesg is Normal 2,064,384 pages plus
+Movable 1,048,576 pages with `required core pages: 0x200000`. The new
+image must print the same `required core pages` line and the same zone
+split before the boot result can be considered meaningful.
+
+The build at `652069257` was green. `be4e5edf5` restores the memory
+layout on top of it; the rebuild and boot test are the next step. Do not
+rebuild on the phone. The build host is the laptop.
 
 The local clone is shallow (`git rev-parse --is-shallow-repository` says
 true) and partial (`blob:none`). Tags `v4.20` and `v5.0` are present;
@@ -75,8 +112,73 @@ true) and partial (`blob:none`). Tags `v4.20` and `v5.0` are present;
 ```bash
 git fetch --unshallow --filter=blob:none origin
 git fetch --filter=blob:none stable tag v4.19.325 tag v4.20 tag v5.0
-git merge-base HEAD v4.19.325     # harus a67e7cdde7cc...
+git merge-base HEAD v4.19.325     # must be a67e7cdde7cc...
 ```
+
+## Samsung arch and generic hook restore (17 Nov 2026)
+
+The v4.20 normalization forced generic files to upstream, so Samsung hooks
+that live outside `drivers/soc/samsung` and `drivers/media` were dropped
+silently. Two commits restore them.
+
+### `41f6c8713` — CPU, PSCI and fault hooks
+
+- `ARM_CPU_IMP_SEC` and `MIDR_SEC_M5`, with the M5 core in the KPTI safe
+  list. `CONFIG_UNMAP_KERNEL_AT_EL0` is off, so this is correctness parity,
+  not the splash fix.
+- `exynos_cpuhp_last_cpu()` in `cpu_psci_cpu_die()`, so the last CPU uses
+  affinity level 1.
+- `SEC_DEBUG_AVOID_UNNECESSARY_TRAP`: the `incorrect_addr` mask and the
+  vendor `show_data()` dumper in the register dump.
+- `SEC_DEBUG_EXTRA_INFO` and `SEC_DEBUG_FAULT_MSG_ADV`: fault logging plus
+  `show_virt_to_phys()`.
+- DSS hooks on restart, register dump, hardlockup entry and bad-mode entry.
+
+Build result on the laptop: zero errors. Artifacts:
+
+| File | Size | SHA-256 |
+|---|---:|---|
+| `Image` | 44,934,608 | `4f93306fba4c4c8218cf527b672a29f98d5acfbd16c4622c6d86a2002b8bb0de` |
+| `Image.gz` | 19,243,954 | `c01712bb5bf63b39ee0f7cf52646ac527cd930971f95f78c35c4c1a17e9c0e47` |
+| `exynos9830.dtb` | 340,875 | `5debbdef33ca959ee523c5a39ff4bf5537e80b76532a6676add0d75fa9f89562` |
+
+The `Image` hash matches the earlier `be4e5edf5` build because that rebuild
+already contained these edits in the working tree before they were
+committed. The DTB difference is build-time metadata, not a DTS change.
+
+### `e0902dd4c` — memsize accounting and DSS PM hooks
+
+- Account the FDT memreserve ranges, reserved-memory regions, default CMA,
+  printk log buffer and init/main sections in the memsize reserved list.
+- Call `dbg_snapshot_early_panic()`, `dbg_snapshot_prepare_panic()`,
+  `dbg_snapshot_dump_panic()` and `dbg_snapshot_post_panic()` in `panic()`,
+  and stop the latency checker before interrupts are disabled.
+- DSS kevents on CPU hotplug, workqueue execution, softirq and tasklet
+  dispatch, generic IRQ dispatch, syscore suspend/resume/shutdown, s2idle,
+  suspend enter/machine suspend/resume console and process thaw.
+- Restore `dbg_snapshot_hook_pmsg()` on the pstore update path.
+
+The build for this commit is in progress at the time of writing. It has not
+been boot-tested.
+
+### Remaining deferrals
+
+- Diagnostic kevent instrumentation only: `mm/slub.c`,
+  `kernel/locking/qspinlock.c`, `include/asm-generic/qspinlock.h`,
+  `lib/debugobjects.c`, `kernel/time/*`, `kernel/notifier.c`,
+  `kernel/rcu/tree.c`, `kernel/exit.c`, `kernel/kthread.c`,
+  `kernel/reboot.c`, `drivers/base/core.c`, `drivers/watchdog/softdog.c`
+  and `drivers/cpuidle/cpuidle.c`.
+- `drivers/clocksource/exynos_mct.c`: the vendor tick-stop force/periodic
+  refinements and MCT bootstat hook are not ported. The v4.20 MCT driver
+  builds and is the active clocksource.
+- `dbg_snapshot_irqs_disabled()` and `dbg_snapshot_reg()` are no-ops because
+  `CONFIG_DEBUG_SNAPSHOT_USER_MODE=y` disables the sub-options; not ported.
+- pstore keeps the upstream writecombine mapping. The vendor maps the DSS
+  buffer with `PAGE_KERNEL` when `CONFIG_DEBUG_SNAPSHOT=y`; that optimization
+  is skipped so pstore stays readable while DSS is unavailable.
+- The PASR parallel offline worker (`HP_WORK_COUNT`, watchdog keepalive)
+  remains deferred; v4.20's generic `offline_pages()` loop is used.
 
 ## Boot failure diagnosis (16 Nov 2026)
 

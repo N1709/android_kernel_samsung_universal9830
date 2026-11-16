@@ -645,3 +645,51 @@ hardware once.
   zero. The image may be byte-perfect and still fail in the bootloader if
   one of these regresses.
 
+## 15. v4.20 memory layout restore (16 Nov 2026)
+
+- **Hidden Kconfig symbols fail silently.** `ARCH_ENABLE_MEMORY_HOTPLUG`
+  and `ARCH_ENABLE_MEMORY_HOTREMOVE` are `def_bool` symbols with no prompt.
+  If the arch Kconfig does not define them, a `=y` line in the defconfig is
+  ignored and the dependent `MEMORY_HOTPLUG`, `MEMORY_HOTREMOVE` and
+  `EXYNOS_PASR` options disappear from `out/.config`. Always compare the
+  regenerated config with the defconfig requests after a merge.
+- **Restore the whole memory contract, not just the parser.** The Samsung
+  layout needs the `corememsize` parser, the `ZONE_MOVABLE` split, the
+  memblock current limit, the CMA reserve limit, the arm64 hotplug mapping
+  hooks, the memory block online/offline helpers and `mem_stop_offline`.
+  Patching only `corememsize` would leave the movable zone and PASR
+  unusable or leave the link broken once hotremove is enabled.
+- **Do not port the vendor parallel offliner just to tick a box.** The
+  `HP_WORK_COUNT` worker and watchdog keepalive are suspend-time speed
+  optimizations. The v4.20 generic `offline_pages()` loop is correct and
+  keeps the first boot test simpler. Record the optimization as a
+  deferral and revisit it after userspace is reached.
+- **The memory layout is not verified until dmesg shows it.** The expected
+  reference is `required core pages: 0x200000`, Normal 2,064,384 pages and
+  Movable 1,048,576 pages. A clean build or a changed splash screen is not
+  proof that the layout was restored.
+
+## 16. Samsung generic-file hooks (17 Nov 2026)
+
+- **Vendor code hides in generic files.** The v4.20 normalization only
+  replaced generic files with upstream versions, so Samsung calls inside
+  `init/main.c`, `kernel/panic.c`, `kernel/softirq.c`,
+  `kernel/irq/irqdesc.c`, `kernel/power/*`, `drivers/of/*`,
+  `kernel/dma/contiguous.c` and `fs/pstore/ram_core.c` disappeared without
+  breaking the build. Audit by diffing the vendor tree against `HEAD` for
+  `exynos`, `dbg_snapshot`, `sec_debug` and `memsize` symbols per file.
+  Counting Kconfig symbols does not find these losses.
+- **A green build does not prove a restore is linked.** The `41f6c8713`
+  `Image` hash repeats the earlier build because that working tree already
+  had the edits. Before trusting a rebuild, confirm the touched translation
+  units appear in `out/build.log`; a stale object file produces a green
+  build with the old behaviour.
+- **Restore correctness before diagnostics.** Memory accounting, panic
+  plumbing and the pstore update hook affect what the next boot can prove.
+  Kevent instrumentation in slub, spinlocks, RCU, timers and debugobjects
+  only adds tracing detail. Port the first group, record the second group
+  as deferrals, and do not delay the boot test for it.
+- **Verify the toolchain result, not only `make`'s exit code.** Grep the
+  build log for `error:` and check the artifact hashes and sizes. A boot
+  image packed from a stale `out/` wastes a manual flash cycle.
+
