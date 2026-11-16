@@ -12,6 +12,7 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/time.h>
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/ktime.h>
@@ -112,7 +113,7 @@ static int dbg_snapshot_combine_pmsg(char *buffer, size_t count, unsigned int le
 
 			tv_kernel = local_clock();
 			rem_nsec = do_div(tv_kernel, 1000000000);
-			time_to_tm(logger.tv_sec, 0, &tmBuf);
+			time64_to_tm(logger.tv_sec, 0, &tmBuf);
 
 			logbuf_len = snprintf(logbuf, DSS_LOGGER_HEADER_SIZE,
 					"\n[%5lu.%06lu][%d:%16s] %02d-%02d %02d:%02d:%02d.%03d %5d %5d  ",

@@ -191,6 +191,38 @@ extern void __iomem *ioremap_cache(phys_addr_t phys_addr, size_t size);
 #define iowrite32be(v,p)	({ __iowmb(); __raw_writel((__force __u32)cpu_to_be32(v), p); })
 #define iowrite64be(v,p)	({ __iowmb(); __raw_writeq((__force __u64)cpu_to_be64(v), p); })
 
+#ifndef __raw_readb_no_log
+#define __raw_readb_no_log(c)		__raw_readb(c)
+#define __raw_readw_no_log(c)		__raw_readw(c)
+#define __raw_readl_no_log(c)		__raw_readl(c)
+#define __raw_readq_no_log(c)		__raw_readq(c)
+
+#define __raw_writeb_no_log(v,c)	__raw_writeb((v),(c))
+#define __raw_writew_no_log(v,c)	__raw_writew((v),(c))
+#define __raw_writel_no_log(v,c)	__raw_writel((v),(c))
+#define __raw_writeq_no_log(v,c)	__raw_writeq((v),(c))
+
+#define readb_relaxed_no_log(c)		readb_relaxed(c)
+#define readw_relaxed_no_log(c)		readw_relaxed(c)
+#define readl_relaxed_no_log(c)		readl_relaxed(c)
+#define readq_relaxed_no_log(c)		readq_relaxed(c)
+
+#define writeb_relaxed_no_log(v,c)	writeb_relaxed((v),(c))
+#define writew_relaxed_no_log(v,c)	writew_relaxed((v),(c))
+#define writel_relaxed_no_log(v,c)	writel_relaxed((v),(c))
+#define writeq_relaxed_no_log(v,c)	writeq_relaxed((v),(c))
+
+#define readb_no_log(c)			readb(c)
+#define readw_no_log(c)			readw(c)
+#define readl_no_log(c)			readl(c)
+#define readq_no_log(c)			readq(c)
+
+#define writeb_no_log(v,c)		writeb((v),(c))
+#define writew_no_log(v,c)		writew((v),(c))
+#define writel_no_log(v,c)		writel((v),(c))
+#define writeq_no_log(v,c)		writeq((v),(c))
+#endif
+
 #include <asm-generic/io.h>
 
 /*

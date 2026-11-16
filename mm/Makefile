@@ -46,20 +46,15 @@ obj-y			:= filemap.o mempool.o oom_kill.o fadvise.o \
 			   debug.o $(mmu-y) showmem_extra.o panic_handler.o
 
 obj-y += init-mm.o
-
-ifdef CONFIG_KZEROD
-obj-y += kzerod.o
-endif
-ifdef CONFIG_NO_BOOTMEM
-	obj-y		+= nobootmem.o
-else
-	obj-y		+= bootmem.o
-endif
+obj-y += memblock.o
 
 ifdef CONFIG_MMU
 	obj-$(CONFIG_ADVISE_SYSCALLS)	+= madvise.o
 endif
-obj-$(CONFIG_HAVE_MEMBLOCK) += memblock.o
+
+ifdef CONFIG_KZEROD
+obj-y += kzerod.o
+endif
 
 obj-$(CONFIG_SWAP)	+= page_io.o swap_state.o swapfile.o swap_slots.o
 obj-$(CONFIG_FRONTSWAP)	+= frontswap.o
