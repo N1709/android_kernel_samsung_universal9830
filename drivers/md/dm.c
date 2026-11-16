@@ -1951,7 +1951,7 @@ static struct mapped_device *alloc_dev(int minor)
 
 	if (IS_ENABLED(CONFIG_DAX_DRIVER)) {
 		dax_dev = alloc_dax(md, md->disk->disk_name,
-							&dm_dax_ops, 0);
+							&dm_dax_ops);
 		if (!dax_dev)
 			goto bad;
 	}
