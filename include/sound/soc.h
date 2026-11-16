@@ -380,6 +380,11 @@
 #define SND_SOC_COMP_ORDER_LATE		1
 #define SND_SOC_COMP_ORDER_LAST		2
 
+#define for_each_comp_order(order)		\
+	for (order  = SND_SOC_COMP_ORDER_FIRST;	\
+	     order <= SND_SOC_COMP_ORDER_LAST;	\
+	     order++)
+
 /* DAI Link Host Mode Support */
 #define SND_SOC_DAI_LINK_NO_HOST		0x1
 #define SND_SOC_DAI_LINK_OPT_HOST		0x2
@@ -886,6 +891,11 @@ struct snd_soc_component {
 #endif
 };
 
+#define for_each_component_dais(component, dai)\
+	list_for_each_entry(dai, &(component)->dai_list, list)
+#define for_each_component_dais_safe(component, dai, _dai)\
+	list_for_each_entry_safe(dai, _dai, &(component)->dai_list, list)
+
 struct snd_soc_rtdcom_list {
 	struct snd_soc_component *component;
 	struct list_head list; /* rtd::component_list */
@@ -950,6 +960,7 @@ struct snd_soc_dai_link {
 	 */
 	const char *platform_name;
 	struct device_node *platform_of_node;
+	struct snd_soc_dai_link_component *platform;
 	int id;	/* optional ID for machine driver link identification */
 
 	const struct snd_soc_pcm_stream *params;
@@ -1023,6 +1034,11 @@ struct snd_soc_dai_link {
 	/* this value determines what all ops can be started asynchronously */
 	enum snd_soc_async_ops async_ops;
 };
+
+#define for_each_link_codecs(link, i, codec)				\
+	for ((i) = 0;							\
+	     ((i) < link->num_codecs) && ((codec) = &link->codecs[i]);	\
+	     (i)++)
 
 struct snd_soc_codec_conf {
 	/*
@@ -1140,6 +1156,7 @@ struct snd_soc_card {
 
 	/* lists of probed devices belonging to this card */
 	struct list_head component_dev_list;
+	struct list_head list;
 
 	struct list_head widgets;
 	struct list_head paths;
