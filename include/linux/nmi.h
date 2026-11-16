@@ -285,4 +285,5 @@ extern int proc_watchdog_cpumask(struct ctl_table *, int,
 
 extern void update_hardlockup_type(unsigned int cpu);
 extern unsigned long long get_dss_softlockup_thresh(void);
+extern unsigned long long get_hardlockup_thresh(void);
 #endif
