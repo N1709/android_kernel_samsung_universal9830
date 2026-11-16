@@ -45,10 +45,10 @@ void icmp_err(struct sk_buff *skb, u32 info);
 int icmp_init(void);
 void icmp_out_count(struct net *net, unsigned char type);
 
-#endif	/* _ICMP_H */
-
 /* NDO send wrapper for xfrm */
 static inline void icmp_ndo_send(struct sk_buff *skb, int type, int code, __be32 info)
 {
 	icmp_send(skb, type, code, info);
 }
+
+#endif	/* _ICMP_H */
