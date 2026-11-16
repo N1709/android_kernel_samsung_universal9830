@@ -487,8 +487,16 @@ __bad_stack:
 /*
  * Invalid mode handlers
  */
+	.macro dpm_entry, el
+#ifdef CONFIG_DEBUG_SNAPSHOT
+	mov	x0, sp
+	bl	dbg_snapshot_do_dpm
+#endif
+	.endm
+
 	.macro	inv_entry, el, reason, regsize = 64
 	kernel_entry \el, \regsize
+	dpm_entry
 	mov	x0, sp
 	mov	x1, #\reason
 	mrs	x2, esr_el1
@@ -540,6 +548,7 @@ ENDPROC(el1_error_invalid)
 	.align	6
 el1_sync:
 	kernel_entry 1
+	dpm_entry
 	mrs	x1, esr_el1			// read the syndrome register
 	lsr	x24, x1, #ESR_ELx_EC_SHIFT	// exception class
 	cmp	x24, #ESR_ELx_EC_DABT_CUR	// data abort in EL1

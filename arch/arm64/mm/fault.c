@@ -32,6 +32,9 @@
 #include <linux/perf_event.h>
 #include <linux/preempt.h>
 #include <linux/hugetlb.h>
+#include <linux/vmalloc.h>
+#include <linux/debug-snapshot.h>
+#include <linux/sec_debug.h>
 
 #include <asm/bug.h>
 #include <asm/cmpxchg.h>
@@ -58,6 +61,21 @@ struct fault_info {
 
 static const struct fault_info fault_info[];
 static struct fault_info debug_fault_info[];
+
+#ifdef CONFIG_SEC_DEBUG_AVOID_UNNECESSARY_TRAP
+unsigned long long incorrect_addr;
+#endif
+
+static inline phys_addr_t show_virt_to_phys(unsigned long addr)
+{
+	if (!is_vmalloc_addr((void *)addr) ||
+	    (addr >= (unsigned long)KERNEL_START &&
+	     addr <= (unsigned long)KERNEL_END))
+		return __pa(addr);
+	else
+		return page_to_phys(vmalloc_to_page((void *)addr)) +
+		       offset_in_page(addr);
+}
 
 static inline const struct fault_info *esr_to_fault_info(unsigned int esr)
 {
@@ -266,8 +284,13 @@ static void die_kernel_fault(const char *msg, unsigned long addr,
 {
 	bust_spinlocks(1);
 
-	pr_alert("Unable to handle kernel %s at virtual address %016lx\n", msg,
-		 addr);
+	pr_auto(ASL1, "Unable to handle kernel %s at virtual address %016lx\n",
+		msg, addr);
+
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+	secdbg_exin_set_fault(KERNEL_FAULT, addr, regs);
+	secdbg_exin_set_esr(esr);
+#endif
 
 	mem_abort_decode(esr);
 
@@ -627,7 +650,15 @@ static int do_sea(unsigned long addr, unsigned int esr, struct pt_regs *regs)
 	const struct fault_info *inf;
 	void __user *siaddr;
 
+#ifdef CONFIG_SEC_DEBUG_AVOID_UNNECESSARY_TRAP
+	incorrect_addr = (unsigned long long)addr;
+#endif
+
 	inf = esr_to_fault_info(esr);
+
+	if (IS_ENABLED(CONFIG_SEC_DEBUG_FAULT_MSG_ADV))
+		pr_auto(ASL1, "%s (0x%08x) at 0x%016lx[0x%09llx]\n",
+			inf->name, esr, addr, show_virt_to_phys(addr));
 
 	/*
 	 * Synchronous aborts may interrupt code which had interrupts masked.
@@ -643,6 +674,13 @@ static int do_sea(unsigned long addr, unsigned int esr, struct pt_regs *regs)
 		if (interrupts_enabled(regs))
 			nmi_exit();
 	}
+
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+	if (!user_mode(regs)) {
+		secdbg_exin_set_fault(SEABORT_FAULT, addr, regs);
+		secdbg_exin_set_esr(esr);
+	}
+#endif
 
 	if (esr & ESR_ELx_FnV)
 		siaddr = NULL;
