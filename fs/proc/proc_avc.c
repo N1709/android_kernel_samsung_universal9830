@@ -11,7 +11,7 @@
 #include <linux/proc_fs.h>
 #include <linux/fs.h>
 #include <linux/syslog.h>
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/export.h>
 
 #include <linux/uaccess.h>
