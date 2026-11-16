@@ -203,6 +203,8 @@ static int ion_system_heap_shrink(struct ion_heap *heap, gfp_t gfp_mask,
 	return nr_total;
 }
 
+static struct ion_system_heap *system_heap;
+
 static struct ion_heap_ops system_heap_ops = {
 	.allocate = ion_system_heap_allocate,
 	.free = ion_system_heap_free,
@@ -273,9 +275,17 @@ static int ion_system_heap_create(void)
 	if (IS_ERR(heap))
 		return PTR_ERR(heap);
 	heap->name = "ion_system_heap";
+	system_heap = container_of(heap, struct ion_system_heap, heap);
 
 	ion_device_add_heap(heap);
 	return 0;
+}
+
+unsigned int get_ion_system_heap_id(void)
+{
+	if (system_heap)
+		return system_heap->heap.id;
+	return -ENODEV;
 }
 device_initcall(ion_system_heap_create);
 

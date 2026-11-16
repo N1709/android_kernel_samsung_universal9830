@@ -134,6 +134,9 @@
 #include <linux/psi.h>
 #include "sched.h"
 
+/* Samsung PSI growth monitor: consumed by lmkd_debug */
+u64 psi_full_max;
+
 static int psi_bug __read_mostly;
 
 DEFINE_STATIC_KEY_FALSE(psi_disabled);

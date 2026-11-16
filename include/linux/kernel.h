@@ -579,6 +579,7 @@ extern enum system_states {
 	SYSTEM_POWER_OFF,
 	SYSTEM_RESTART,
 	SYSTEM_SUSPEND,
+	SYSTEM_END,
 } system_state;
 
 /* This cannot be an enum because some may be used in assembly source. */

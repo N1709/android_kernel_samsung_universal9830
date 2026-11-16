@@ -43,6 +43,8 @@ int reboot_default = 1;
 int reboot_cpu;
 enum reboot_type reboot_type = BOOT_ACPI;
 int reboot_force;
+/* To prevent kernel panic by EIO during shutdown */
+int ignore_fs_panic;
 
 /*
  * If set, this is used for preparing the system to power off.
@@ -136,7 +138,7 @@ EXPORT_SYMBOL(devm_register_reboot_notifier);
  *	Notifier list for kernel code which wants to be called
  *	to restart the system.
  */
-static ATOMIC_NOTIFIER_HEAD(restart_handler_list);
+ATOMIC_NOTIFIER_HEAD(restart_handler_list);
 
 /**
  *	register_restart_handler - Register function to be called to reset

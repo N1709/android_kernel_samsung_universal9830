@@ -1584,6 +1584,10 @@ config HAVE_FUTEX_CMPXCHG
 	  is implemented and always working. This removes a couple of runtime
 	  checks.
 
+config ANON_INODES
+	bool
+	default y
+
 config EPOLL
 	bool "Enable eventpoll support" if EXPERT
 	default y

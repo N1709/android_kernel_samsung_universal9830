@@ -54,3 +54,4 @@ CFLAGS_genhd.o = -Wformat
 
 
 GCOV_PROFILE_blk-core.o	:=y
+obj-y		+= blk-pm.o

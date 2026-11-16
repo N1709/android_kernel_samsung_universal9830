@@ -94,3 +94,5 @@
 #define BINDERFS_SUPER_MAGIC	0x6c6f6f70
 
 #endif /* __LINUX_MAGIC_H__ */
+
+#define DMA_BUF_MAGIC		0x444d4142	/* "DMAB" */

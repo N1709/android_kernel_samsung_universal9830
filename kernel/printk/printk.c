@@ -636,7 +636,7 @@ EXPORT_SYMBOL(register_hook_logbuf);
 #endif
 
 #ifdef CONFIG_SEC_DEBUG_FIRST2M_LOG
-static void (*func_hook_first_kmsg)(const char *buf, size_t size);
+void (*func_hook_first_kmsg)(const char *buf, size_t size);
 void register_first_kmsg_hook_func(void (*func)(const char *buf, size_t size))
 {
 	unsigned long flags;

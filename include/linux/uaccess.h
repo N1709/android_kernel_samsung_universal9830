@@ -314,6 +314,16 @@ extern long strncpy_from_unsafe(char *dst, const void *unsafe_addr, long count);
 #define unsafe_put_user(x, ptr, err) do { if (unlikely(__put_user(x, ptr))) goto err; } while (0)
 #endif
 
+/**
+ * get_kernel_nofault(): safely attempt to read from a location
+ * @val: read into this variable
+ * @ptr: address to read from
+ *
+ * Returns 0 on success, or -EFAULT.
+ */
+#define get_kernel_nofault(val, ptr)		\
+	probe_kernel_read(&(val), (ptr), sizeof(val))
+
 #ifdef CONFIG_HARDENED_USERCOPY
 void usercopy_warn(const char *name, const char *detail, bool to_user,
 		   unsigned long offset, unsigned long len);
