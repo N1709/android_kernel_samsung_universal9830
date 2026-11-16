@@ -899,8 +899,15 @@ static const struct ipv6_stub ipv6_stub_impl = {
 	.nd_tbl	= &nd_tbl,
 };
 
+/* Wrapper for BPF stub - converts u32 flags to bool parameters */
+static int inet6_bind_stub(struct sock *sk, struct sockaddr *uaddr, int addr_len, u32 flags)
+{
+	bool force = !!(flags & BIND_FORCE_ADDRESS_NO_PORT);
+	return __inet6_bind(sk, uaddr, addr_len, force, false);
+}
+
 static const struct ipv6_bpf_stub ipv6_bpf_stub_impl = {
-	.inet6_bind = __inet6_bind,
+	.inet6_bind = inet6_bind_stub,
 	.udp6_lib_lookup = __udp6_lib_lookup,
 };
 

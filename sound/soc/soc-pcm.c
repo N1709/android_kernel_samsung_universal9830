@@ -861,7 +861,7 @@ int soc_dai_hw_params(struct snd_pcm_substream *substream,
 
 	/* perform any topology hw_params fixups before DAI  */
 	if (rtd->dai_link->be_hw_params_fixup) {
-		ret = rtd->dai_link->be_hw_params_fixup(rtd, params);
+		ret = rtd->dai_link->be_hw_params_fixup(rtd, params, substream->stream);
 		if (ret < 0) {
 			dev_err(rtd->dev,
 				"ASoC: hw_params topology fixup failed %d\n",
@@ -2126,7 +2126,7 @@ int dpcm_be_dai_hw_params(struct snd_soc_pcm_runtime *fe, int stream)
 		/* perform any hw_params fixups */
 		if (be->dai_link->be_hw_params_fixup) {
 			ret = be->dai_link->be_hw_params_fixup(be,
-					&dpcm->hw_params);
+					&dpcm->hw_params, stream);
 			if (ret < 0) {
 				dev_err(be->dev,
 					"ASoC: hw_params BE fixup failed %d\n",

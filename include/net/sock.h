@@ -2525,3 +2525,7 @@ static inline bool sk_dev_equal_l3scope(struct sock *sk, int dif)
 
 int sock_bindtoindex(struct sock *sk, int ifindex, bool lock_sk);
 #endif	/* _SOCK_H */
+
+/* Bind flags from newer kernels */
+#define BIND_FORCE_ADDRESS_NO_PORT  (1 << 0)
+#define BIND_WITH_LOCK              (1 << 1)

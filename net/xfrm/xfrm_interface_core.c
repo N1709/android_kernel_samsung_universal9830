@@ -928,8 +928,14 @@ static void xfrmi6_fini(void)
 	xfrm6_protocol_deregister(&xfrmi_esp6_protocol, IPPROTO_ESP);
 }
 
+/* Wrapper to match xfrm_if_cb signature */
+static struct xfrm_if *xfrmi_decode_session_cb(struct sk_buff *skb)
+{
+	return xfrmi_decode_session(skb, 0);
+}
+
 static const struct xfrm_if_cb xfrm_if_cb = {
-	.decode_session =	xfrmi_decode_session,
+	.decode_session = xfrmi_decode_session_cb,
 };
 
 static int __init xfrmi_init(void)
