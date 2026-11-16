@@ -136,6 +136,11 @@ static inline u64 ktime_get_boottime_ns(void)
 	return ktime_to_ns(ktime_get_boottime());
 }
 
+static inline u64 ktime_get_coarse_boottime_ns(void)
+{
+	return ktime_to_ns(ktime_get_coarse_boottime());
+}
+
 static inline u64 ktime_get_clocktai_ns(void)
 {
 	return ktime_to_ns(ktime_get_clocktai());

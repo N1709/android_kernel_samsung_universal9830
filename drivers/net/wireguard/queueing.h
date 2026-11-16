@@ -12,6 +12,7 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <net/ip_tunnels.h>
+#include <net/wireguard_compat.h>
 
 struct wg_device;
 struct wg_peer;

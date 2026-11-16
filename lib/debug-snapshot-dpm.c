@@ -17,7 +17,6 @@
 #include <linux/version.h>
 #include <linux/io.h>
 #include <linux/device.h>
-#include <linux/bootmem.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/module.h>

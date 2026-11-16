@@ -921,13 +921,7 @@ int kernel_read_compat(struct file *file, loff_t offset, char *addr, unsigned lo
 #define ktime_to_timespec64(timespec) ktime_to_timespec(timespec)
 #endif /* LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0) */
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)) && (LINUX_VERSION_CODE >= \
-	KERNEL_VERSION(4, 20, 0))
-static inline void get_monotonic_boottime(struct timespec *ts)
-{
-	*ts = ktime_to_timespec(ktime_get_boottime());
-}
-#endif /* LINUX_VER >= 4.20 */
+/* get_monotonic_boottime already defined in linux/timekeeping32.h for 4.20+ */
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)) && (LINUX_VERSION_CODE >= \
 	KERNEL_VERSION(5, 0, 0))
