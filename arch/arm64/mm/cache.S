@@ -116,6 +116,14 @@ ENDPROC(invalidate_icache_range)
  *	- kaddr   - kernel address
  *	- size    - size in question
  */
+ENTRY(flush_cache_all)
+	mov	x12, lr
+	bl	__flush_dcache_all
+	mov	x0, #0
+	ic	ialluis
+	ret	x12
+ENDPROC(flush_cache_all)
+
 ENTRY(__flush_dcache_area)
 	dcache_by_line_op civac, sy, x0, x1, x2, x3
 	ret

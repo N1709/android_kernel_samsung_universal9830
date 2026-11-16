@@ -115,6 +115,8 @@ static inline void flush_cache_page(struct vm_area_struct *vma,
 {
 }
 
+extern void flush_cache_all(void);
+
 static inline void flush_cache_range(struct vm_area_struct *vma,
 				     unsigned long start, unsigned long end)
 {
