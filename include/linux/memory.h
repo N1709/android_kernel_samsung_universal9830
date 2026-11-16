@@ -121,6 +121,10 @@ extern int memory_isolate_notify(unsigned long val, void *v);
 extern struct memory_block *find_memory_block_hinted(struct mem_section *,
 							struct memory_block *);
 extern struct memory_block *find_memory_block(struct mem_section *);
+#ifdef CONFIG_MEMORY_HOTPLUG
+extern int memory_block_online(struct memory_block *mem);
+extern int memory_block_offline(struct memory_block *mem);
+#endif
 #define CONFIG_MEM_BLOCK_SIZE	(PAGES_PER_SECTION<<PAGE_SHIFT)
 #endif /* CONFIG_MEMORY_HOTPLUG_SPARSE */
 

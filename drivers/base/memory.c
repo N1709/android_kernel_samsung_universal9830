@@ -365,6 +365,55 @@ err:
 	return count;
 }
 
+static int memory_process_operation(struct memory_block *mem, int optype)
+{
+	int ret;
+
+	ret = lock_device_hotplug_sysfs();
+	if (ret)
+		return ret;
+
+	/*
+	 * Memory hotplug needs to hold mem_hotplug_begin() for probe to find
+	 * the correct memory block to online before doing device_online(dev),
+	 * which will take dev->mutex.  Take the lock early to prevent an
+	 * inversion, memory_subsys_online() callbacks will be implemented by
+	 * assuming it's already protected.
+	 */
+	mem_hotplug_begin();
+
+	switch (optype) {
+	case MMOP_ONLINE_KEEP:
+		mem->online_type = optype;
+		ret = device_online(&mem->dev);
+		break;
+	case MMOP_OFFLINE:
+		ret = device_offline(&mem->dev);
+		break;
+	default:
+		ret = -EINVAL; /* should never happen */
+	}
+
+	mem_hotplug_done();
+
+	unlock_device_hotplug();
+
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
+int memory_block_online(struct memory_block *mem)
+{
+	return memory_process_operation(mem, MMOP_ONLINE_KEEP);
+}
+
+int memory_block_offline(struct memory_block *mem)
+{
+	return memory_process_operation(mem, MMOP_OFFLINE);
+}
+
 /*
  * phys_device is a bad name for this.  What I really want
  * is a way to differentiate between memory ranges that

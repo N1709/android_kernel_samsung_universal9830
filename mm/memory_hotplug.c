@@ -34,6 +34,7 @@
 #include <linux/hugetlb.h>
 #include <linux/memblock.h>
 #include <linux/compaction.h>
+#include <linux/ktime.h>
 
 #include <asm/tlbflush.h>
 
@@ -82,6 +83,27 @@ static int __init setup_memhp_default_state(char *str)
 	return 1;
 }
 __setup("memhp_default_state=", setup_memhp_default_state);
+
+#ifdef CONFIG_MEMORY_HOTREMOVE
+static atomic_t mem_offline_stop_request;
+static ktime_t t_memstop_req;
+
+static inline bool mem_stop_is_requested(void)
+{
+	return atomic_read(&mem_offline_stop_request) > 0;
+}
+
+static inline void mem_stop_progress_init(void)
+{
+	atomic_set(&mem_offline_stop_request, 0);
+}
+
+void mem_stop_offline(void)
+{
+	if (atomic_inc_return(&mem_offline_stop_request) == 1)
+		t_memstop_req = ktime_get();
+}
+#endif
 
 void mem_hotplug_begin(void)
 {
@@ -1592,11 +1614,21 @@ static int __ref __offline_pages(unsigned long start_pfn,
 		goto failed_removal;
 
 	pfn = start_pfn;
+	mem_stop_progress_init();
 repeat:
 	/* start memory hot removal */
 	ret = -EINTR;
 	if (signal_pending(current))
 		goto failed_removal;
+
+	if (mem_stop_is_requested()) {
+		s64 elapsed_ms = ktime_to_ms(ktime_sub(ktime_get(),
+						       t_memstop_req));
+
+		pr_info("%lld ms to finish offline stop request\n",
+			elapsed_ms);
+		goto failed_removal;
+	}
 
 	cond_resched();
 	lru_add_drain_all();
