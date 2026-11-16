@@ -76,6 +76,7 @@ static bool arch_timer_c3stop;
 static bool arch_timer_mem_use_virtual;
 static bool arch_counter_suspend_stop;
 static bool vdso_default = true;
+static bool arch_timer_use_clocksource_only;
 
 static cpumask_t evtstrm_available = CPU_MASK_NONE;
 static bool evtstrm_enable = IS_ENABLED(CONFIG_ARM_ARCH_TIMER_EVTSTREAM);
@@ -847,6 +848,14 @@ static int arch_timer_starting_cpu(unsigned int cpu)
 	struct clock_event_device *clk = this_cpu_ptr(arch_timer_evt);
 	u32 flags;
 
+	/*
+	 * If the arch timer is used as clocksource only, it does not need
+	 * any clockevent configuration. This is only used on Exynos SoCs,
+	 * where the MCT supplies the clockevents.
+	 */
+	if (arch_timer_use_clocksource_only)
+		goto skip_clockevent_setup;
+
 	__arch_timer_setup(ARCH_TIMER_TYPE_CP15, clk);
 
 	flags = check_ppi_trigger(arch_timer_ppi[arch_timer_uses_ppi]);
@@ -858,6 +867,7 @@ static int arch_timer_starting_cpu(unsigned int cpu)
 				  flags);
 	}
 
+skip_clockevent_setup:
 	arch_counter_set_user_access();
 	if (evtstrm_enable)
 		arch_timer_configure_evtstream();
@@ -983,6 +993,13 @@ static int arch_timer_dying_cpu(unsigned int cpu)
 	struct clock_event_device *clk = this_cpu_ptr(arch_timer_evt);
 
 	cpumask_clear_cpu(smp_processor_id(), &evtstrm_available);
+
+	/*
+	 * If the arch timer is used as clocksource only, no clockevent was
+	 * set up for this CPU, so there is nothing to tear down.
+	 */
+	if (arch_timer_use_clocksource_only)
+		return 0;
 
 	arch_timer_stop(clk);
 	return 0;
@@ -1226,6 +1243,12 @@ static int __init arch_timer_of_init(struct device_node *np)
 	arch_timer_of_configure_rate(rate, np);
 
 	arch_timer_c3stop = !of_property_read_bool(np, "always-on");
+
+	/* Exynos specific device tree information */
+	if (of_property_read_bool(np, "use-clocksource-only")) {
+		pr_info("%s: arch_timer is used only clocksource\n", __func__);
+		arch_timer_use_clocksource_only = true;
+	}
 
 	/* Check for globally applicable workarounds */
 	arch_timer_check_ool_workaround(ate_match_dt, np);
