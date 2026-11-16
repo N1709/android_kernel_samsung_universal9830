@@ -41,6 +41,12 @@
 #include <linux/psci.h>
 #include <linux/sched/task.h>
 #include <linux/mm.h>
+#include <linux/libfdt.h>
+#include <linux/debug-snapshot.h>
+
+#if defined(CONFIG_ECT)
+#include <soc/samsung/ect_parser.h>
+#endif
 
 #include <asm/acpi.h>
 #include <asm/fixmap.h>
@@ -114,6 +120,35 @@ bool arch_match_cpu_phys_id(int cpu, u64 phys_id)
 	return phys_id == cpu_logical_map(cpu);
 }
 
+#if defined(CONFIG_ECT)
+static int __init early_init_dt_scan_ect(unsigned long node,
+		const char *uname, int depth, void *data)
+{
+	int address = 0, size = 0;
+	const __be32 *paddr, *psize;
+
+	if (depth != 1 || (strcmp(uname, "ect") != 0))
+		return 0;
+
+	paddr = of_get_flat_dt_prop(node, "parameter_address", &address);
+	if (paddr == NULL)
+		return 0;
+
+	psize = of_get_flat_dt_prop(node, "parameter_size", &size);
+	if (psize == NULL)
+		return -1;
+
+	pr_info("[ECT] Address %x, Size %x\n",
+		be32_to_cpu(*paddr), be32_to_cpu(*psize));
+	set_memsize_reserved_name("ECT_param");
+	memblock_reserve(be32_to_cpu(*paddr), be32_to_cpu(*psize));
+	unset_memsize_reserved_name();
+	ect_init(be32_to_cpu(*paddr), be32_to_cpu(*psize));
+
+	return 1;
+}
+#endif
+
 struct mpidr_hash mpidr_hash;
 /**
  * smp_build_mpidr_hash - Pre-compute shifts required at each affinity
@@ -185,6 +220,14 @@ static void __init setup_machine_fdt(phys_addr_t dt_phys)
 	void *dt_virt = fixmap_remap_fdt(dt_phys);
 	const char *name;
 
+	/*
+	 * The Samsung bootloader does not add a /memreserve/ entry for the
+	 * DTB it passes in x0.  Keep the blob away from the early memblock
+	 * allocator until unflatten_device_tree() has consumed it.
+	 */
+	if (dt_virt)
+		memblock_reserve(dt_phys, fdt_totalsize(dt_virt));
+
 	if (!dt_virt || !early_init_dt_scan(dt_virt)) {
 		pr_crit("\n"
 			"Error: invalid device tree blob at physical address %pa (virtual address 0x%p)\n"
@@ -202,6 +245,14 @@ static void __init setup_machine_fdt(phys_addr_t dt_phys)
 
 	pr_info("Machine model: %s\n", name);
 	dump_stack_set_arch_desc("%s (DT)", name);
+
+#if defined(CONFIG_ECT)
+	/* Scan the DVFS parameter block loaded into DRAM by the bootloader. */
+	of_scan_flat_dt(early_init_dt_scan_ect, NULL);
+#endif
+#if defined(CONFIG_DEBUG_SNAPSHOT)
+	of_scan_flat_dt(dbg_snapshot_early_init_dt_scan_dpm, NULL);
+#endif
 }
 
 static void __init request_standard_resources(void)
