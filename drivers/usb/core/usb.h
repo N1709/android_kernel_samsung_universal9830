@@ -93,6 +93,7 @@ extern int usb_port_suspend(struct usb_device *dev, pm_message_t msg);
 extern int usb_port_resume(struct usb_device *dev, pm_message_t msg);
 
 extern void usb_autosuspend_device(struct usb_device *udev);
+extern int usb_set_usb2_hardware_lpm(struct usb_device *udev, int enable);
 extern int usb_autoresume_device(struct usb_device *udev);
 extern int usb_remote_wakeup(struct usb_device *dev);
 extern int usb_runtime_suspend(struct device *dev);
