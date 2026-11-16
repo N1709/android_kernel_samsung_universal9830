@@ -27,6 +27,7 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/vmalloc.h>
+#include <linux/debug-snapshot.h>
 #include <asm/page.h>
 
 struct persistent_ram_buffer {
@@ -284,6 +285,9 @@ static int notrace persistent_ram_update_user(struct persistent_ram_zone *prz,
 	struct persistent_ram_buffer *buffer = prz->buffer;
 	int ret = unlikely(__copy_from_user(buffer->data + start, s, count)) ?
 		-EFAULT : 0;
+
+	dbg_snapshot_hook_pmsg(buffer->data + start, count);
+
 	persistent_ram_update_ecc(prz, start, count);
 	return ret;
 }

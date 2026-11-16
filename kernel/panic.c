@@ -29,6 +29,8 @@
 #include <linux/ratelimit.h>
 #include <linux/debugfs.h>
 #include <asm/sections.h>
+#include <linux/debug-snapshot.h>
+#include <linux/sec_perf.h>
 
 #define PANIC_TIMER_STEP 100
 #define PANIC_BLINK_SPD 18
@@ -157,6 +159,16 @@ void panic(const char *fmt, ...)
 	bool _crash_kexec_post_notifiers = crash_kexec_post_notifiers;
 
 	/*
+	 * dbg_snapshot_early_panic is for supporting wapper functions
+	 * to users need to run SoC specific function in NOT interrupt
+	 * context
+	 */
+	dbg_snapshot_early_panic();
+#ifdef CONFIG_SEC_PERF_LATENCYCHECKER
+	sec_perf_latencychecker_stop();
+#endif
+
+	/*
 	 * Disable local interrupts. This will prevent panic_smp_self_stop
 	 * from deadlocking the first cpu that invokes the panic, since
 	 * there is nothing to prevent an interrupt handler (that runs
@@ -183,8 +195,10 @@ void panic(const char *fmt, ...)
 	this_cpu = raw_smp_processor_id();
 	old_cpu  = atomic_cmpxchg(&panic_cpu, PANIC_CPU_INVALID, this_cpu);
 
-	if (old_cpu != PANIC_CPU_INVALID && old_cpu != this_cpu)
+	if (old_cpu != PANIC_CPU_INVALID && old_cpu != this_cpu) {
+		dbg_snapshot_hook_hardlockup_exit();
 		panic_smp_self_stop();
+	}
 
 	console_verbose();
 	bust_spinlocks(1);
@@ -196,6 +210,8 @@ void panic(const char *fmt, ...)
 		buf[len - 1] = '\0';
 
 	pr_emerg("Kernel panic - not syncing: %s\n", buf);
+	dbg_snapshot_prepare_panic();
+	dbg_snapshot_dump_panic(buf, (size_t)strnlen(buf, sizeof(buf)));
 #ifdef CONFIG_DEBUG_BUGVERBOSE
 	/*
 	 * Avoid nested stack-dumping if a panic occurs during oops processing
@@ -240,6 +256,8 @@ void panic(const char *fmt, ...)
 	/* Call flush even twice. It tries harder with a single online CPU */
 	printk_safe_flush_on_panic();
 	kmsg_dump(KMSG_DUMP_PANIC);
+
+	dbg_snapshot_post_panic();
 
 	/*
 	 * If you doubt kdump always works fine in any situation,

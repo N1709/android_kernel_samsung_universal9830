@@ -19,6 +19,7 @@
 #include <asm/dma-contiguous.h>
 
 #include <linux/memblock.h>
+#include <linux/mm.h>
 #include <linux/err.h>
 #include <linux/sizes.h>
 #include <linux/dma-contiguous.h>
@@ -139,6 +140,12 @@ void __init dma_contiguous_reserve(phys_addr_t limit)
 					    selected_limit,
 					    &dma_contiguous_default_area,
 					    fixed);
+		if (dma_contiguous_default_area) {
+			record_memsize_reserved("default_CMA",
+				cma_get_base(dma_contiguous_default_area),
+				cma_get_size(dma_contiguous_default_area),
+				false, true);
+		}
 	}
 }
 

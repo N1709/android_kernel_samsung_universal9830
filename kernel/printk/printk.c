@@ -1228,6 +1228,7 @@ void __init setup_log_buf(int early)
 	if (!new_log_buf_len)
 		return;
 
+	set_memsize_kernel_type(MEMSIZE_KERNEL_LOGBUF);
 	if (early) {
 		new_log_buf =
 			memblock_alloc(new_log_buf_len, LOG_ALIGN);
@@ -1235,6 +1236,7 @@ void __init setup_log_buf(int early)
 		new_log_buf = memblock_alloc_nopanic(new_log_buf_len,
 							  LOG_ALIGN);
 	}
+	set_memsize_kernel_type(MEMSIZE_KERNEL_OTHERS);
 
 	if (unlikely(!new_log_buf)) {
 		pr_err("log_buf_len: %lu bytes not available\n",
