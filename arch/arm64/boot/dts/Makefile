@@ -63,6 +63,12 @@ dtbo-$(CONFIG_MODEL_R8S) += samsung/exynos990-r8s_eur_open_00.dtbo
 dtbo-$(CONFIG_MODEL_R8S) += samsung/exynos990-r8s_eur_open_02.dtbo
 dtbo-$(CONFIG_MODEL_R8S) += samsung/exynos990-r8s_eur_open_05.dtbo
 
+# The Exynos bootloader applies the universal9830 dtbo overlays to the base
+# DTB, and the overlay fixups are resolved through __symbols__.  This Makefile
+# is the kbuild object directory for the dtbs target (obj=arch/arm64/boot/dts),
+# so the per-target flag must live here, not in exynos/Makefile.
+DTC_FLAGS_exynos9830 := -@
+
 targets += dtbs
 DTB_LIST  := $(dtb-y) $(dtbo-y)
 always    := $(DTB_LIST)
