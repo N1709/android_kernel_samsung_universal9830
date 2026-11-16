@@ -781,6 +781,10 @@
 #define ABS_MT_TOOL_X		0x3c	/* Center X tool position */
 #define ABS_MT_TOOL_Y		0x3d	/* Center Y tool position */
 
+#define ABS_MT_CUSTOM		0x3e	/* custom event */
+#define ABS_MT_PALM		0x3e	/* palm touch */
+#define ABS_MT_GRIP		0x3f	/* grip touch */
+
 
 #define ABS_MAX			0x3f
 #define ABS_CNT			(ABS_MAX+1)
@@ -807,7 +811,12 @@
 #define SW_LINEIN_INSERT	0x0d  /* set = inserted */
 #define SW_MUTE_DEVICE		0x0e  /* set = device disabled */
 #define SW_PEN_INSERTED		0x0f  /* set = pen inserted */
-#define SW_MAX			0x0f
+#define SW_MACHINE_COVER	0x10  /* set = cover closed */
+#define SW_HPHL_OVERCURRENT	0x11  /* set = over current on left hph */
+#define SW_HPHR_OVERCURRENT	0x12  /* set = over current on right hph */
+#define SW_MICROPHONE2_INSERT	0x13  /* set = inserted */
+#define SW_UNSUPPORT_INSERT	0x14  /* set = unsupported device inserted */
+#define SW_MAX			0x20
 #define SW_CNT			(SW_MAX+1)
 
 /*
