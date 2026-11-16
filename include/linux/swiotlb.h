@@ -101,8 +101,18 @@ extern void
 swiotlb_sync_sg_for_device(struct device *hwdev, struct scatterlist *sg,
 			   int nelems, enum dma_data_direction dir);
 
+/* Accessory functions. */
+
+void *swiotlb_alloc(struct device *hwdev, size_t size, dma_addr_t *dma_handle,
+		gfp_t flags, unsigned long attrs);
+void swiotlb_free(struct device *dev, size_t size, void *vaddr,
+		dma_addr_t dma_addr, unsigned long attrs);
+
 extern int
 swiotlb_dma_supported(struct device *hwdev, u64 mask);
+
+extern int
+swiotlb_dma_mapping_error(struct device *hwdev, dma_addr_t dma_addr);
 
 #ifdef CONFIG_SWIOTLB
 extern void __init swiotlb_exit(void);

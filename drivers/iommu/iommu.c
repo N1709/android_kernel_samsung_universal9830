@@ -1544,6 +1544,14 @@ phys_addr_t iommu_iova_to_phys(struct iommu_domain *domain, dma_addr_t iova)
 
 	return domain->ops->iova_to_phys(domain, iova);
 }
+
+bool iommu_is_iova_coherent(struct iommu_domain *domain, dma_addr_t iova)
+{
+	if (unlikely(domain->ops->is_iova_coherent == NULL))
+		return false;
+
+	return domain->ops->is_iova_coherent(domain, iova);
+}
 EXPORT_SYMBOL_GPL(iommu_iova_to_phys);
 
 static size_t iommu_pgsize(struct iommu_domain *domain,

@@ -203,6 +203,7 @@ struct iommu_ops {
 				unsigned long iova, size_t size);
 	void (*iotlb_sync)(struct iommu_domain *domain);
 	phys_addr_t (*iova_to_phys)(struct iommu_domain *domain, dma_addr_t iova);
+	bool (*is_iova_coherent)(struct iommu_domain *domain, dma_addr_t iova);
 	int (*add_device)(struct device *dev);
 	void (*remove_device)(struct device *dev);
 	struct iommu_group *(*device_group)(struct device *dev);
@@ -303,6 +304,8 @@ extern size_t default_iommu_map_sg(struct iommu_domain *domain,
 				   struct scatterlist *sg, unsigned int nents,
 				   int prot);
 extern phys_addr_t iommu_iova_to_phys(struct iommu_domain *domain, dma_addr_t iova);
+extern bool iommu_is_iova_coherent(struct iommu_domain *domain,
+				dma_addr_t iova);
 extern void iommu_set_fault_handler(struct iommu_domain *domain,
 			iommu_fault_handler_t handler, void *token);
 
