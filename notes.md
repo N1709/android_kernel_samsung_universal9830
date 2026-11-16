@@ -18,7 +18,8 @@ Working document. Updated as the merge progresses.
 | dropped v4.20 files | `lib/chacha20.c`, `mm/kasan/kasan.c`, `mm/kasan/kasan_init.c`, `crypto/memneq.c` restored in `1b6e32131` |
 | arch/arm64 cluster | rc=0, zero errors (kernel, mm, lib, crypto) |
 | vendor build wiring | restored after the v4.20 normalization silently dropped it; see "Vendor build wiring" below |
-| v4.20 build | green at `652069257`, `be4e5edf5` and `41f6c8713`; `e0902dd4c` is building |
+| v4.20 build | green at `652069257`, `be4e5edf5`, `41f6c8713` and `e0902dd4c` |
+| v4.20 boot image | packed: `boot-v420-e0902dd4c.img`, 61,865,984 bytes; phone staging pending until adb sees the device |
 | v4.20 boot test | pending — no image with the restored Samsung memory layout and arch hooks has been flashed yet |
 | DTB packaging | verified: Samsung `d7b7ab1e` header, FDT at offset 64, big-endian size fields, `__symbols__` present, ramdisk preserved, AVB footer zeroed |
 | Boot log capture | prepared: `scripts/dump_dss.sh` and `scripts/parse_dss.py` for warm-reset TWRP dumps |
@@ -32,9 +33,9 @@ Working document. Updated as the merge progresses.
 | v4.20 merge and generic normalization | 100% | merge `3027a7714`; generic files normalized by `a838f89fb` and `466c12f3e` |
 | Samsung memory layout | 100% code | `be4e5edf5` restores `corememsize`, `ZONE_MOVABLE`, memblock cap, PASR and hotplug hooks; build is green |
 | Samsung arch and generic hooks | ~95% | `41f6c8713` and `e0902dd4c` restore the CPU/PSCI/fault/memsize/panic/DSS hooks; diagnostic kevent hooks remain deferred |
-| Build-clean | 100% through `41f6c8713` | `0` errors in `out/build.log`; `e0902dd4c` build in progress |
+| Build-clean | 100% through `e0902dd4c` | `0` errors in `out/build.log`; boot image repacked |
 | Boot and stability | 0% | no image has reached userspace; the splash hang is still unexplained |
-| Overall | ~92% | restores and build are nearly done; the boot test and the v5.0 merge remain |
+| Overall | ~93% | restores, build and packaging are done; the boot test and the v5.0 merge remain |
 
 ## v4.20 early boot fix (652069257)
 
@@ -158,8 +159,21 @@ committed. The DTB difference is build-time metadata, not a DTS change.
   suspend enter/machine suspend/resume console and process thaw.
 - Restore `dbg_snapshot_hook_pmsg()` on the pstore update path.
 
-The build for this commit is in progress at the time of writing. It has not
-been boot-tested.
+Build result on the laptop: zero errors. Artifacts:
+
+| File | Size | SHA-256 |
+|---|---:|---|
+| `Image` | 44,934,608 | `b4d062196898c6d6ef90e666858309a44e58443b42742671ba1761a9591c066a` |
+| `Image.gz` | 19,241,694 | `171ca79c893b80f5e43b930f5c4c64aea10b220b61858fa2a4cec609491f207c` |
+| wrapped DTB | 342,016 | `0ba4cbf7160f76768bdf9e89552e948600ab1d4e0835038d276caed7db8afb5c` |
+| `boot-v420-e0902dd4c.img` | 61,865,984 | `815021e0f7dbcb7e2fd293310f47cfee2553f86beb2a36431758a1a4cb4743f0` |
+
+The repacked image keeps the working 4.19 ramdisk (1,834,424 bytes) and
+places the 342,016-byte wrapped DTB at load address `0x10000000`. The file
+is staged on the laptop at `/home/n1709/Android/Download/`. `adb devices`
+was empty at pack time, so it has not been pushed to the phone yet.
+
+The commit has not been boot-tested.
 
 ### Remaining deferrals
 
