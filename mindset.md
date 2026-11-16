@@ -415,13 +415,21 @@ Commit style used in this branch:
 - <file>: <what and why>
 ```
 
-Commits that bring in upstream code (the v4.20/v5.0 merges, upstream
-backports, and restorations taken from an upstream tag) use the
-`UPSTREAM:` prefix or explicit version prefix. To keep the history
-informative and clean:
-- Specify the subsystem and nature of change (e.g., `UPSTREAM: block: sync to v4.20` or `v4.20: sync block layer`).
-- Local seam fixes use a plain subsystem prefix (`kbuild:`, `kconfig:`, `arm64:`, `docs:`).
-- Above all, commit subjects must be clear and direct (e.g., `lib: restore v4.20 files that the merge dropped`) so the intent is immediately understandable when inspecting git log months later.
+For code that comes from outside this tree, mark where it came from with
+one of the five provenance prefixes (Android Common Kernel convention),
+then the subsystem:
+
+- `UPSTREAM:` mainline patch applied as-is (add the
+  `(cherry picked from commit <hash>)` line when the hash is known).
+- `BACKPORT:` mainline patch that had to be adapted to this older tree.
+- `FROMGIT:` taken from a maintainer tree, not in mainline yet.
+- `FROMLIST:` taken from a mailing list, not accepted yet.
+- `ANDROID:` Android-only change with no mainline counterpart.
+
+Local seam fixes use a plain subsystem prefix (`kbuild:`, `kconfig:`,
+`arm64:`, `docs:`). Above all, the subject must say what changed and
+why it matters, e.g. `BACKPORT: mmc: restore the Exynos tuning API`,
+so the intent is obvious when reading `git log` months later.
 
 Leave `notes.md` in English, no emoji, no commentary about where the
 build was run. Update it when a milestone changes, not for every commit.
