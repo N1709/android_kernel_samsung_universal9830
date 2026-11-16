@@ -24,7 +24,7 @@ Working document. Updated as the merge progresses.
 | DTB packaging | verified: Samsung `d7b7ab1e` header, FDT at offset 64, big-endian size fields, `__symbols__` present, ramdisk preserved, AVB footer zeroed |
 | Boot log capture | prepared: `scripts/dump_dss.sh` and `scripts/parse_dss.py` for warm-reset TWRP dumps |
 | v5.0 merge | on hold until v4.20 builds and boots |
-| Branch | `K4.20` (GitHub default); `lineage-24.0` removed |
+| Branch | `K4.20` (GitHub default) |
 
 ## Progress snapshot (17 Nov 2026)
 
