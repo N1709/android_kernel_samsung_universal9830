@@ -316,6 +316,8 @@ struct gro_list {
 /*
  * Structure for NAPI scheduling similar to tasklet but with weighting
  */
+struct napi_struct *napi_get_current(void);
+
 struct napi_struct {
 	/* The poll_list must only be managed by the entity which
 	 * changes the state of the NAPI_STATE_SCHED bit.  This means
@@ -2972,6 +2974,9 @@ extern int netdev_flow_limit_table_len;
  */
 struct softnet_data {
 	struct list_head	poll_list;
+#ifdef CONFIG_MODEM_IF_NET_GRO
+	struct napi_struct	*current_napi;
+#endif
 	struct sk_buff_head	process_queue;
 
 	/* stats */

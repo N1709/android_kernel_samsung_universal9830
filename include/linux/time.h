@@ -70,6 +70,11 @@ struct tm {
 
 void time64_to_tm(time64_t totalsecs, int offset, struct tm *result);
 
+static inline void time_to_tm(time_t totalsecs, int offset, struct tm *result)
+{
+	time64_to_tm(totalsecs, offset, result);
+}
+
 # include <linux/time32.h>
 
 static inline bool itimerspec64_valid(const struct itimerspec64 *its)

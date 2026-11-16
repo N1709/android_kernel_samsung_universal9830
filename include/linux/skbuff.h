@@ -814,6 +814,7 @@ struct sk_buff {
 		};
 	};
 	__u32			priority;
+	__u32			priomark;
 	int			skb_iif;
 	__u32			hash;
 	__be16			vlan_proto;

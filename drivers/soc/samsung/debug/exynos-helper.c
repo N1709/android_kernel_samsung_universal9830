@@ -20,6 +20,7 @@
 #include <linux/smc.h>
 #include <linux/reboot.h>
 #include <linux/debug-snapshot-helper.h>
+#include <linux/debug-snapshot.h>
 #include <soc/samsung/exynos-debug.h>
 #include <soc/samsung/exynos-ehld.h>
 #include <soc/samsung/exynos-pmu.h>
