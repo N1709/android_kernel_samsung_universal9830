@@ -73,6 +73,7 @@
  *		- size   - region size
  */
 extern void __flush_icache_range(unsigned long start, unsigned long end);
+extern void flush_icache_range_poc(unsigned long start, unsigned long end);
 extern int  invalidate_icache_range(unsigned long start, unsigned long end);
 extern void __flush_dcache_area(void *addr, size_t len);
 extern void __inval_dcache_area(void *addr, size_t len);
@@ -116,6 +117,7 @@ static inline void flush_cache_page(struct vm_area_struct *vma,
 }
 
 extern void flush_cache_all(void);
+extern void flush_cache_louis(void);
 
 static inline void flush_cache_range(struct vm_area_struct *vma,
 				     unsigned long start, unsigned long end)

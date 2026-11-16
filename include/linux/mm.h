@@ -2843,5 +2843,35 @@ void __init setup_nr_node_ids(void);
 static inline void setup_nr_node_ids(void) {}
 #endif
 
+enum memsize_kernel_type {
+	MEMSIZE_KERNEL_KERNEL = 0,
+	MEMSIZE_KERNEL_PAGING,
+	MEMSIZE_KERNEL_LOGBUF,
+	MEMSIZE_KERNEL_PIDHASH,
+	MEMSIZE_KERNEL_VFSHASH,
+	MEMSIZE_KERNEL_MM_INIT,
+	MEMSIZE_KERNEL_OTHERS,
+	MEMSIZE_KERNEL_STOP,
+};
+#if defined(CONFIG_HAVE_MEMBLOCK)
+extern void set_memsize_reserved_name(const char *name);
+extern void unset_memsize_reserved_name(void);
+extern void set_memsize_kernel_type(enum memsize_kernel_type type);
+extern void free_memsize_reserved(phys_addr_t free_base, phys_addr_t free_size);
+extern void record_memsize_reserved(const char *name, phys_addr_t base,
+				    phys_addr_t size, bool nomap,
+				    bool reusable);
+extern void record_memsize_memory_hole(void);
+#else
+static inline void set_memsize_reserved_name(const char *name) { }
+static inline void unset_memsize_reserved_name(void) { }
+static inline void set_memsize_kernel_type(enum memsize_kernel_type type) { }
+static inline void free_memsize_reserved(phys_addr_t free_base,
+					 phys_addr_t free_size) { }
+static inline void record_memsize_reserved(const char *name, phys_addr_t base,
+				    phys_addr_t size, bool nomap,
+				    bool reusable) { }
+#endif
+
 #endif /* __KERNEL__ */
 #endif /* _LINUX_MM_H */
