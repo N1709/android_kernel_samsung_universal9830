@@ -546,3 +546,49 @@ Notes:
   legacy mount API; memory-boost notifier stubs added; vmscan zero-page
   stats wired; `fs/libfs.c` restored to v4.20 with the fscrypt casefold
   helpers ported in. This checkpoint has not been rebuilt yet.
+- Seam alignment batch (`dd9e59fcc`): restored 3-arg `security_sb_kern_mount`,
+  `security_sb_copy_data`, `alloc_secdata`/`free_secdata` in `security.h` / `lsm_hook_defs.h`;
+  included `fs_parser.h` for `ENOPARAM` in `security.c`; updated `mm/hpa.c` `do_send_sig_info`
+  to `SEND_SIG_PRIV` and `PIDTYPE_TGID`; restored `steal_pages` and moved
+  `get/set_pcppage_migratetype` to `mm/internal.h`; removed stale 5.0 scalar `max_cpu_capacity`
+  assignment in `kernel/sched/topology.c`.
+- `kernel/cgroup/Makefile` aligned to v4.20 (`303fe93c1`): replaced `legacy_freezer.o` with `freezer.o`.
+- `fs/proc/proc_avc.c` (`bb3e3b12e`): replaced obsolete `<linux/bootmem.h>` with `<linux/memblock.h>`.
+
+## Log readiness for v4.20 boot test
+
+To ensure boot failures or splash bootloops produce readable post-mortem logs:
+
+1. **Pstore status in `out/.config`**:
+   - `CONFIG_PSTORE=y`
+   - `CONFIG_PSTORE_CONSOLE=y`
+   - `CONFIG_PSTORE_PMSG=y`
+   - `CONFIG_PSTORE_RAM=y`
+2. **Device tree reservation**:
+   - Node `log_pstore` exists under `reserved-memory` in `arch/arm64/boot/dts/exynos/exynos9830-rmem.dtsi`
+     (`reg = <0 DSS_LOG_PSTORE_ADDR DSS_LOG_PSTORE_SIZE>`, base `0xeb308000`, size `32K`).
+   - Dynamically registered into ramoops by `lib/debug-snapshot-pstore.c`.
+   - Never invent RAM addresses. If an unreserved DRAM region is required for a standalone ramoops node,
+     verify it against the stock bootloader DTB and obtain confirmation before modifying DT.
+3. **Samsung platform debug logging**:
+   - `CONFIG_SEC_DEBUG=y` and its full suite (`CONFIG_SEC_DEBUG_LAST_KMSG=y`, `CONFIG_SEC_DEBUG_AUTO_COMMENT=y`,
+     `CONFIG_SEC_DEBUG_EXTRA_INFO=y`, etc.) are enabled.
+   - `CONFIG_DEBUG_SNAPSHOT=y` is enabled.
+   - Do not drop `sec_debug` features to make builds pass.
+4. **Kernel command line**:
+   - `ignore_loglevel` can be passed via `CONFIG_CMDLINE_EXTEND` in defconfig or boot.img cmdline.
+   - `earlycon` supported if serial port is mapped.
+5. **Log retrieval**:
+   - In recovery or secondary kernel:
+     ```bash
+     mount -t pstore pstore /sys/fs/pstore
+     cat /sys/fs/pstore/console-ramoops-0
+     cat /proc/last_kmsg
+     ```
+6. **Pre-flash checklist**:
+   - [ ] `git tag boot-4.20-try1`
+   - [ ] Stock Odin firmware and working 4.19 `boot.img` on standby
+   - [ ] Boot image format, dtb/dtbo, cmdline verified identical to working setup
+   - [ ] `PSTORE_CONSOLE` and ramoops / `last_kmsg` verified
+   - [ ] No v5.0 merge until v4.20 log output or boot is confirmed
+

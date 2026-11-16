@@ -509,3 +509,75 @@ can confirm it.
   Before that: `git fetch --unshallow --filter=blob:none origin` and fetch
   tags `v4.19.325`, `v4.20`, `v5.0`; verify
   `git merge-base HEAD v4.19.325` = `a67e7cdde7cc7984ae24c3c81a70dc1aa34424b1`.
+
+---
+
+## 13. Boot test logging readiness (v4.20 checkpoint)
+
+A silent bootloop or stall at the Samsung splash screen is useless without
+captured logs. Before asking the user to flash or test an image, verify the
+entire post-mortem logging pipeline:
+
+### 13.1 Pstore and Ramoops configuration
+
+The kernel configuration must have the following symbols enabled:
+- `CONFIG_PSTORE=y`
+- `CONFIG_PSTORE_RAM=y`
+- `CONFIG_PSTORE_CONSOLE=y`
+- Optional but recommended: `CONFIG_PSTORE_PMSG=y`, `CONFIG_PSTORE_FTRACE=y`
+
+### 13.2 Memory reservation for Ramoops
+
+In this tree, the Exynos 990 ramoops memory reservation is wired through
+Samsung's debug-snapshot framework:
+- Device tree node: `log_pstore` under `reserved-memory` in
+  `arch/arm64/boot/dts/exynos/exynos9830-rmem.dtsi` at `reg = <0 DSS_LOG_PSTORE_ADDR DSS_LOG_PSTORE_SIZE>`
+  (`DSS_LOG_PSTORE_ADDR = 0xeb308000`, `DSS_LOG_PSTORE_SIZE = SZ_32K`).
+- Dynamic platform device: `lib/debug-snapshot-pstore.c` dynamically registers
+  `dss_ramoops` using `dbg_snapshot_get_item_paddr("log_pstore")`.
+- **Caveat**: Never invent or guess RAM addresses in device tree files. Any
+  manual ramoops node must be backed by an unmapped/free region confirmed from
+  the stock Samsung bootloader DTB. If a dedicated standalone ramoops node is
+  proposed, report the physical base and size and obtain user confirmation first.
+- Note on console logs: `dss_ramoops_data` requires `.console_size` to be
+  non-zero (e.g. 8K or 16K) to emit `console-ramoops-0`.
+
+### 13.3 Samsung debug logging (sec_debug)
+
+Samsung platform crash logging is driven by `CONFIG_SEC_DEBUG=y` and its
+family:
+- `CONFIG_SEC_DEBUG_LAST_KMSG=y` (provides `/proc/last_kmsg` across warm reboot)
+- `CONFIG_SEC_DEBUG_AUTO_COMMENT=y`, `CONFIG_SEC_DEBUG_EXTRA_INFO=y`
+- `CONFIG_DEBUG_SNAPSHOT=y`
+- **Rule**: Never drop or disable `sec_debug` features just to appease a build
+  error or ramoops conflict. If an unavoidable change is required, document it
+  in `notes.md` under Deviations.
+
+### 13.4 Kernel command line
+
+- `ignore_loglevel` ensures all `pr_debug` / `pr_info` output reaches the
+  console buffers before any hang.
+- `earlycon` can be wired via `CONFIG_CMDLINE_EXTEND` or `boot.img` cmdline if
+  UART is accessible.
+
+### 13.5 Retrieval checklist (executed by the user)
+
+```bash
+mount -t pstore pstore /sys/fs/pstore
+ls -la /sys/fs/pstore/
+cat /sys/fs/pstore/console-ramoops-0
+cat /proc/last_kmsg
+```
+
+Remember: Samsung bootloaders may clear parts of DRAM on reboot depending on
+reset reason. Pstore / ramoops must be treated as unproven until verified on
+hardware once.
+
+### 13.6 Pre-flash user checklist
+
+1. Tag the release: `git tag boot-4.20-try1`
+2. Stock firmware ready in Odin; known working 4.19 `boot.img` backed up.
+3. Keep `boot.img` header format, dtb/dtbo, and cmdline identical to the working ROM.
+4. Verify `PSTORE_CONSOLE` and ramoops / `last_kmsg` status before flashing.
+5. Do not proceed to v5.0 until v4.20 produces readable logs or boots.
+
