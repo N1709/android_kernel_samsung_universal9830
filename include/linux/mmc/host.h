@@ -462,6 +462,7 @@ struct mmc_host {
 	bool			cqe_enabled;
 	bool			cqe_on;
 
+	int (*sdcard_uevent)(struct mmc_card *card);
 	unsigned long		private[0] ____cacheline_aligned;
 };
 

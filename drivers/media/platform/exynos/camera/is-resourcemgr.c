@@ -797,7 +797,7 @@ static int __init is_lib_mem_alloc(char *str)
 		probe_warn("use different address [reserve-fimc=0x%lx default:0x%lx]",
 				addr, __LIB_START);
 
-	is_lib_vm.phys_addr = memblock_alloc(LIB_SIZE, SZ_2M);
+	is_lib_vm.phys_addr = __pa(memblock_alloc(LIB_SIZE, SZ_2M));
 	is_lib_vm.addr = (void *)addr;
 	is_lib_vm.size = LIB_SIZE + PAGE_SIZE;
 	vm_area_add_early(&is_lib_vm);
