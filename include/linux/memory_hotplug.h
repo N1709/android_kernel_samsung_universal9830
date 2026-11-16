@@ -301,6 +301,7 @@ extern bool is_mem_section_removable(unsigned long pfn, unsigned long nr_pages);
 extern void try_offline_node(int nid);
 extern int offline_pages(unsigned long start_pfn, unsigned long nr_pages);
 extern void remove_memory(int nid, u64 start, u64 size);
+extern void mem_stop_offline(void);
 extern void __remove_memory(int nid, u64 start, u64 size);
 
 extern void mem_stop_offline(void);
@@ -321,6 +322,7 @@ static inline int offline_pages(unsigned long start_pfn, unsigned long nr_pages)
 
 static inline void remove_memory(int nid, u64 start, u64 size) {}
 static inline void __remove_memory(int nid, u64 start, u64 size) {}
+static inline void mem_stop_offline(void) {}
 #endif /* CONFIG_MEMORY_HOTREMOVE */
 
 extern void __ref free_area_init_core_hotplug(int nid);
