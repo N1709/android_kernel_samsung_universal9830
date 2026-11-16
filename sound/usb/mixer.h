@@ -127,3 +127,9 @@ extern void snd_usb_mixer_elem_free(struct snd_kcontrol *kctl);
 extern struct snd_kcontrol_new *snd_usb_feature_unit_ctl;
 
 #endif /* __USBMIXER_H */
+
+/* Vendor UAC extension stub */
+static inline u8 uac_extension_unit_iExtension(void *desc, int protocol)
+{
+	return 0; /* stub for vendor extensions */
+}

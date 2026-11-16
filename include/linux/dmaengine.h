@@ -749,7 +749,6 @@ struct dma_device {
 
 	int dev_id;
 	struct device *dev;
-	struct module *owner;
 
 	u32 src_addr_widths;
 	u32 dst_addr_widths;
@@ -880,7 +879,7 @@ static inline struct dma_async_tx_descriptor *dmaengine_prep_dma_cyclic(
 		return NULL;
 
 	return chan->device->device_prep_dma_cyclic(chan, buf_addr, buf_len,
-						period_len, dir, flags);
+						period_len, dir, flags, NULL);
 }
 
 static inline struct dma_async_tx_descriptor *dmaengine_prep_interleaved_dma(

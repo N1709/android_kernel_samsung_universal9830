@@ -1,3 +1,4 @@
+#include <net/ipv6_stubs.h>
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ADDRCONF_H
 #define _ADDRCONF_H
