@@ -99,7 +99,8 @@ static int samsung_dmadev_prepare(unsigned long ch,
 	case DMA_CYCLIC:
 		desc = chan->device->device_prep_dma_cyclic(chan,
 				param->buf, param->len, param->period,
-				param->direction, true, &param->infiniteloop);
+				param->direction, true ? DMA_PREP_INTERRUPT : 0,
+				&param->infiniteloop);
 		break;
 	default:
 		dev_err(&chan->dev->device, "unsupported format\n");

@@ -732,7 +732,7 @@ struct dma_filter {
  * @descriptor_reuse: a submitted transfer can be resubmitted after completion
  */
 struct dma_device {
-
+	struct module *owner;
 	unsigned int chancnt;
 	unsigned int privatecnt;
 	struct list_head channels;
@@ -749,7 +749,6 @@ struct dma_device {
 
 	int dev_id;
 	struct device *dev;
-	struct module *owner;
 	struct module *owner;
 
 	u32 src_addr_widths;
