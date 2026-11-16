@@ -2107,3 +2107,9 @@ clean:
 install:
 	@$(MAKE) --no-print-directory -C $(KDIR) \
 		SUBDIRS=$(CURDIR) modules_install
+
+
+# Disable VLA warning for STATIC_ASSERT usage
+CFLAGS_dhd_pno.o := -Wno-vla-extension
+CFLAGS_wl_cfgscan.o := -Wno-vla-extension
+CFLAGS_dhd_debug.o := -Wno-unused-but-set-global

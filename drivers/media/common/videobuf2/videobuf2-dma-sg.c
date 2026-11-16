@@ -735,7 +735,6 @@ dma_addr_t vb2_dma_sg_plane_dma_addr(struct vb2_buffer *vb,
 
 	return buf->iova + vb->planes[plane_no].data_offset;
 }
-EXPORT_SYMBOL_GPL(vb2_dma_sg_plane_dma_addr);
 
 const struct vb2_mem_ops vb2_dma_sg_memops = {
 	.alloc		= vb2_dma_sg_alloc,
