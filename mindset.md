@@ -592,3 +592,32 @@ hardware once.
 4. Verify `PSTORE_CONSOLE` and ramoops / `last_kmsg` status before flashing.
 5. Do not proceed to v5.0 until v4.20 produces readable logs or boots.
 
+## 14. Boot failure decisions (16 Nov 2026)
+
+- **Build host**: the laptop is the only build host. Do not compile the
+  kernel on the phone; the phone is for source edits, scripts, git and log
+  decoding only. If the laptop is unreachable, stop at the build step.
+- **DTB source of truth**: the tracked
+  `arch/arm64/boot/dts/exynos/exynos9830.dtb` is a header template, not the
+  DTB to flash. The DTB to flash is the build output after
+  `scripts/wrap_samsung_dtb.py`; a plain FDT is rejected by the bootloader.
+- **`__symbols__` is mandatory**: build `exynos9830.dtb` with `dtc -@`
+  (`DTC_FLAGS_exynos9830 := -@`). Without it the dtbo fixups cannot resolve.
+- **Never pack `out/.../exynos9830.dtb` without the wrap step**. `make dtbs`
+  always writes a plain FDT, even when the tracked file has the Samsung
+  header.
+- **Boot image packing**: start from a known-working boot image v2, replace
+  only the kernel and DTB, keep the ramdisk, cmdline, load addresses,
+  `dtb_size`, `dtb_addr` and page size. The kernel must be raw `Image`.
+- **Control image first**: re-pack the working 4.19 kernel with the same
+  tool before judging a v4.20 failure. This separates packer/AVB problems
+  from kernel problems.
+- **No UART**: use the Samsung debug-snapshot ring. Warm-reset to TWRP,
+  dump `0xFD900000`, `0xFD910000` and `0xeb308000`, then decode with
+  `scripts/parse_dss.py`. A cold boot destroys the evidence.
+- **Interpretation**: an empty kernel ring means the failure is before
+  `dbg_snapshot_init`; a populated ring gives the last kernel messages.
+  Do not guess a cause while the ring is unread.
+- **Reporting**: build-clean means compile and link only. Boot is a separate
+  milestone and stays at 0% until the v4.20 image reaches userspace.
+

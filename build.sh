@@ -115,7 +115,12 @@ echo "==> fragment: ${DEVICE}.config"
 make O=out ARCH=arm64 "${TCVARS[@]}" "${DEVICE}.config"
 
 targets=(Image.gz)
-[ "$DO_DTBS" -eq 1 ] && targets+=(dtbs)
+if [ "$DO_DTBS" -eq 1 ]; then
+	targets+=(dtbs)
+	# Force the base DTB to be rebuilt so DTC_FLAGS_exynos9830 (-@) is
+	# applied even when only the Makefile changed.
+	rm -f out/arch/arm64/boot/dts/exynos/exynos9830.dtb
+fi
 
 echo "==> build: ${targets[*]} with -j${JOBS} (log: ${LOG})"
 make_args=(-j"${JOBS}")
@@ -127,13 +132,26 @@ if ! make O=out ARCH=arm64 "${TCVARS[@]}" "${make_args[@]}" "${targets[@]}" 2>&1
 	exit 1
 fi
 
+if [ "$DO_DTBS" -eq 1 ]; then
+	DTB=out/arch/arm64/boot/dts/exynos/exynos9830.dtb
+	DTB_TEMPLATE=arch/arm64/boot/dts/exynos/exynos9830.dtb
+	if [ -f "$DTB" ] && [ -f "$DTB_TEMPLATE" ]; then
+		echo "==> wrap DTB for the Exynos bootloader"
+		python3 scripts/wrap_samsung_dtb.py \
+			--template "$DTB_TEMPLATE" \
+			--input "$DTB" \
+			--output "$DTB"
+	fi
+fi
+
 echo
 echo "==> artifacts"
-ls -lh out/arch/arm64/boot/Image.gz 2>/dev/null || true
+ls -lh out/arch/arm64/boot/Image out/arch/arm64/boot/Image.gz 2>/dev/null || true
 if [ "$DO_DTBS" -eq 1 ]; then
 	find out/arch/arm64/boot/dts -type f \( -name '*.dtb' -o -name '*.dtbo' \) \
 		| sort | head -25
 fi
-if need sha256sum && [ -f out/arch/arm64/boot/Image.gz ]; then
-	sha256sum out/arch/arm64/boot/Image.gz
+if need sha256sum; then
+	sha256sum out/arch/arm64/boot/Image out/arch/arm64/boot/Image.gz \
+		out/arch/arm64/boot/dts/exynos/exynos9830.dtb 2>/dev/null || true
 fi

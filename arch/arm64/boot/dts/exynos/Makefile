@@ -32,6 +32,11 @@ dtb-$(CONFIG_SOC_EXYNOS9830) += \
 	exynos9830-universal9830_r10.dtbo
 endif
 
+# The Exynos bootloader applies the universal9830 dtbo overlays to the base
+# DTB, and the overlay fixups are resolved through __symbols__.  A DTB built
+# without -@ has no __symbols__ node, so keep it for exynos9830.dtb only.
+DTC_FLAGS_exynos9830 := -@
+
 # always	:= $(dtb-y) $(dtbo-y)
 subdir-y	:= $(dts-dirs)
 clean-files	:= *.dtb *.dtbo

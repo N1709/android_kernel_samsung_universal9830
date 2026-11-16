@@ -2,7 +2,7 @@
 
 Working document. Updated as the merge progresses.
 
-## Current status (15 Nov 2026)
+## Current status (16 Nov 2026)
 
 | Stage | Status |
 |---|---|
@@ -18,23 +18,24 @@ Working document. Updated as the merge progresses.
 | dropped v4.20 files | `lib/chacha20.c`, `mm/kasan/kasan.c`, `mm/kasan/kasan_init.c`, `crypto/memneq.c` restored in `1b6e32131` |
 | arch/arm64 cluster | rc=0, zero errors (kernel, mm, lib, crypto) |
 | vendor build wiring | restored after the v4.20 normalization silently dropped it; see "Vendor build wiring" below |
-| v4.20 build | checkpoint: last full `-j2 -k` run had 553 errors, about 550 from the vendor 5.9 BPF backport; that backport is now reverted to v4.20 and the remaining seam errors still need a full rebuild |
-| v4.20 boot test | pending build |
+| v4.20 build | green — last full build on the build host at `3a5db8c3d` |
+| v4.20 boot test | failed at the Samsung splash; the bootloader rejects a plain FDT and the packed DTB was not in Samsung format |
+| DTB packaging | fixed in the build: `DTC_FLAGS_exynos9830 := -@`, `scripts/wrap_samsung_dtb.py`, `scripts/repack_bootimg.py` |
+| Boot log capture | prepared: `scripts/dump_dss.sh` and `scripts/parse_dss.py` for warm-reset TWRP dumps |
 | v5.0 merge | on hold until v4.20 builds and boots |
 | Branch | `K4.20` (GitHub default); `lineage-24.0` removed |
 
-## Progress snapshot (15 Nov 2026)
+## Progress snapshot (16 Nov 2026)
 
 | Area | Estimate | Evidence |
 |---|---:|---|
 | v4.20 merge and generic normalization | 100% | merge `3027a7714`; generic files normalized by `a838f89fb` and `466c12f3e` |
-| Build-clean | ~80-85% | 553 errors in the last full build; the ~550-error BPF cluster is reverted to v4.20, but the checkpoint has not been rebuilt yet. Remaining failures are seam errors (fs_context/libfs, DMA, cgroup/BPF leftovers, missing vendor helpers) |
-| Boot and stability | 0% | no v4.20 image has been boot-tested |
-| Overall | ~80% | build work dominates; boot, stability and v5.0 remain |
+| Build-clean | 100% | the full build at `3a5db8c3d` links `Image.gz` and `dtbs` with zero errors |
+| Boot and stability | 0% | the v4.20 image stops at the Samsung splash; packaging fixes are ready but not yet boot-tested |
+| Overall | ~85% | build is green; boot diagnosis and the v5.0 merge remain |
 
-The next full build is the only reliable way to replace the estimates above
-with a measured error count. Do not report the tree as build-clean before
-that run finishes and `dtbs` is included.
+The build is green at `3a5db8c3d`; do not rebuild on the phone. The build
+host is the laptop. This section is kept for the v5.0 merge only.
 
 The local clone is shallow (`git rev-parse --is-shallow-repository` says
 true) and partial (`blob:none`). Tags `v4.20` and `v5.0` are present;
@@ -45,6 +46,62 @@ git fetch --unshallow --filter=blob:none origin
 git fetch --filter=blob:none stable tag v4.19.325 tag v4.20 tag v5.0
 git merge-base HEAD v4.19.325     # harus a67e7cdde7cc...
 ```
+
+## Boot failure diagnosis (16 Nov 2026)
+
+Symptom: the v4.20 image stops at the Samsung logo and no log appears on
+the screen. This is expected without UART: the logo is drawn by the
+bootloader, and the kernel console only writes to UART. The screen only
+changes after the display driver and userspace take over.
+
+Two distinct failure classes produce the same symptom:
+
+1. The bootloader does not hand over to the kernel.
+   - A plain FDT (`d00dfeed`) is rejected by the Exynos bootloader with
+     `FDT_EAR_BADMAGIC` / `UFDT DTB LOAD FAIL`. The DTB must have the
+     64-byte Samsung header (`d7b7ab1e`) with the FDT at offset 64.
+   - The header size fields are big-endian: offset 4 is FDT size + 64,
+     offset 32 is the FDT size. The image is padded to 2048 bytes.
+   - The DTB must be built with `dtc -@` so `__symbols__` exists; the
+     universal9830 dtbo overlays resolve their fixups through it.
+   - The boot image v2 must contain a raw arm64 `Image` (`ARM\x64` at
+     offset 0x38), not `Image.gz`, and must keep the stock
+     `dtb_size`/`dtb_addr` fields (`0x10000000`).
+2. The kernel starts but hangs before console/debug-snapshot init.
+   - `console_init()` runs before `early_initcall`, so a hang in the
+     Samsung serial driver leaves no DSS log.
+   - The 2 MiB printk ring at `0xFD910000` is only written after
+     `dbg_snapshot_init` registers the printk hook.
+   - A hang (not a panic) writes nothing to pstore.
+
+Packaging is now deterministic:
+
+- `arch/arm64/boot/dts/exynos/Makefile` sets
+  `DTC_FLAGS_exynos9830 := -@`.
+- `build.sh` removes the stale output DTB, builds `dtbs`, then wraps
+  `out/arch/arm64/boot/dts/exynos/exynos9830.dtb` with
+  `scripts/wrap_samsung_dtb.py` using the tracked Samsung DTB as the
+  header template.
+- `scripts/repack_bootimg.py` replaces the kernel and DTB in a working
+  boot image v2 while preserving the ramdisk, cmdline, load addresses
+  and `dtb_addr`.
+
+Non-UART log capture: `scripts/dump_dss.sh` dumps the control block at
+`0xFD900000`, the 2 MiB ring at `0xFD910000` and the 32 KiB pstore zone
+at `0xeb308000` from a TWRP adb shell after a warm reset. Do not power
+the device off: DRAM contents are lost on a cold boot. `scripts/parse_dss.py`
+decodes the item table and prints the ring in chronological order.
+The ring is not cleared by the next Samsung kernel when the saved write
+pointer at header offset `0x200` is valid.
+
+Next boot tests, in order:
+
+1. Control image: the working 4.19 kernel re-packed with the same tool.
+   This isolates the packer and the zeroed AVB footer.
+2. v4.20 `Image` with the wrapped v4.20 DTB.
+3. If it still stops at the logo, warm-reset to TWRP and dump the three
+   regions. An empty ring means the kernel did not reach
+   `dbg_snapshot_init`; a populated ring gives the last kernel messages.
 
 ## Goal
 
@@ -576,15 +633,27 @@ To ensure boot failures or splash bootloops produce readable post-mortem logs:
    - `CONFIG_DEBUG_SNAPSHOT=y` is enabled.
    - Do not drop `sec_debug` features to make builds pass.
 4. **Kernel command line**:
-   - `ignore_loglevel` can be passed via `CONFIG_CMDLINE_EXTEND` in defconfig or boot.img cmdline.
-   - `earlycon` supported if serial port is mapped.
-5. **Log retrieval**:
-   - In recovery or secondary kernel:
-     ```bash
-     mount -t pstore pstore /sys/fs/pstore
-     cat /sys/fs/pstore/console-ramoops-0
-     cat /proc/last_kmsg
+   - `ignore_loglevel` is in `CONFIG_CMDLINE`, so early messages are kept
+     in the kernel buffer.
+   - `earlycon` on `samsung,exynos-uart` is compiled in, but it only writes
+     to UART. UART capture is not part of this test.
+5. **Log retrieval without UART**:
+   - Warm-reset to TWRP immediately after a failed boot; do not power off.
+   - In the TWRP adb shell:
+     ```sh
+     sh /tmp/dump_dss.sh /tmp/dss
      ```
+   - Pull and decode:
+     ```sh
+     adb pull /tmp/dss
+     scripts/parse_dss.py /tmp/dss
+     ```
+   - The dump covers the control block (`0xFD900000`, 64 KiB), the kernel
+     printk ring (`0xFD910000`, 2 MiB) and the pstore zone
+     (`0xeb308000`, 32 KiB).
+   - The pstore and `last_kmsg` paths are only useful if the kernel
+     reached their init. A hang before `dbg_snapshot_init` leaves the ring
+     empty; that result still proves the failure is very early.
 6. **Pre-flash checklist**:
    - [ ] `git tag boot-4.20-try1`
    - [ ] Stock Odin firmware and working 4.19 `boot.img` on standby
