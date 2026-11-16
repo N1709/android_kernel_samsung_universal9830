@@ -628,14 +628,14 @@ From last build attempt (timeout at 5min), grep found ~27 unique errors:
 
 | No | File/Area | Error | Count | Fix Status |
 |----|-----------|-------|-------|------------|
-| 1 | include/linux/dmaengine.h | duplicate member 'owner' | 10× | ✅ Fixed - removed line 752 |
-| 2 | include/linux/dmaengine.h | prep_dma_cyclic too few args (6→7) | 10× | ✅ Fixed - added NULL context param |
-| 3 | sound/soc/soc-pcm.c | function call too few args (2→3) | 2× | 🔄 In progress |
-| 4 | include/linux/serial_core.h | duplicate member 'wake_peer' | 1× | ✅ Fixed - removed line 70 |
-| 5 | sound/usb/mixer.c | implicit 'uac_extension_unit_iExtension' | 1× | 🔄 TODO |
-| 6 | sound/usb/midi.c | implicit 'snd_rawmidi_proceed' | 1× | 🔄 TODO |
-| 7 | include/net/ipv6_stubs.h | redefinition 'ipv6_stub' | 1× | 🔄 TODO |
-| 8 | include/net/ipv6_stubs.h | redefinition 'ipv6_bpf_stub' | 1× | 🔄 TODO |
+| 1 | include/linux/dmaengine.h | duplicate member 'owner' | 10x | FIXED - removed line 752 |
+| 2 | include/linux/dmaengine.h | prep_dma_cyclic too few args (6->7) | 10x | FIXED - added NULL context param |
+| 3 | sound/soc/soc-pcm.c | function call too few args (2->3) | 2x | In progress |
+| 4 | include/linux/serial_core.h | duplicate member 'wake_peer' | 1x | FIXED - removed line 70 |
+| 5 | sound/usb/mixer.c | implicit 'uac_extension_unit_iExtension' | 1x | FIXED - stub with protocol param |
+| 6 | sound/usb/midi.c | implicit 'snd_rawmidi_proceed' | 1x | FIXED - declaration added |
+| 7 | include/net/ipv6_stubs.h | redefinition 'ipv6_stub' | 1x | FIXED - include ipv6_stubs.h |
+| 8 | include/net/ipv6_stubs.h | redefinition 'ipv6_bpf_stub' | 1x | FIXED - include ipv6_stubs.h |
 
 Progress: 23/27 errors fixed (85%). Remaining: 4-5 errors.
 
