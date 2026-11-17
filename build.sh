@@ -114,6 +114,24 @@ make O=out ARCH=arm64 "${TCVARS[@]}" exynos9830_defconfig
 echo "==> fragment: ${DEVICE}.config"
 make O=out ARCH=arm64 "${TCVARS[@]}" "${DEVICE}.config"
 
+# The live boot console and the Samsung boot chain depend on these. Fail
+# before spending an hour of compile time if the generated config lost them.
+check_cfg() {
+	sym="$1"
+	if ! grep -qx "CONFIG_${sym}=y" out/.config; then
+		echo "error: CONFIG_${sym}=y missing from out/.config" >&2
+		exit 1
+	fi
+}
+for sym in CMDLINE_EXTEND CMDLINE VT VT_CONSOLE FRAMEBUFFER_CONSOLE \
+	   FRAMEBUFFER_CONSOLE_DETECT_PRIMARY FB EXYNOS_DPU30; do
+	check_cfg "$sym"
+done
+if ! grep -q '^CONFIG_CMDLINE=".*console=tty0.*loglevel=8' out/.config; then
+	echo "error: CONFIG_CMDLINE lost the live console arguments" >&2
+	exit 1
+fi
+
 targets=(Image.gz)
 if [ "$DO_DTBS" -eq 1 ]; then
 	targets+=(dtbs)
