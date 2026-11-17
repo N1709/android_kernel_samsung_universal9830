@@ -688,6 +688,8 @@ void __init paging_init(void)
 {
 	pgd_t *pgdp = pgd_set_fixmap(__pa_symbol(swapper_pg_dir));
 
+	set_memsize_kernel_type(MEMSIZE_KERNEL_PAGING);
+
 	map_kernel(pgdp);
 	map_mem(pgdp);
 
@@ -698,6 +700,7 @@ void __init paging_init(void)
 
 	memblock_free(__pa_symbol(init_pg_dir),
 		      __pa_symbol(init_pg_end) - __pa_symbol(init_pg_dir));
+	set_memsize_kernel_type(MEMSIZE_KERNEL_OTHERS);
 
 	memblock_allow_resize();
 }
