@@ -18,9 +18,9 @@ Working document. Updated as the merge progresses.
 | dropped v4.20 files | `lib/chacha20.c`, `mm/kasan/kasan.c`, `mm/kasan/kasan_init.c`, `crypto/memneq.c` restored in `1b6e32131` |
 | arch/arm64 cluster | rc=0, zero errors (kernel, mm, lib, crypto) |
 | vendor build wiring | restored after the v4.20 normalization silently dropped it; see "Vendor build wiring" below |
-| v4.20 build | green through `589312407`; `6b2ab6eb7` and `053259943` are committed and pushed but not rebuilt yet (build host: laptop only) |
-| v4.20 boot image | packed: `boot-v420-f0d0cf852.img`, 61,865,984 bytes, sha256 `a909d2ab6572081381a2975bcf63a6d1a503b1d4fce61bfa72ec628ec9685090`; phone staging pending until adb sees the device |
-| v4.20 boot test | pending — no image with the restored Samsung memory layout and arch hooks has been flashed yet |
+| v4.20 build | green at `af2fe698b` (z3s, laptop); object check and full build completed |
+| v4.20 boot image | packed: `boot-v420-af2fe698b.img`, 61,865,984 bytes, sha256 `4d7b5ded309b3c5460ae8857fed8b78c387a61f876a4af02969fc19af7a36f7a`; staged on the phone at `~/Android/Download/` |
+| v4.20 boot test | pending — waiting for the user to flash the z3s image and report the result |
 | DTB packaging | verified: Samsung `d7b7ab1e` header, FDT at offset 64, big-endian size fields, `__symbols__` present, ramdisk preserved, AVB footer zeroed |
 | Boot log capture | prepared: `scripts/dump_dss.sh` and `scripts/parse_dss.py` for warm-reset TWRP dumps |
 | v5.0 merge | on hold until v4.20 builds and boots |
@@ -33,8 +33,8 @@ Working document. Updated as the merge progresses.
 | v4.20 merge and generic normalization | 100% | merge `3027a7714`; generic files normalized by `a838f89fb` and `466c12f3e` |
 | Samsung memory layout | 100% code | `be4e5edf5` restores `corememsize`, `ZONE_MOVABLE`, memblock cap, PASR and hotplug hooks; build is green |
 | Samsung arch and generic hooks | ~98% | `41f6c8713`, `e0902dd4c`, `f0d0cf852`, `589312407`, `6b2ab6eb7` and `053259943` restore the CPU/PSCI/fault/memsize/panic/DSS/clocksource hooks, the crash paths, the live console, the freezer FREECESS checks, the PM wakeup logs and bootstat; only diagnostic DSS timer/cpuidle hooks and the explicitly deferred files remain |
-| Build-clean | pending rebuild of `053259943` | zero errors through `589312407`; the latest commits must be built on the laptop |
-| Boot and stability | 0% | no image has reached userspace; the splash hang is still unexplained, but the clocksource-only path and the live VT console are now in place |
+| Build-clean | 100% | `af2fe698b` built on the laptop with zero errors; the 19 affected objects also passed a targeted check |
+| Boot and stability | pending | first z3s test image is staged; no post-4.20 image has reached userspace yet |
 | Overall | ~86% | restores and packaging are effectively done; the rebuild, the boot test and the v5.0 merge remain |
 
 ## v4.20 clocksource split restore (f0d0cf852)
@@ -1370,3 +1370,36 @@ image path, size and sha256 are recorded here after the repack.
 
 Flash and boot test are the only steps that still need the user; nothing
 in this tree may be flashed without explicit approval.
+
+## Final z3s build and test image (af2fe698b, 17 Nov 2026)
+
+The user selected z3s as the first boot-test device, so the multi-device
+validation loop was stopped and z3s was rebuilt at the branch tip.
+
+- Build: `./build.sh -d z3s -j6`, laptop only, exit status 0.
+- `Image`: 45,999,880 bytes, sha256
+  `e9bfa9257b2cb63317d691bc9b5ff8216b774f206ee115aeb062da1897204e60`.
+- `Image.gz`: 19,617,793 bytes, sha256
+  `9bd33258c7aea4660bedd2981400444c71cca1dd7a5008465538a4e7b103defd`.
+- Wrapped DTB: 342,016 bytes, sha256
+  `0ba4cbf7160f76768bdf9e89552e948600ab1d4e0835038d276caed7db8afb5c`.
+- Image: `boot-v420-af2fe698b.img`, 61,865,984 bytes, sha256
+  `4d7b5ded309b3c5460ae8857fed8b78c387a61f876a4af02969fc19af7a36f7a`.
+
+Repack and verification: Android boot v2, page size 2048, kernel at
+page 0, ramdisk 1,834,424 bytes at `0x2bdf000` and byte-identical to the
+known-working 4.19 ramdisk, wrapped DTB at `0x2d9f000` with load address
+`0x10000000`, Samsung header `d7b7ab1e`, FDT at offset 64, and the
+built-in kernel command line contains `console=tty0 loglevel=8`. The
+image is staged on the phone at
+`/home/n1709/Android/Download/boot-v420-af2fe698b.img`.
+
+`af2fe698b` also carries the c1s-family NFC build fix: `pn547.c` now uses
+`struct kernel_siginfo` for `send_sig_info()`, matching the v4.20 signal
+API without changing the Samsung NFC behavior. c1s was rebuilt
+successfully with that change before the test target was narrowed to z3s.
+
+Boot test is pending. The expected good signs are the kernel log on the
+framebuffer, `required core pages: 0x200000`, and the Normal 2,064,384
+page plus Movable 1,048,576 page split. Do not flash without the user's
+explicit action; the user flashes manually.
