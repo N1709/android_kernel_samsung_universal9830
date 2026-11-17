@@ -22,38 +22,52 @@
 #
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEVICE="z3s"
 JOBS="$(nproc)"
 CLEAN=0
 DO_DTBS=1
 KEEP=0
 
+list_devices() {
+	local frag
+	for frag in "$SCRIPT_DIR"/arch/arm64/configs/*.config; do
+		[ -f "$frag" ] || continue
+		grep -q '^CONFIG_MODEL_.*=y' "$frag" || continue
+		basename "$frag" .config
+	done | sort
+}
+
 usage() {
-	cat <<'EOF'
-Usage: ./build.sh [-d DEVICE] [-j JOBS] [-c] [-n] [-k]
+	cat <<EOF
+Usage: ./build.sh [-d DEVICE] [-j JOBS] [-c] [-n] [-k] [-l]
 
   -d DEVICE   device fragment in arch/arm64/configs (default: z3s)
-              known: z3s, x1s, y2s, x1slte, y2slte, c1s, c2s, r8s
   -j JOBS     parallel jobs (default: nproc)
   -c          remove out/ before building
   -n          do not build dtbs (kernel image only)
   -k          keep going after errors (make -k), collects every error
+  -l          list the available device fragments and exit
+
+Available devices:
+$(list_devices | sed 's/^/  /')
 EOF
 }
 
-while getopts 'd:j:cnkh' opt; do
+while getopts 'd:j:cnkhl' opt; do
 	case "$opt" in
 		d) DEVICE="$OPTARG" ;;
 		j) JOBS="$OPTARG" ;;
 		c) CLEAN=1 ;;
 		n) DO_DTBS=0 ;;
 		k) KEEP=1 ;;
+		l) list_devices; exit 0 ;;
 		h) usage; exit 0 ;;
 		*) usage; exit 1 ;;
 	esac
 done
 
-cd "$(dirname "$0")"
+cd "$SCRIPT_DIR"
 
 FRAG="arch/arm64/configs/${DEVICE}.config"
 if [ ! -f "$FRAG" ]; then
