@@ -800,3 +800,29 @@ clocksource-only restore fixes the splash hang.
 The remaining work is not source restoration. It is the build, the repack
 and the boot test, all of which need the laptop. Do not build on the
 phone and do not flash without explicit approval.
+
+## 19. Test target is z3s first (17 Nov 2026)
+
+- **One boot-test device is enough to falsify the merge.** The z3s image is
+  the first test target; other family builds stay queued until z3s shows
+  that the merged kernel reaches userspace. A stable z3s does not prove the
+  whole family, but an unstable z3s blocks every other conclusion.
+- **Keep device-specific fixes behavior-preserving.** `pn547.c` used the
+  old `struct siginfo` with `send_sig_info()`. v4.20 wants
+  `struct kernel_siginfo`; changing only the type keeps the Samsung NFC
+  signal payload and the userspace ABI unchanged. That is a port, not a
+  feature change.
+- **Stop exploratory loops when the goal narrows.** The ten-device build
+  loop was interrupted after the user named z3s as the test device. The
+  c1s build had already passed with the NFC fix, so the fix is recorded
+  and the remaining builds can resume after the first boot result.
+- **A test image needs its own provenance.** The final image is identified
+  by branch tip, kernel, DTB and image hashes, and by the ramdisk hash
+  inherited from the known-working 4.19 image. If the boot fails, those
+  hashes prove which bytes were tested.
+
+Status after the final z3s build: source restoration and the enabled-code
+audit remain complete, the z3s build is green at `af2fe698b`, and the
+staged image is `boot-v420-af2fe698b.img` with sha256
+`4d7b5ded309b3c5460ae8857fed8b78c387a61f876a4af02969fc19af7a36f7a`.
+Boot and stability remain pending the user's manual flash.
