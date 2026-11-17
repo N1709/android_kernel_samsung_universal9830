@@ -20,6 +20,7 @@
 #include <linux/sched/loadavg.h>
 #include <linux/sched/stat.h>
 #include <linux/math64.h>
+#include <linux/cpuidle-moce.h>
 
 /*
  * Please note when changing the tuning values:
@@ -173,6 +174,12 @@ static DEFINE_PER_CPU(struct menu_device, menu_devices);
 
 static void menu_update(struct cpuidle_driver *drv, struct cpuidle_device *dev);
 
+static inline unsigned int menu_target_residency(struct cpuidle_state *s,
+						 unsigned int moce_ratio)
+{
+	return (unsigned int)(((u64)s->target_residency * moce_ratio) / 100);
+}
+
 /*
  * Try detecting repeating patterns by keeping track of the last 8
  * intervals, and checking if the standard deviation of that set
@@ -282,6 +289,7 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 	int latency_req = cpuidle_governor_latency_req(dev->cpu);
 	int i;
 	int idx;
+	unsigned int moce_ratio = exynos_moce_get_ratio(dev->cpu);
 	unsigned int interactivity_req;
 	unsigned int predicted_us;
 	unsigned long nr_iowaiters;
@@ -299,7 +307,8 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 	data->bucket = which_bucket(data->next_timer_us, nr_iowaiters);
 
 	if (unlikely(drv->state_count <= 1 || latency_req == 0) ||
-	    ((data->next_timer_us < drv->states[1].target_residency ||
+	    ((data->next_timer_us <
+	      menu_target_residency(&drv->states[1], moce_ratio) ||
 	      latency_req < drv->states[1].exit_latency) &&
 	     !drv->states[0].disabled && !dev->states_usage[0].disable)) {
 		/*
@@ -359,15 +368,16 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 		if (idx == -1)
 			idx = i; /* first enabled state */
 
-		if (s->target_residency > predicted_us) {
+		if (menu_target_residency(s, moce_ratio) > predicted_us) {
 			/*
 			 * Use a physical idle state, not busy polling, unless
 			 * a timer is going to trigger soon enough.
 			 */
 			if ((drv->states[idx].flags & CPUIDLE_FLAG_POLLING) &&
 			    s->exit_latency <= latency_req &&
-			    s->target_residency <= data->next_timer_us) {
-				predicted_us = s->target_residency;
+			    menu_target_residency(s, moce_ratio) <=
+			    data->next_timer_us) {
+				predicted_us = menu_target_residency(s, moce_ratio);
 				idx = i;
 				break;
 			}
@@ -381,7 +391,9 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 				 * tick in that case and let the governor run
 				 * again in the next iteration of the loop.
 				 */
-				predicted_us = drv->states[idx].target_residency;
+				predicted_us =
+					menu_target_residency(&drv->states[idx],
+							      moce_ratio);
 				break;
 			}
 
@@ -391,8 +403,10 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 			 * closest timer event, select this one to avoid getting
 			 * stuck in the shallow one for too long.
 			 */
-			if (drv->states[idx].target_residency < TICK_USEC &&
-			    s->target_residency <= ktime_to_us(delta_next))
+			if (menu_target_residency(&drv->states[idx],
+						  moce_ratio) < TICK_USEC &&
+			    menu_target_residency(s, moce_ratio) <=
+			    ktime_to_us(delta_next))
 				idx = i;
 
 			return idx;
@@ -404,7 +418,9 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 			 * expected idle duration so that the tick is retained
 			 * as long as that target residency is low enough.
 			 */
-			predicted_us = drv->states[idx].target_residency;
+			predicted_us =
+				menu_target_residency(&drv->states[idx],
+						      moce_ratio);
 			break;
 		}
 		idx = i;
@@ -423,7 +439,9 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 
 		*stop_tick = false;
 
-		if (idx > 0 && drv->states[idx].target_residency > delta_next_us) {
+		if (idx > 0 &&
+		    menu_target_residency(&drv->states[idx], moce_ratio) >
+		    delta_next_us) {
 			/*
 			 * The tick is not going to be stopped and the target
 			 * residency of the state to be returned is not within
@@ -436,7 +454,9 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 					continue;
 
 				idx = i;
-				if (drv->states[i].target_residency <= delta_next_us)
+				if (menu_target_residency(&drv->states[i],
+							  moce_ratio) <=
+				    delta_next_us)
 					break;
 			}
 		}
