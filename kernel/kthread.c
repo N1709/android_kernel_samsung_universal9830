@@ -20,6 +20,7 @@
 #include <linux/freezer.h>
 #include <linux/ptrace.h>
 #include <linux/uaccess.h>
+#include <linux/sec_debug.h>
 #include <trace/events/sched.h>
 
 static DEFINE_SPINLOCK(kthread_create_lock);
@@ -308,20 +309,24 @@ struct task_struct *__kthread_create_on_node(int (*threadfn)(void *data),
 	 * the OOM killer while kthreadd is trying to allocate memory for
 	 * new kernel thread.
 	 */
+	secdbg_dtsk_set_data(DTYPE_KTHREAD, kthreadd_task);
 	if (unlikely(wait_for_completion_killable(&done))) {
 		/*
 		 * If I was SIGKILLed before kthreadd (or new kernel thread)
 		 * calls complete(), leave the cleanup of this structure to
 		 * that thread.
 		 */
-		if (xchg(&create->done, NULL))
+		if (xchg(&create->done, NULL)) {
+			secdbg_dtsk_clear_data();
 			return ERR_PTR(-EINTR);
+		}
 		/*
 		 * kthreadd (or new kernel thread) will call complete()
 		 * shortly.
 		 */
 		wait_for_completion(&done);
 	}
+	secdbg_dtsk_clear_data();
 	task = create->result;
 	if (!IS_ERR(task)) {
 		static const struct sched_param param = { .sched_priority = 0 };

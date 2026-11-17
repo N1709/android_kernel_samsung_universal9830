@@ -28,6 +28,7 @@
 #include <linux/console.h>
 #include <linux/module.h>
 #include <linux/pstore.h>
+#include <linux/debug-snapshot.h>
 #if IS_ENABLED(CONFIG_PSTORE_LZO_COMPRESS)
 #include <linux/lzo.h>
 #endif
@@ -537,6 +538,8 @@ static int pstore_write_user_compat(struct pstore_record *record,
 		ret = PTR_ERR(record->buf);
 		goto out;
 	}
+
+	dbg_snapshot_hook_pmsg((char *)buf, record->size);
 
 	ret = record->psi->write(record);
 

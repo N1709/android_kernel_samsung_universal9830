@@ -37,6 +37,7 @@
 #include <linux/signal.h>
 #include <linux/slab.h>
 #include <linux/stddef.h>
+#include <linux/string.h>
 #include <linux/sysctl.h>
 
 #include <asm/esr.h>
@@ -862,6 +863,51 @@ asmlinkage void do_fpsimd_exc(unsigned int esr, struct pt_regs *regs)
 		       current);
 }
 
+#if defined(CONFIG_SEC_DEBUG_FPSIMD_CHECK_CONTEXT)
+static bool fpsimd_check_context_forced = true;
+#else
+static bool fpsimd_check_context_forced;
+#endif
+
+static int __init parse_fpsimd_check_context(char *str)
+{
+	bool enabled;
+	int ret = strtobool(str, &enabled);
+
+	if (ret)
+		return ret;
+
+	fpsimd_check_context_forced = enabled;
+
+	return 0;
+}
+early_param("fpsimd_check_context", parse_fpsimd_check_context);
+
+static void fpsimd_check_context(struct task_struct *next)
+{
+	struct user_fpsimd_state this_cpu_st;
+	struct user_fpsimd_state *nxt_st = &next->thread.uw.fpsimd_state;
+	int i;
+
+	fpsimd_save_state(&this_cpu_st);
+	for (i = 0; i < 32; i++) {
+		if (this_cpu_st.vregs[i] != nxt_st->vregs[i]) {
+			pr_auto(ASL4, "fpsimd regs were not restored properly #1 curr: (%s:%d), next: (%s:%d)\n",
+				current->comm, current->pid, next->comm, next->pid);
+			if (IS_ENABLED(CONFIG_SEC_DEBUG_FPSIMD_CHECK_CONTEXT))
+				dump_stack();
+		}
+	}
+
+	if ((this_cpu_st.fpsr != nxt_st->fpsr) ||
+			(this_cpu_st.fpcr != nxt_st->fpcr)) {
+		pr_auto(ASL4, "fpsimd regs were not restored properly #2 curr: (%s:%d), next: (%s:%d)\n",
+			current->comm, current->pid, next->comm, next->pid);
+		if (IS_ENABLED(CONFIG_SEC_DEBUG_FPSIMD_CHECK_CONTEXT))
+			dump_stack();
+	}
+}
+
 void fpsimd_thread_switch(struct task_struct *next)
 {
 	bool wrong_task, wrong_cpu;
@@ -897,6 +943,11 @@ void fpsimd_thread_switch(struct task_struct *next)
 
 	update_tsk_thread_flag(next, TIF_FOREIGN_FPSTATE,
 			       wrong_task || wrong_cpu);
+
+	if (next->mm && !wrong_task && !wrong_cpu) {
+		if (fpsimd_check_context_forced)
+			fpsimd_check_context(next);
+	}
 }
 
 void fpsimd_set_task_using(struct task_struct *t)

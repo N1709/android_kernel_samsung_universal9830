@@ -18,6 +18,7 @@
 #include <linux/sched/wake_q.h>
 #include <linux/sched/debug.h>
 #include <linux/osq_lock.h>
+#include <linux/sec_debug.h>
 
 #include "rwsem.h"
 
@@ -266,6 +267,7 @@ __rwsem_down_read_failed_common(struct rw_semaphore *sem, int state)
 	wake_up_q(&wake_q);
 
 	/* wait to be given the lock */
+	secdbg_dtsk_set_data(DTYPE_RWSEM, (void *)sem);
 	while (true) {
 		set_current_state(state);
 		if (!waiter.task)
@@ -281,6 +283,7 @@ __rwsem_down_read_failed_common(struct rw_semaphore *sem, int state)
 	}
 
 	__set_current_state(TASK_RUNNING);
+	secdbg_dtsk_clear_data();
 	return sem;
 out_nolock:
 	list_del(&waiter.list);
@@ -288,6 +291,7 @@ out_nolock:
 		atomic_long_add(-RWSEM_WAITING_BIAS, &sem->count);
 	raw_spin_unlock_irq(&sem->wait_lock);
 	__set_current_state(TASK_RUNNING);
+	secdbg_dtsk_clear_data();
 	return ERR_PTR(-EINTR);
 }
 
@@ -563,6 +567,7 @@ __rwsem_down_write_failed_common(struct rw_semaphore *sem, int state)
 		count = atomic_long_add_return(RWSEM_WAITING_BIAS, &sem->count);
 
 	/* wait until we successfully acquire the lock */
+	secdbg_dtsk_set_data(DTYPE_RWSEM, (void *)sem);
 	set_current_state(state);
 	while (true) {
 		if (rwsem_try_write_lock(count, sem))
@@ -581,6 +586,7 @@ __rwsem_down_write_failed_common(struct rw_semaphore *sem, int state)
 		raw_spin_lock_irq(&sem->wait_lock);
 	}
 	__set_current_state(TASK_RUNNING);
+	secdbg_dtsk_clear_data();
 	list_del(&waiter.list);
 	raw_spin_unlock_irq(&sem->wait_lock);
 
@@ -588,6 +594,7 @@ __rwsem_down_write_failed_common(struct rw_semaphore *sem, int state)
 
 out_nolock:
 	__set_current_state(TASK_RUNNING);
+	secdbg_dtsk_clear_data();
 	raw_spin_lock_irq(&sem->wait_lock);
 	list_del(&waiter.list);
 	if (list_empty(&sem->wait_list))

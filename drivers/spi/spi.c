@@ -24,6 +24,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/pm_domain.h>
 #include <linux/property.h>
+#include <linux/debug-snapshot.h>
 #include <linux/export.h>
 #include <linux/sched/rt.h>
 #include <uapi/linux/sched/types.h>
@@ -1302,7 +1303,9 @@ static void __spi_pump_messages(struct spi_controller *ctlr, bool in_kthread)
 		goto out;
 	}
 
+	dbg_snapshot_spi(ctlr, ctlr->cur_msg, DSS_FLAG_IN);
 	ret = ctlr->transfer_one_message(ctlr, ctlr->cur_msg);
+	dbg_snapshot_spi(ctlr, ctlr->cur_msg, DSS_FLAG_OUT);
 	if (ret) {
 		dev_err(&ctlr->dev,
 			"failed to transfer one message from queue\n");
