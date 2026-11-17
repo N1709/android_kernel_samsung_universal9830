@@ -751,3 +751,51 @@ is the newest packed image, but it predates `6b2ab6eb7` and
 `053259943`. Only the boot test can prove whether the arch-timer
 clocksource-only restore fixes the splash hang.
 
+
+## 18. Audit closure: every vendor-only line needs a verdict (17 Nov 2026)
+
+- **A token audit is a search, not a proof.** The single-pass `git diff`
+  over the 919 token files found 149 vendor-only lines after batch 5.
+  Each line now has a verdict: stale diff pair, false positive, disabled
+  config, dead code/legacy SoC, or documented deviation. A line without a
+  verdict is an open task, not a note.
+- **Read the diff hunk, not the grep hit.** `drivers/tty/vt/vt.c` matched
+  `memsize` because of a local variable; `xhci-tegra.c` matched because
+  of `reqphys_memsize`. A grep hit is evidence of a name, not of a lost
+  feature.
+- **Same code, different spacing is not a loss.** Several entries
+  (`dbg_snapshot_printkl`, qspinlock guards, `__secdbg_member_table`) are
+  present with cosmetic differences. Confirm by reading the destination
+  file before restoring anything twice.
+- **Dead config still deserves documentation.** `CONFIG_SEC_BDI`,
+  `CONFIG_SEC_DEBUG_OBJECTS_*`, `CONFIG_SEC_DEBUG_SPINBUG_PANIC`,
+  `CONFIG_CORESIGHT`, `CONFIG_DELAY_CHECKER` and
+  `CONFIG_SEC_DEBUG_SHOW_USER_STACK` are off in `exynos9830_defconfig`.
+  The code can stay unrestored, but the reason must be written down so a
+  future audit does not rediscover it as a loss.
+- **Legacy SoC clock drivers are not universal9830 losses.** The
+  `clk-exynos4/5250/5420/s3c*/s5pv210` suspend tables are unused on the
+  Exynos 9830, and `samsung_clk_sleep_init()` already exists as a macro
+  that forwards to `samsung_clk_extended_sleep_init()`.
+- **Externs without callers are not features.** `secdbg_base_set_sysrq_crash`
+  has no caller in the vendor tree; `vendor_panic_cb` is a GKI hook with
+  no provider here. Restoring the definition alone would add dead weight.
+- **Port the behaviour, adapt the primitive.** `memblock_remove_range()`
+  keeps the vendor accounting with the v4.20 variable names; printk keeps
+  the vendor prefix with v4.20 task/CPU helpers. The audit verdict records
+  the deviation instead of hiding it.
+
+## Status after batch 5 and audit closure
+
+| Area | Estimate |
+|---|---:|
+| v4.20 merge and generic normalization | 100% |
+| Samsung restore | 100% of enabled code paths |
+| Exhaustive audit | 100% (149 lines, all classified) |
+| Build-clean | 0% for `0bb8e73f6` (laptop unreachable) |
+| Boot and stability | 0% (no image has reached userspace yet) |
+| Overall | ~92% |
+
+The remaining work is not source restoration. It is the build, the repack
+and the boot test, all of which need the laptop. Do not build on the
+phone and do not flash without explicit approval.

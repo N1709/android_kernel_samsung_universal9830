@@ -1212,3 +1212,130 @@ accounting lives on the legacy request path. The vendor kernel also
 early-returns for `q->mq_ops`, so on this MQ-only 4.20 kernel turbo-write
 auto-tuning does not engage. This matches vendor behaviour rather than
 dropping the feature.
+
+## Samsung restore batches 4 and 5 (17 Nov 2026)
+
+`116d2b747` (batch 4) and `0bb8e73f6` (batch 5) close the remaining items
+found by the exhaustive audit. Both are pushed to `K4.20`.
+
+### Batch 4: power management, cmdline, qspinlock
+- `kernel/power/suspend.c`: big-core resume affinity, `mem_stop_offline()`
+  on every failure path, `log_suspend_abort_reason()`,
+  `regulator_show_enabled()`, `clear_wakeup_reasons()`,
+  `mem_sleep_current` tracking and `s2idle_set_ops` export.
+- `kernel/power/main.c`: `FOTA_LIMIT` sysfs node, `suspend_stats` sysfs
+  group, `pm_notifier_call_chain_get_callback()`, `pm_debug_messages_on`
+  default and `power_kobj` export.
+- `kernel/power/power.h`, `kernel/power/hibernate.c`: matching prototypes
+  and suspend-mode bookkeeping.
+- `drivers/base/core.c`: shutdown device/time tracking for `sec_debug`.
+- `fs/proc/cmdline.c`: Samsung cmdline spoofing restored for parity.
+  `CONFIG_PROC_SPOOF_CMDLINE` stays off, exactly as in the vendor
+  defconfig.
+- `include/asm-generic/qspinlock.h`, `kernel/locking/qspinlock.c`: owner
+  CPU and debug bit stored in the locked byte
+  (`CONFIG_SEC_DEBUG_QSPIN_OWNER=y`).
+
+### Batch 5: printk, panic, memsize and small hooks
+- `kernel/printk/printk.c`: `CONFIG_PRINTK_PROCESS` record fields
+  (process name, pid, cpu, interrupt context), the `process` module
+  parameter and the `[I:0:comm:pid]` prefix; KNOX MDM log split with
+  `clear_seq_knox`/`clear_idx_knox` and
+  `SYSLOG_ACTION_READ_CLEAR_KNOX` (99).
+- `kernel/panic.c`: panic banner goes through `pr_auto(ASL5)`.
+- `kernel/exit.c`: `CONFIG_SEC_DEBUG_INIT_EXIT_PANIC` traps init(1)
+  group exit.
+- `kernel/cpu.c`: `DTYPE_CPUHP` task-data tracking while waiting for the
+  AP hotplug threads.
+- `mm/memblock.c`: `memblock_remove_range()` now accounts removed ranges
+  through `free_memsize_reserved()`/`record_memsize_size_only()`.
+- `block/blk-core.c`, `block/cfq-iosched.c`, `mm/page-writeback.c`,
+  `include/linux/blkdev.h`: `SIO_PATCH_VERSION` annotations restored.
+- `include/linux/gpio/consumer.h`: `gpiod_get_consumer_name()` stub for
+  `!GPIOLIB` under `CONFIG_EXYNOS_MODEM_IF`.
+- `include/linux/psi.h`: `psi_full_max` declaration for
+  `CONFIG_SAMSUNG_LMKD_DEBUG`.
+- `include/linux/regulator/consumer.h`: `regulator_set_short_detection()`
+  stub for `!CONFIG_REGULATOR` under `CONFIG_SEC_PM`.
+
+## Audit closure: 149 remaining vendor-only lines
+
+The audit script `/tmp/opencode/audit.sh` performs one `git diff` over the
+919 files whose vendor-side diff touches a Samsung token. After batch 5,
+149 minus lines remain. Every line is classified below. Nothing in this
+list is an active code path of the Exynos 9830 build.
+
+### Stale diff pairing (same code present, different formatting)
+| File | Lines | Reason |
+|---|---:|---|
+| `arch/arm64/mm/fault.c` | 1 | `dbg_snapshot_printkl` present with a space after the comma |
+| `drivers/base/core.c` | 1 | `secdbg_base_set_shutdown_device()` present in another hunk |
+| `include/asm-generic/qspinlock.h` | 2 | block present with the same guard |
+| `include/asm-generic/vmlinux.lds.h` | 5 | `__secdbg_member_table` section present |
+| `include/linux/netdevice.h` | 1 | `EXYNOS_MODEM_IF` declaration present |
+| `include/linux/nmi.h` | 1 | lockup guard present |
+| `include/linux/suspend.h` | 1 | `SEC_PM_DEBUG` member present |
+| `kernel/kthread.c` | 2 | `DTYPE_KTHREAD` tracking present |
+| `kernel/locking/mutex.c` | 2 | `DTYPE_NONE` reset present |
+| `kernel/irq/irqdesc.c` | 2 | DSS interrupt timing hooked through the helper |
+| `kernel/irq/manage.c` | 1 | `secdbg_base_set_task_in_sync_irq()` present |
+| `kernel/power/suspend.c` | 8 | DSS flags are already passed by `dbg_snapshot_suspend()` |
+| `kernel/rcu/tree.c` | 2 | `dbg_snapshot_printkl()` present |
+| `kernel/workqueue.c` | 4 | `SEC_DEBUG_SHOW_USER_STACK` block is dead (config off) |
+| `mm/backing-dev.c`, `include/linux/backing-dev.h` | 2 | `SEC_BDI`/`BDI_CAP_SEC_DEBUG` deferred, config off |
+| `mm/page-writeback.c` | 2 | `BDI_CAP_SEC_DEBUG` branch, same deferral |
+| `mm/memblock.c` | 4 | old wording; accounting restored in `memblock_remove_range()` |
+
+### False positives from the token scan
+| File | Lines | Reason |
+|---|---:|---|
+| `drivers/tty/vt/vt.c` | 1 | `memsize` is a local variable in `vzalloc()` |
+| `drivers/usb/host/xhci-tegra.c` | 2 | `reqphys_memsize`/`alloc_phys_memsize` are Tegra locals |
+| `drivers/scsi/scsi_logging.c` | 2 | `CONFIG_SEC_ABC` present with different trailing space |
+
+### Disabled config, no code path in this build
+| Config | Files | Lines |
+|---|---|---:|
+| `CONFIG_DEBUG_SNAPSHOT_REG`/DSS_REG | `arch/arm64/include/asm/io.h` | 2 |
+| `CONFIG_SEC_DEBUG_EXCEPTION_STACK` | `arch/arm64/kernel/entry.S` | 1 |
+| `CONFIG_SEC_DEBUG_FAULT_MSG_ADV` | `arch/arm64/kernel/entry.S` | 1 |
+| `CONFIG_SEC_DEBUG_SPINBUG_PANIC` | `kernel/locking/spinlock_debug.c` | 3 |
+| `CONFIG_SEC_DEBUG_SHOW_USER_STACK` | `kernel/workqueue.c` | 3 |
+| `CONFIG_SEC_DEBUG_OBJECTS_*` | `lib/debugobjects.c` | 7 |
+| `CONFIG_DELAY_CHECKER` | `kernel/panic.c`, `include/linux/delay.h` | 3 |
+| `CONFIG_CORESIGHT` | `drivers/hwtracing/coresight/coresight-cpu-debug.c` | 3 |
+| `CONFIG_SEC_BDI` | `mm/backing-dev.c`, `mm/page-writeback.c` | 3 |
+| `CONFIG_PROC_SPOOF_CMDLINE` | `fs/proc/cmdline.c` | 0 (parity only) |
+| `CONFIG_PWM_SAMSUNG` idle clock-gating (needs `CONFIG_ARCH_EXYNOS_PM`) | `drivers/pwm/pwm-samsung.c` | 15 |
+| coresight/PMU trace hooks | `drivers/hwtracing/...` | 3 |
+
+### Dead code or legacy SoC
+| Area | Files | Lines | Reason |
+|---|---|---:|---|
+| `clk-exynos4`, `clk-exynos5250`, `clk-exynos5420`, `clk-s3c*`, `clk-s5pv210` | 7 | 55 | those SoCs are not built for universal9830 |
+| ANCHOR SoCs never probe on Exynos 9830 | | | `samsung_clk_sleep_init()` exists as a macro |
+| `secdbg_base_set_sysrq_crash` | `drivers/tty/sysrq.c` | 1 | extern without any caller in the vendor tree |
+| `vendor_panic_cb` | `kernel/panic.c`, `include/linux/kernel.h` | 5 | GKI-only hook, no provider in this tree |
+| `get_current_napi_context` | `include/linux/netdevice.h` | 1 | unused; in-tree users call `napi_get_current()` |
+| `CONFIG_SEC_DEBUG_PM_DEVICE_INFO` dead branch | `kernel/irq/manage.c` | 1 | covered by the restored helper |
+| `SEC slub` hook wording | `mm/slub.c` | 0 | BUG sites present |
+
+### Deliberate deviations
+- `mm/memblock.c` accounts removals in `memblock_remove_range()` instead of
+  the vendor `obase` wording, because v4.20 renamed the local variable.
+- `kernel/printk/printk.c` uses `task_pid_nr(current)` and
+  `smp_processor_id()` instead of the vendor `current->pid` and
+  `raw_smp_processor_id()`; both are equivalent inside `log_store()`.
+- qspinlock keeps the v4.20 encoding helpers while storing the same owner
+  byte value.
+
+No Samsung Kconfig symbol that is enabled in `exynos9830_defconfig` is
+left without an implementation after this audit.
+
+## Build and boot test status
+
+The phone still cannot reach the laptop (`10.15.33.134` no route).
+`out/.config` was generated before the `arch/arm64/Kconfig` cmdline choice
+fix, so the build must regenerate the config and confirm
+`CONFIG_CMDLINE_EXTEND=y` plus the `console=tty0 loglevel=8` built-in
+cmdline. The build, repack and flash steps are unchanged.
