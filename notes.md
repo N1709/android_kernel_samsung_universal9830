@@ -116,9 +116,10 @@ are enabled in the z3s defconfig:
 - `drivers/clk/samsung/clk-exynos4.c`, `clk-exynos5420.c`,
   `clk-exynos5250.c`, `pwm-samsung.c`: vendor behaviour for older
   Exynos SoCs; not used by universal9830, lowest priority.
-- `kernel/time/timer.c`, `hrtimer.c`, `tick-common.c`,
-  `drivers/cpuidle/cpuidle.c` and `mm/page-writeback.c`: DSS /
-  sec_debug instrumentation only.
+- `mm/page-writeback.c` and `mm/backing-dev.c`: DSS / sec_debug
+  instrumentation only. The timer, hrtimer, tick and cpuidle DSS hooks
+  are restored (including the Exynos UCC `filter_cstate()` clamp in
+  `cpuidle_enter_state()`).
 
 ## Live boot console and remaining restores (6b2ab6eb7, 053259943)
 

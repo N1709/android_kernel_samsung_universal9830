@@ -22,6 +22,8 @@
 #include <linux/module.h>
 #include <linux/suspend.h>
 #include <linux/tick.h>
+#include <linux/exynos-ucc.h>
+#include <linux/debug-snapshot.h>
 #include <trace/events/power.h>
 
 #include "cpuidle.h"
@@ -220,10 +222,18 @@ int cpuidle_enter_state(struct cpuidle_device *dev, struct cpuidle_driver *drv,
 		broadcast = false;
 	}
 
+	/*
+	 * Ask the UCC layer whether this CPU is allowed to enter the
+	 * selected state.  It can clamp the state back to index 0.
+	 */
+	index = filter_cstate(dev->cpu, index);
+	target_state = &drv->states[index];
+
 	/* Take note of the planned idle state. */
 	sched_idle_set_state(target_state);
 
 	trace_cpu_idle_rcuidle(index, dev->cpu);
+	dbg_snapshot_cpuidle(drv->states[index].desc, index, 0, DSS_FLAG_IN);
 	time_start = ns_to_ktime(local_clock());
 
 	stop_critical_timings();
@@ -233,6 +243,9 @@ int cpuidle_enter_state(struct cpuidle_device *dev, struct cpuidle_driver *drv,
 	sched_clock_idle_wakeup_event();
 	time_end = ns_to_ktime(local_clock());
 	trace_cpu_idle_rcuidle(PWR_EVENT_EXIT, dev->cpu);
+	dbg_snapshot_cpuidle(drv->states[index].desc, entered_state,
+			     (int)ktime_to_us(ktime_sub(time_end, time_start)),
+			     DSS_FLAG_OUT);
 
 	/* The cpu is no longer idle or about to enter idle. */
 	sched_idle_set_state(NULL);
