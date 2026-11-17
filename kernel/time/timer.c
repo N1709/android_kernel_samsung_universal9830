@@ -42,6 +42,7 @@
 #include <linux/sched/sysctl.h>
 #include <linux/sched/nohz.h>
 #include <linux/sched/debug.h>
+#include <linux/sched/clock.h>
 #include <linux/slab.h>
 #include <linux/compat.h>
 #include <linux/debug-snapshot.h>
