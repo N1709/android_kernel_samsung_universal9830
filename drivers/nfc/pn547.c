@@ -737,7 +737,7 @@ static void p61_access_unlock(struct pn547_dev *pn547_dev)
 
 static int signal_handler(int state, long nfc_pid)
 {
-	struct siginfo sinfo;
+	struct kernel_siginfo sinfo;
 	pid_t pid;
 	struct task_struct *task = NULL;
 	int sigret = 0;
@@ -749,7 +749,7 @@ static int signal_handler(int state, long nfc_pid)
 		return -EPERM;
 	}
 
-	memset(&sinfo, 0, sizeof(struct siginfo));
+	memset(&sinfo, 0, sizeof(struct kernel_siginfo));
 	sinfo.si_signo = SIG_NFC;
 	sinfo.si_code = SI_QUEUE;
 	sinfo.si_int = state;
