@@ -61,6 +61,7 @@ struct fault_info {
 
 static const struct fault_info fault_info[];
 static struct fault_info debug_fault_info[];
+static int safe_fault_in_progress = 0;
 
 #ifdef CONFIG_SEC_DEBUG_AVOID_UNNECESSARY_TRAP
 unsigned long long incorrect_addr;
@@ -255,6 +256,18 @@ int ptep_set_access_flags(struct vm_area_struct *vma,
 	return 1;
 }
 
+int __do_kernel_fault_safe(struct mm_struct *mm, unsigned long addr,
+		unsigned int esr, struct pt_regs *regs)
+{
+	safe_fault_in_progress = 0xFAFADEAD;
+
+	dbg_snapshot_panic_handler_safe();
+	dbg_snapshot_printkl(safe_fault_in_progress, safe_fault_in_progress);
+	dbg_snapshot_spin_func();
+
+	return 0;
+}
+
 static bool is_el1_instruction_abort(unsigned int esr)
 {
 	return ESR_ELx_EC(esr) == ESR_ELx_EC_IABT_CUR;
@@ -311,6 +324,11 @@ static void __do_kernel_fault(unsigned long addr, unsigned int esr,
 	 */
 	if (!is_el1_instruction_abort(esr) && fixup_exception(regs))
 		return;
+
+	if (safe_fault_in_progress) {
+		dbg_snapshot_printkl(safe_fault_in_progress, safe_fault_in_progress);
+		return;
+	}
 
 	if (is_el1_permission_fault(addr, esr, regs)) {
 		if (esr & ESR_ELx_WNR)
@@ -622,10 +640,16 @@ no_context:
 	return 0;
 }
 
+#define thread_virt_addr_valid(xaddr)   pfn_valid(__pa(xaddr) >> PAGE_SHIFT)
+
 static int __kprobes do_translation_fault(unsigned long addr,
 					  unsigned int esr,
 					  struct pt_regs *regs)
 {
+	/* We may have invalid '*current' */
+	if (!thread_virt_addr_valid(current_thread_info()))
+		__do_kernel_fault_safe(NULL, addr, esr, regs);
+
 	if (addr < TASK_SIZE)
 		return do_page_fault(addr, esr, regs);
 
@@ -772,7 +796,15 @@ asmlinkage void __exception do_mem_abort(unsigned long addr, unsigned int esr,
 		return;
 
 	if (!user_mode(regs)) {
-		pr_alert("Unhandled fault at 0x%016lx\n", addr);
+		if (IS_ENABLED(CONFIG_SEC_DEBUG_FAULT_MSG_ADV))
+			pr_auto(ASL1, "Unhandled fault: %s (0x%08x) at 0x%016lx\n",
+						inf->name, esr, addr);
+		else
+			pr_alert("Unhandled fault at 0x%016lx\n", addr);
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+		secdbg_exin_set_fault(MEM_ABORT_FAULT, addr, regs);
+		secdbg_exin_set_esr(esr);
+#endif
 		mem_abort_decode(esr);
 		show_pte(addr);
 	}
@@ -813,6 +845,19 @@ asmlinkage void __exception do_sp_pc_abort(unsigned long addr,
 			arm64_apply_bp_hardening();
 		local_daif_restore(DAIF_PROCCTX);
 	}
+
+#if defined(CONFIG_SEC_DEBUG_FAULT_MSG_ADV)
+	if (!user_mode(regs))
+		pr_auto(ASL1, "%s exception: pc=0x%016llx sp=0x%016llx\n",
+			esr_get_class_string(esr),
+			regs->pc, regs->sp);
+#endif
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+	if (!user_mode(regs)) {
+		secdbg_exin_set_fault(SP_PC_ABORT_FAULT, addr, regs);
+		secdbg_exin_set_esr(esr);
+	}
+#endif
 
 	arm64_notify_die("SP/PC alignment exception", regs,
 			 SIGBUS, BUS_ADRALN, (void __user *)addr, esr);

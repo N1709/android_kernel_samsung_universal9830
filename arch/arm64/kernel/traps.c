@@ -311,9 +311,15 @@ void die(const char *str, struct pt_regs *regs, int err)
 	int ret;
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&die_lock, flags);
+	if (IS_ENABLED(CONFIG_SEC_DEBUG_DISABLE_IRQ_IN_DIE))
+		local_irq_save(flags);
 
 	oops_enter();
+
+	if (IS_ENABLED(CONFIG_SEC_DEBUG_DISABLE_IRQ_IN_DIE))
+		raw_spin_lock(&die_lock);
+	else
+		raw_spin_lock_irq(&die_lock);
 
 	console_verbose();
 	bust_spinlocks(1);
@@ -324,14 +330,43 @@ void die(const char *str, struct pt_regs *regs, int err)
 
 	bust_spinlocks(0);
 	add_taint(TAINT_DIE, LOCKDEP_NOW_UNRELIABLE);
+	if (IS_ENABLED(CONFIG_SEC_DEBUG_DISABLE_IRQ_IN_DIE))
+		raw_spin_unlock(&die_lock);
+	else
+		raw_spin_unlock_irq(&die_lock);
+
 	oops_exit();
 
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+	if (regs && (!user_mode(regs)))
+		secdbg_exin_set_backtrace(regs);
+#endif
+#if defined(CONFIG_SEC_DEBUG_PRINT_PCLR)
+	if (in_interrupt()) {
+		if (regs)
+			panic("%s\nPC is at %pS\nLR is at %pS",
+			      "Fatal exception in interrupt", (void *)(regs)->pc,
+			      (compat_user_mode(regs)) ? (void *)regs->compat_lr : (void *)regs->regs[30]);
+		else
+			panic("Fatal exception in interrupt");
+	}
+	if (panic_on_oops) {
+		if (regs)
+			panic("%s\nPC is at %pS\nLR is at %pS",
+			      "Fatal exception", (void *)(regs)->pc,
+			      (compat_user_mode(regs)) ? (void *)regs->compat_lr : (void *)regs->regs[30]);
+		else
+			panic("Fatal exception");
+	}
+#else
 	if (in_interrupt())
 		panic("Fatal exception in interrupt");
 	if (panic_on_oops)
 		panic("Fatal exception");
+#endif
 
-	raw_spin_unlock_irqrestore(&die_lock, flags);
+	if (IS_ENABLED(CONFIG_SEC_DEBUG_DISABLE_IRQ_IN_DIE))
+		local_irq_restore(flags);
 
 	if (ret != NOTIFY_STOP)
 		do_exit(SIGSEGV);
@@ -522,7 +557,11 @@ void arm64_notify_segfault(unsigned long addr)
 	force_signal_inject(SIGSEGV, code, addr);
 }
 
+#if defined(CONFIG_SEC_DEBUG_FAULT_MSG_ADV)
+asmlinkage void __exception do_undefinstr(struct pt_regs *regs, unsigned int esr)
+#else
 asmlinkage void __exception do_undefinstr(struct pt_regs *regs)
+#endif
 {
 	/* check for AArch32 breakpoint instructions */
 	if (!aarch32_break_handler(regs))
@@ -530,6 +569,24 @@ asmlinkage void __exception do_undefinstr(struct pt_regs *regs)
 
 	if (call_undef_hook(regs) == 0)
 		return;
+
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+	if (!user_mode(regs)) {
+		secdbg_exin_set_fault(UNDEF_FAULT, (unsigned long)regs->pc, regs);
+#if defined(CONFIG_SEC_DEBUG_FAULT_MSG_ADV)
+		secdbg_exin_set_esr(esr);
+#endif
+	}
+#endif /* CONFIG_SEC_DEBUG_EXTRA_INFO */
+
+#if defined(CONFIG_SEC_DEBUG_FAULT_MSG_ADV)
+	if (!user_mode(regs)) {
+		pr_auto(ASL1, "%s: pc=0x%016llx (esr=0x%08x)\n",
+			"undefined instruction", regs->pc, esr);
+		dump_instr(KERN_INFO, regs);
+		die("undefined instruction", regs, esr);
+	}
+#endif
 
 	BUG_ON(!user_mode(regs));
 	force_signal_inject(SIGILL, ILL_ILLOPC, regs->pc);
@@ -814,7 +871,11 @@ asmlinkage void __exception do_cp15instr(unsigned int esr, struct pt_regs *regs)
 		hook_base = cp15_64_hooks;
 		break;
 	default:
+#if defined(CONFIG_SEC_DEBUG_FAULT_MSG_ADV)
+		do_undefinstr(regs, esr);
+#else
 		do_undefinstr(regs);
+#endif
 		return;
 	}
 
@@ -829,7 +890,11 @@ asmlinkage void __exception do_cp15instr(unsigned int esr, struct pt_regs *regs)
 	 * EL0. Fall back to our usual undefined instruction handler
 	 * so that we handle these consistently.
 	 */
+#if defined(CONFIG_SEC_DEBUG_FAULT_MSG_ADV)
+	do_undefinstr(regs, esr);
+#else
 	do_undefinstr(regs);
+#endif
 }
 #endif
 
@@ -848,7 +913,11 @@ asmlinkage void __exception do_sysinstr(unsigned int esr, struct pt_regs *regs)
 	 * back to our usual undefined instruction handler so that we handle
 	 * these consistently.
 	 */
+#if defined(CONFIG_SEC_DEBUG_FAULT_MSG_ADV)
+	do_undefinstr(regs, esr);
+#else
 	do_undefinstr(regs);
+#endif
 }
 
 static const char *esr_class_str[] = {
@@ -905,9 +974,17 @@ asmlinkage void bad_mode(struct pt_regs *regs, int reason, unsigned int esr)
 {
 	console_verbose();
 
-	pr_crit("Bad mode in %s handler detected on CPU%d, code 0x%08x -- %s\n",
+	pr_auto(ASL1,
+		"Bad mode in %s handler detected on CPU%d, code 0x%08x -- %s\n",
 		handler[reason], smp_processor_id(), esr,
 		esr_get_class_string(esr));
+
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+	if (!user_mode(regs)) {
+		secdbg_exin_set_fault(BAD_MODE_FAULT, (unsigned long)regs->pc, regs);
+		secdbg_exin_set_esr(esr);
+	}
+#endif
 
 	local_daif_mask();
 	panic("bad mode");
@@ -933,48 +1010,75 @@ asmlinkage void bad_el0_sync(struct pt_regs *regs, int reason, unsigned int esr)
 DEFINE_PER_CPU(unsigned long [OVERFLOW_STACK_SIZE/sizeof(long)], overflow_stack)
 	__aligned(16);
 
+#ifdef CONFIG_SEC_DEBUG_BAD_STACK_CAREFULLY
+#define thread_virt_addr_valid(xaddr)   pfn_valid(__pa(xaddr) >> PAGE_SHIFT)
+
+extern int __do_kernel_fault_safe(struct mm_struct *mm, unsigned long addr,
+		unsigned int esr, struct pt_regs *regs);
+#endif /* CONFIG_SEC_DEBUG_BAD_STACK_CAREFULLY */
+
 asmlinkage void handle_bad_stack(struct pt_regs *regs)
 {
-	unsigned long tsk_stk = (unsigned long)current->stack;
-	unsigned long irq_stk = (unsigned long)this_cpu_read(irq_stack_ptr);
-	unsigned long ovf_stk = (unsigned long)this_cpu_ptr(overflow_stack);
-	unsigned int esr = read_sysreg(esr_el1);
-	unsigned long far = read_sysreg(far_el1);
+	if (IS_ENABLED(CONFIG_SEC_DEBUG_BAD_STACK_INFO))
+		secdbg_base_set_bs_info_phase(1);
 
-	console_verbose();
-	pr_emerg("Insufficient stack space to handle exception!");
+#ifdef CONFIG_SEC_DEBUG_BAD_STACK_CAREFULLY
+	/* check sp_el0 address */
+	if (!thread_virt_addr_valid(current_thread_info()))
+		__do_kernel_fault_safe(NULL, 0, 0, regs);
+#endif /* CONFIG_SEC_DEBUG_BAD_STACK_CAREFULLY */
+	{
+		unsigned long tsk_stk = (unsigned long)current->stack;
+		unsigned long irq_stk = (unsigned long)this_cpu_read(irq_stack_ptr);
+		unsigned long ovf_stk = (unsigned long)this_cpu_ptr(overflow_stack);
+		unsigned int esr = read_sysreg(esr_el1);
+		unsigned long far = read_sysreg(far_el1);
 
-	pr_emerg("ESR: 0x%08x -- %s\n", esr, esr_get_class_string(esr));
-	pr_emerg("FAR: 0x%016lx\n", far);
+		if (IS_ENABLED(CONFIG_SEC_DEBUG_BAD_STACK_INFO))
+			secdbg_base_set_bs_info_phase(2);
 
-	pr_emerg("Task stack:     [0x%016lx..0x%016lx]\n",
-		 tsk_stk, tsk_stk + THREAD_SIZE);
-	pr_emerg("IRQ stack:      [0x%016lx..0x%016lx]\n",
-		 irq_stk, irq_stk + THREAD_SIZE);
-	pr_emerg("Overflow stack: [0x%016lx..0x%016lx]\n",
-		 ovf_stk, ovf_stk + OVERFLOW_STACK_SIZE);
+		console_verbose();
+		pr_emerg("Insufficient stack space to handle exception!");
 
-	__show_regs(regs);
+		pr_emerg("ESR: 0x%08x -- %s\n", esr, esr_get_class_string(esr));
+		pr_emerg("FAR: 0x%016lx\n", far);
 
-	/*
-	 * We use nmi_panic to limit the potential for recusive overflows, and
-	 * to get a better stack trace.
-	 */
-	nmi_panic(NULL, "kernel stack overflow");
-	cpu_park_loop();
+		pr_emerg("Task stack:     [0x%016lx..0x%016lx]\n",
+			 tsk_stk, tsk_stk + THREAD_SIZE);
+		pr_emerg("IRQ stack:      [0x%016lx..0x%016lx]\n",
+			 irq_stk, irq_stk + THREAD_SIZE);
+		pr_emerg("Overflow stack: [0x%016lx..0x%016lx]\n",
+			 ovf_stk, ovf_stk + OVERFLOW_STACK_SIZE);
+
+		__show_regs(regs);
+
+		/*
+		 * We use nmi_panic to limit the potential for recusive overflows, and
+		 * to get a better stack trace.
+		 */
+		panic("kernel stack overflow");
+		cpu_park_loop();
+	}
 }
 #endif
 
 void __noreturn arm64_serror_panic(struct pt_regs *regs, u32 esr)
 {
 	console_verbose();
+	printk_nmi_exit();
 
-	pr_crit("SError Interrupt on CPU%d, code 0x%08x -- %s\n",
+	pr_auto(ASL1, "SError Interrupt on CPU%d, code 0x%08x -- %s\n",
 		smp_processor_id(), esr, esr_get_class_string(esr));
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+	if (regs && !user_mode(regs)) {
+		secdbg_exin_set_fault(SERROR_FAULT, (unsigned long)regs->pc, regs);
+		secdbg_exin_set_esr(esr);
+	}
+#endif
 	if (regs)
 		__show_regs(regs);
 
-	nmi_panic(regs, "Asynchronous SError Interrupt");
+	panic("Asynchronous SError Interrupt");
 
 	cpu_park_loop();
 	unreachable();
@@ -1066,6 +1170,10 @@ static int bug_handler(struct pt_regs *regs, unsigned int esr)
 
 	switch (report_bug(regs->pc, regs)) {
 	case BUG_TRAP_TYPE_BUG:
+#ifdef CONFIG_SEC_DEBUG_EXTRA_INFO
+		secdbg_exin_set_fault(BUG_FAULT, (unsigned long)regs->pc, regs);
+		secdbg_exin_set_esr(esr);
+#endif
 		die("Oops - BUG", regs, 0);
 		break;
 

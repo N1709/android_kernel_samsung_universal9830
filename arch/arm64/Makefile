@@ -56,6 +56,16 @@ KBUILD_AFLAGS	+= $(lseinstr) $(brokengasinst)
 KBUILD_CFLAGS	+= $(call cc-option,-mabi=lp64)
 KBUILD_AFLAGS	+= $(call cc-option,-mabi=lp64)
 
+ifeq ($(CONFIG_SOC_EXYNOS9830), y)
+ifneq ($(findstring clang,$(CC_VERSION_TEXT)),)
+KBUILD_CFLAGS   += -mcpu=cortex-a55
+KBUILD_AFLAGS   += -mcpu=cortex-a55
+else
+KBUILD_CFLAGS   += -mcpu=cortex-a76.cortex-a55
+KBUILD_AFLAGS   += -mcpu=cortex-a76.cortex-a55
+endif
+endif
+
 ifeq ($(CONFIG_CPU_BIG_ENDIAN), y)
 KBUILD_CPPFLAGS	+= -mbig-endian
 CHECKFLAGS	+= -D__AARCH64EB__

@@ -90,7 +90,7 @@ unsigned int __read_mostly hardlockup_panic =
  * kernel command line parameters are parsed, because otherwise it is not
  * possible to override this in hardlockup_panic_setup().
  */
-#ifdef CONFIG_HARDLOCKUP_DETECTOR
+#if defined(CONFIG_HARDLOCKUP_DETECTOR) || defined(CONFIG_HARDLOCKUP_DETECTOR_OTHER_CPU)
 void __init hardlockup_detector_disable(void)
 {
 	nmi_watchdog_user_enabled = 0;
@@ -1025,6 +1025,21 @@ static void watchdog_check_hardlockup_other_cpu(void)
 	}
 }
 
+
+void touch_nmi_watchdog(void)
+{
+	/*
+	 * Using __raw here because some code paths have
+	 * preemption enabled.  If preemption is enabled
+	 * then interrupts should be enabled too, in which
+	 * case we shouldn't have to worry about the watchdog
+	 * going off.
+	 */
+	raw_cpu_write(watchdog_nmi_touch, true);
+	arch_touch_nmi_watchdog();
+	touch_softlockup_watchdog();
+}
+EXPORT_SYMBOL(touch_nmi_watchdog);
 
 int watchdog_nmi_enable(unsigned int cpu)
 {

@@ -2919,7 +2919,9 @@ static bool __flush_work(struct work_struct *work, bool from_cancel)
 	}
 
 	if (start_flush_work(work, &barr, from_cancel)) {
+		secdbg_dtsk_set_data(DTYPE_WORK, work);
 		wait_for_completion(&barr.done);
+		secdbg_dtsk_clear_data();
 		destroy_work_on_stack(&barr.work);
 		return true;
 	} else {
@@ -5525,6 +5527,13 @@ static void wq_watchdog_reset_touched(void)
 		per_cpu(wq_watchdog_touched_cpu, cpu) = jiffies;
 }
 
+#ifdef CONFIG_SEC_DEBUG_SHOW_USER_STACK
+static enum hrtimer_restart debug_wqlockup(struct hrtimer *t)
+{
+	BUG();
+}
+#endif
+
 static void wq_watchdog_timer_fn(struct timer_list *unused)
 {
 	unsigned long thresh = READ_ONCE(wq_watchdog_thresh) * HZ;
@@ -5563,17 +5572,48 @@ static void wq_watchdog_timer_fn(struct timer_list *unused)
 		/* did we stall? */
 		if (time_after(jiffies, ts + thresh)) {
 			lockup_detected = true;
-			pr_emerg("BUG: workqueue lockup - pool");
+			pr_auto(ASL9, "BUG: workqueue lockup - pool");
 			pr_cont_pool_info(pool);
 			pr_cont(" stuck for %us!\n",
 				jiffies_to_msecs(jiffies - pool_ts) / 1000);
+#ifdef CONFIG_SEC_DEBUG_WQ_LOCKUP_INFO
+			if (pool->cpu >= 0) {
+				secdbg_show_sched_info(pool->cpu, 10);
+				secdbg_show_busy_task(pool->cpu, jiffies_to_msecs(jiffies - pool_ts) / 1000, 5);
+			}
+#endif
 		}
 	}
 
 	rcu_read_unlock();
 
-	if (lockup_detected)
+	if (lockup_detected) {
 		show_workqueue_state();
+#ifdef CONFIG_SEC_DEBUG_WORKQUEUE_LOCKUP_PANIC
+#ifdef CONFIG_SEC_DEBUG_SHOW_USER_STACK
+		{
+			int cpu;
+			struct task_struct *p;
+
+			for_each_cpu(cpu, cpu_online_mask) {
+				p = cpu_curr(cpu);
+				pr_info("cpu %d, pid %d, task name : %s", cpu, p->pid, p->comm);
+				secdbg_send_sig_debuggerd(p, 2);
+			}
+		}
+		{
+			static struct hrtimer debug_wqlockup_hrtimer;
+
+			hrtimer_init(&debug_wqlockup_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+			debug_wqlockup_hrtimer.function = debug_wqlockup;
+			hrtimer_start(&debug_wqlockup_hrtimer, ns_to_ktime(5000000000),
+					HRTIMER_MODE_REL_PINNED);
+		}
+#else
+		BUG();
+#endif
+#endif
+	}
 
 	wq_watchdog_reset_touched();
 	mod_timer(&wq_watchdog_timer, jiffies + thresh);

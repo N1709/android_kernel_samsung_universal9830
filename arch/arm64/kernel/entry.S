@@ -51,13 +51,30 @@
 #ifdef CONFIG_CONTEXT_TRACKING
 	bl	context_tracking_user_enter
 #endif
+
+#ifdef CONFIG_SOC_EXYNOS9830
+	bl	inv_pnt
+	adr	x23, inv_pnt
+	ic	ivau, x23
+	isb
+#endif
 	.endm
+
+#ifdef CONFIG_SOC_EXYNOS9830
+	.align 8
+inv_pnt:
+	ret
+#endif
 
 	.macro	clear_gp_regs
 	.irp	n,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29
 	mov	x\n, xzr
 	.endr
 	.endm
+
+#ifdef CONFIG_SEC_DEBUG_EXCEPTION_STACK
+#define PRESERVE_STACK_SIZE	256
+#endif
 
 /*
  * Bad Abort numbers
@@ -83,7 +100,15 @@ alternative_if ARM64_UNMAP_KERNEL_AT_EL0
 alternative_else_nop_endif
 #endif
 
+#ifdef CONFIG_SEC_DEBUG_EXCEPTION_STACK
+	.if	\el == 0
 	sub	sp, sp, #S_FRAME_SIZE
+	.else
+	sub	sp, sp, #(S_FRAME_SIZE+PRESERVE_STACK_SIZE)
+	.endif /* \el == 0 */
+#else
+	sub	sp, sp, #S_FRAME_SIZE
+#endif
 #ifdef CONFIG_VMAP_STACK
 	/*
 	 * Test whether the SP has overflowed, without corrupting a GPR.
@@ -184,7 +209,14 @@ alternative_cb_end
 	apply_ssbd 1, x22, x23
 
 	.else
+#ifdef CONFIG_SEC_DEBUG_EXCEPTION_STACK
+	add	x21, sp, #(S_FRAME_SIZE+PRESERVE_STACK_SIZE)
+#else
 	add	x21, sp, #S_FRAME_SIZE
+#endif
+#ifdef CONFIG_SEC_DEBUG_BAD_STACK_CAREFULLY
+	.if \el == 1
+#endif
 	get_thread_info tsk
 	/* Save the task's original addr_limit and set USER_DS */
 	ldr	x20, [tsk, #TSK_TI_ADDR_LIMIT]
@@ -192,6 +224,9 @@ alternative_cb_end
 	mov	x20, #USER_DS
 	str	x20, [tsk, #TSK_TI_ADDR_LIMIT]
 	/* No need to reset PSTATE.UAO, hardware's already set it to 0 for us */
+#ifdef CONFIG_SEC_DEBUG_BAD_STACK_CAREFULLY
+	.endif /* \el == 1 */
+#endif
 	.endif /* \el == 0 */
 	mrs	x22, elr_el1
 	mrs	x23, spsr_el1
@@ -343,7 +378,15 @@ alternative_else_nop_endif
 	ldp	x26, x27, [sp, #16 * 13]
 	ldp	x28, x29, [sp, #16 * 14]
 	ldr	lr, [sp, #S_LR]
+#ifdef CONFIG_SEC_DEBUG_EXCEPTION_STACK
+	.if	\el == 0
 	add	sp, sp, #S_FRAME_SIZE		// restore sp
+	.else
+	add	sp, sp, #(S_FRAME_SIZE+PRESERVE_STACK_SIZE)
+	.endif /* \el == 0 */
+#else
+	add	sp, sp, #S_FRAME_SIZE		// restore sp
+#endif
 	/*
 	 * ARCH_HAS_MEMBARRIER_SYNC_CORE rely on eret context synchronization
 	 * when returning from IPI handler, and when returning to user-space.
@@ -473,7 +516,11 @@ __bad_stack:
 	sub	sp, sp, #S_FRAME_SIZE
 	kernel_entry 1
 	mrs	x0, tpidr_el0
+#ifdef CONFIG_SEC_DEBUG_EXCEPTION_STACK
+	add	x0, x0, #(S_FRAME_SIZE+PRESERVE_STACK_SIZE)
+#else
 	add	x0, x0, #S_FRAME_SIZE
+#endif
 	str	x0, [sp, #S_SP]
 
 	/* Stash the regs for handle_bad_stack */
@@ -597,6 +644,9 @@ el1_undef:
 	 */
 	inherit_daif	pstate=x23, tmp=x2
 	mov	x0, sp
+#ifdef CONFIG_SEC_DEBUG_FAULT_MSG_ADV
+	mrs	x1, esr_el1
+#endif
 	bl	do_undefinstr
 	kernel_exit 1
 el1_dbg:
@@ -824,6 +874,9 @@ el0_undef:
 	enable_daif
 	ct_user_exit
 	mov	x0, sp
+#ifdef CONFIG_SEC_DEBUG_FAULT_MSG_ADV
+	mrs	x1, esr_el1
+#endif
 	bl	do_undefinstr
 	b	ret_to_user
 el0_sys:
