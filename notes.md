@@ -18,7 +18,7 @@ Working document. Updated as the merge progresses.
 | dropped v4.20 files | `lib/chacha20.c`, `mm/kasan/kasan.c`, `mm/kasan/kasan_init.c`, `crypto/memneq.c` restored in `1b6e32131` |
 | arch/arm64 cluster | rc=0, zero errors (kernel, mm, lib, crypto) |
 | vendor build wiring | restored after the v4.20 normalization silently dropped it; see "Vendor build wiring" below |
-| v4.20 build | green at `652069257`, `be4e5edf5`, `41f6c8713`, `e0902dd4c` and `589312407` |
+| v4.20 build | green through `589312407`; `6b2ab6eb7` and `053259943` are committed and pushed but not rebuilt yet (build host: laptop only) |
 | v4.20 boot image | packed: `boot-v420-f0d0cf852.img`, 61,865,984 bytes, sha256 `a909d2ab6572081381a2975bcf63a6d1a503b1d4fce61bfa72ec628ec9685090`; phone staging pending until adb sees the device |
 | v4.20 boot test | pending — no image with the restored Samsung memory layout and arch hooks has been flashed yet |
 | DTB packaging | verified: Samsung `d7b7ab1e` header, FDT at offset 64, big-endian size fields, `__symbols__` present, ramdisk preserved, AVB footer zeroed |
@@ -32,10 +32,10 @@ Working document. Updated as the merge progresses.
 |---|---:|---|
 | v4.20 merge and generic normalization | 100% | merge `3027a7714`; generic files normalized by `a838f89fb` and `466c12f3e` |
 | Samsung memory layout | 100% code | `be4e5edf5` restores `corememsize`, `ZONE_MOVABLE`, memblock cap, PASR and hotplug hooks; build is green |
-| Samsung arch and generic hooks | ~96% | `41f6c8713`, `e0902dd4c`, `f0d0cf852` and `589312407` restore the CPU/PSCI/fault/memsize/panic/DSS and clocksource hooks; the traps/entry/irqflags hooks remain deferred |
-| Build-clean | 100% through `589312407` | `0` errors in `out/build.log`; boot image repacked |
-| Boot and stability | 0% | no image has reached userspace; the splash hang is still unexplained, but the arch-timer clocksource-only path is now restored |
-| Overall | ~94% | restores, build and packaging are done; the boot test and the v5.0 merge remain |
+| Samsung arch and generic hooks | ~98% | `41f6c8713`, `e0902dd4c`, `f0d0cf852`, `589312407`, `6b2ab6eb7` and `053259943` restore the CPU/PSCI/fault/memsize/panic/DSS/clocksource hooks, the crash paths, the live console, the freezer FREECESS checks, the PM wakeup logs and bootstat; only diagnostic DSS timer/cpuidle hooks and the explicitly deferred files remain |
+| Build-clean | pending rebuild of `053259943` | zero errors through `589312407`; the latest commits must be built on the laptop |
+| Boot and stability | 0% | no image has reached userspace; the splash hang is still unexplained, but the clocksource-only path and the live VT console are now in place |
+| Overall | ~86% | restores and packaging are effectively done; the rebuild, the boot test and the v5.0 merge remain |
 
 ## v4.20 clocksource split restore (f0d0cf852)
 
@@ -116,8 +116,59 @@ are enabled in the z3s defconfig:
 - `drivers/clk/samsung/clk-exynos4.c`, `clk-exynos5420.c`,
   `clk-exynos5250.c`, `pwm-samsung.c`: vendor behaviour for older
   Exynos SoCs; not used by universal9830, lowest priority.
-- `kernel/power/process.c`, `timer.c`, `hrtimer.c`, `tick-common.c`,
-  `cpuidle.c`, `mm/page-writeback.c`: DSS / sec_debug instrumentation.
+- `kernel/time/timer.c`, `hrtimer.c`, `tick-common.c`,
+  `drivers/cpuidle/cpuidle.c` and `mm/page-writeback.c`: DSS /
+  sec_debug instrumentation only.
+
+## Live boot console and remaining restores (6b2ab6eb7, 053259943)
+
+`6b2ab6eb7` restores the v4.20 crash and debug paths that the merge
+dropped: the `traps.c` die/panic diagnostics, the Exynos 9830 `inv_pnt`
+workaround and exception stack in `entry.S`, the safe kernel fault path
+and adv-tracer hooks in `fault.c`, the DSS lockdep hooks, the softdog and
+workqueue lockup reports, the hardlockup detector helper, the audit
+default, and the vendor Cortex-A55 clang flags.
+
+The same commit adds an on-screen boot console shared by every
+universal9830 board. `exynos9830_defconfig` now enables `CONFIG_VT`,
+`CONFIG_VT_CONSOLE`, `CONFIG_FRAMEBUFFER_CONSOLE` and
+`CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY`, and appends
+`console=tty0 loglevel=8` to the built-in command line. The decon driver
+already registers a complete `fb_ops`, so fbcon can draw the kernel log
+on the framebuffer from early boot. To disable the console, remove those
+four symbols and the `console=tty0` token from the shared config only.
+
+`053259943` restores the remaining platform hooks:
+
+- `kernel/power/process.c`: the first unfrozen task and its count are
+  published in the shared debug region, an aborted freeze records the
+  active wakeup sources through `log_suspend_abort_reason()`, and every
+  task that refuses to freeze is printed with the auto-comment backtrace
+  plus `secdbg_exin_set_unfz()`. `SEC_DEBUG_FAIL_TO_FREEZE_PANIC` is
+  supported but remains unset.
+- `include/linux/suspend.h`: `pm_get_active_wakeup_sources()` is declared
+  again for the PM code.
+- `kernel/cgroup/freezer.c`: the FREECESS attach policy is back; only the
+  task itself, uid 1000 or a `CAP_SYS_ADMIN` holder may move a task into
+  a freezer cgroup.
+- `arch/arm64/mm/mmu.c`, `fs/dcache.c`, `mm/page_alloc.c`: the memsize
+  kernel-type accounting around `paging_init()`, `vfs_caches_init_early()`
+  and `free_reserved_area()` is restored, so `/proc/memsize/kernel`
+  reports the same buckets as the vendor kernel.
+- `drivers/of/fdt.c`: disabled debug-snapshot reserved-memory nodes are
+  rejected again and the memory holes are recorded after the flat DT
+  scan.
+- `init/main.c`: every initcall level is reported to `SEC_BOOTSTAT`.
+
+## Build host rule
+
+The only build host is the laptop. This session started
+`./build.sh -d z3s` on the phone by mistake (`uname -m` is `aarch64`);
+the build was stopped and nothing further will be compiled on the phone.
+The laptop was not reachable when `053259943` was committed
+(`10.15.33.134` no route, `192.168.1.16` and `10.17.173.134` timeout), so
+that commit has not been compiled yet. Rebuild it on the laptop before
+repacking a boot image.
 
 ## v4.20 early boot fix (652069257)
 

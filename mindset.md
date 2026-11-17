@@ -727,20 +727,27 @@ hardware once.
   first group in the boot-test image and keep the second group for the
   next round.
 
-## Status after the timer restore
+## Status after the crash-path and PM restores
 
 | Area | Estimate |
 |---|---:|
 | v4.20 merge and generic normalization | 100% |
-| Samsung memory and clocksource restores | ~96% |
-| Build-clean | 100% through `589312407` |
+| Samsung memory, clocksource, crash and PM restores | ~98% |
+| Build-clean | pending rebuild of `053259943`; green through `589312407` |
 | Boot and stability | 0% (no image has reached userspace yet) |
-| Overall | ~94% |
+| Overall | ~86% |
 
-The latest build at `f0d0cf852`/`589312407` is green with zero errors.
+`6b2ab6eb7` restores the crash paths and adds the shared VT/fbcon live
+console; `053259943` restores the PM freeze logging, the FREECESS attach
+checks, the memsize accounting and the `SEC_BOOTSTAT` initcall hook.
+Neither commit has been compiled: the laptop was unreachable from the
+phone (`10.15.33.134` no route, `192.168.1.16` and `10.17.173.134`
+timeout). Do not build on the phone to work around it. The next build,
+the repack and the manual flash all happen on the laptop.
+
 `boot-v420-f0d0cf852.img` (61,865,984 bytes, sha256
 `a909d2ab6572081381a2975bcf63a6d1a503b1d4fce61bfa72ec628ec9685090`)
-is packed on the laptop and waiting for a manual flash. Only the boot
-test can prove whether the arch-timer clocksource-only restore fixes the
-splash hang.
+is the newest packed image, but it predates `6b2ab6eb7` and
+`053259943`. Only the boot test can prove whether the arch-timer
+clocksource-only restore fixes the splash hang.
 
