@@ -504,6 +504,14 @@ static inline void gpiod_set_consumer_name(struct gpio_desc *desc, const char *n
 	WARN_ON(1);
 }
 
+#ifdef CONFIG_EXYNOS_MODEM_IF
+static inline int gpiod_get_consumer_name(struct gpio_desc *desc, char **name)
+{
+	WARN_ON(1);
+	return -EINVAL;
+}
+#endif
+
 static inline struct gpio_desc *gpio_to_desc(unsigned gpio)
 {
 	return ERR_PTR(-EINVAL);

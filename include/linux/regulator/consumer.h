@@ -482,6 +482,14 @@ static inline int regulator_is_supported_voltage(struct regulator *regulator,
 	return 0;
 }
 
+#ifdef CONFIG_SEC_PM
+static inline int regulator_set_short_detection(struct regulator *regulator,
+						 bool enable, int lv_uA)
+{
+	return 0;
+}
+#endif
+
 static inline int regulator_set_current_limit(struct regulator *regulator,
 					     int min_uA, int max_uA)
 {
