@@ -114,8 +114,8 @@ are enabled in the z3s defconfig:
 - `drivers/hwtracing/coresight/coresight-cpu-debug.c`: Exynos PMU
   offsets and `exynos_cpu.power_state()` filtering.
 - `drivers/clk/samsung/clk-exynos4.c`, `clk-exynos5420.c`,
-  `clk-exynos5250.c`, `pwm-samsung.c`: vendor behaviour for older
-  Exynos SoCs; not used by universal9830, lowest priority.
+  `clk-exynos5250.c`: vendor behaviour for older Exynos SoCs; not used
+  by universal9830, lowest priority.
 - `mm/page-writeback.c` and `mm/backing-dev.c`: DSS / sec_debug
   instrumentation only. The timer, hrtimer, tick and cpuidle DSS hooks
   are restored (including the Exynos UCC `filter_cstate()` clamp in
@@ -1332,10 +1332,41 @@ list is an active code path of the Exynos 9830 build.
 No Samsung Kconfig symbol that is enabled in `exynos9830_defconfig` is
 left without an implementation after this audit.
 
+## PWM driver restore (7d2e55d96, 17 Nov 2026)
+
+The audit above treated `drivers/pwm/pwm-samsung.c` as an older-SoC
+detail, but universal9830 actually instantiates `sec_pwm: pwm@106F0000`
+with `compatible = "samsung,s3c6400-pwm"` and
+`clock-names = "pwm_pclk", "pwm_sclk"`. The v4.20 driver looks up
+`"timers"` and `"pwm-tclk0"` instead, so `pwm_samsung_probe()` fails with
+`-ENOENT` and the vibrator/haptic channel never registers. This was a
+real regression, not just a cosmetic difference.
+
+`7d2e55d96` restores the vendor driver. It keeps the DT clock names,
+per-channel duty-cycle tracking for suspend/resume, and the Exynos PM
+idle hooks, which remain compiled out exactly as before because
+`CONFIG_ARCH_EXYNOS_PM` does not exist in this tree. The 4.20
+`struct pwm_ops` still exposes request/free/config/set_polarity/capture/
+enable/disable, so the vendor ops table binds without adaptation.
+
 ## Build and boot test status
 
-The phone still cannot reach the laptop (`10.15.33.134` no route).
-`out/.config` was generated before the `arch/arm64/Kconfig` cmdline choice
-fix, so the build must regenerate the config and confirm
-`CONFIG_CMDLINE_EXTEND=y` plus the `console=tty0 loglevel=8` built-in
-cmdline. The build, repack and flash steps are unchanged.
+The laptop is reachable again at `10.223.119.134` and has every tool and
+the cross binutils. The repo lives at
+`/home/n1709/app/experimental/upstream-4.20/android_kernel_samsung_universal9830`.
+
+`937c3fb28` is built with `./build.sh -d z3s -j6`; the generated
+`out/.config` keeps `CONFIG_CMDLINE_EXTEND=y`, `CONFIG_VT=y`,
+`CONFIG_VT_CONSOLE=y`, `CONFIG_FRAMEBUFFER_CONSOLE=y`,
+`CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y` and the built-in
+`console=tty0 loglevel=8` command line. `7d2e55d96` restores the PWM
+driver on top of that, so the final image is rebuilt from the branch tip
+after the first build completes.
+
+The boot image is repacked with
+`scripts/repack_bootimg.py --template boot-v420-f0d0cf852.img`, whose
+ramdisk hash matches the known-working 4.19 image exactly. The final
+image path, size and sha256 are recorded here after the repack.
+
+Flash and boot test are the only steps that still need the user; nothing
+in this tree may be flashed without explicit approval.

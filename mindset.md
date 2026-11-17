@@ -394,6 +394,7 @@ Fix these the same way again, do not re-litigate them.
 | `sched_idle_set_state` | v4.20 takes one argument. The vendor `index` parameter belongs to a newer scheduler; do not change the v4.20 header to match it |
 | `kernfs_xattr_get/set` | v4.20 kernfs keeps xattrs private; the public wrappers are a deliberate Samsung/SELinux seam, not a general v4.20 API |
 | memory hotplug / PASR | do not enable until `arch_add_memory()` and `ARCH_ENABLE_MEMORY_HOTPLUG/HOTREMOVE` are ported to arm64. Leaving the Kconfig symbols on without the arch code only hides the gap |
+| PWM probe (`sec_pwm@106F0000`) | the Samsung DT exposes `pwm_pclk`/`pwm_sclk`; the v4.20 upstream driver asks for `timers`/`pwm-tclk0`, so probe fails. Keep the vendor driver until the upstream clock names are made DT-aware |
 
 ---
 
