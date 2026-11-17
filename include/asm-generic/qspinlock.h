@@ -21,6 +21,10 @@
 
 #include <asm-generic/qspinlock_types.h>
 
+#ifdef CONFIG_SEC_DEBUG_QSPIN_OWNER
+#include <linux/smp.h>
+#endif
+
 /**
  * queued_spin_is_locked - is the spinlock locked?
  * @lock: Pointer to queued spinlock structure
@@ -59,6 +63,13 @@ static __always_inline int queued_spin_is_contended(struct qspinlock *lock)
 {
 	return atomic_read(&lock->val) & ~_Q_LOCKED_MASK;
 }
+#ifdef CONFIG_SEC_DEBUG_QSPIN_OWNER
+static __always_inline u8 __queued_spin_get_locked_val(void)
+{
+	int cpu = raw_smp_processor_id();
+	return (cpu << _Q_OWNER_OFFSET) | _Q_DBGEN_VAL | _Q_LOCKED_VAL;
+}
+#endif
 /**
  * queued_spin_trylock - try to acquire the queued spinlock
  * @lock : Pointer to queued spinlock structure
@@ -71,7 +82,13 @@ static __always_inline int queued_spin_trylock(struct qspinlock *lock)
 	if (unlikely(val))
 		return 0;
 
-	return likely(atomic_try_cmpxchg_acquire(&lock->val, &val, _Q_LOCKED_VAL));
+	return likely(atomic_try_cmpxchg_acquire(&lock->val, &val,
+#ifdef CONFIG_SEC_DEBUG_QSPIN_OWNER
+						 __queued_spin_get_locked_val()
+#else
+						 _Q_LOCKED_VAL
+#endif
+						 ));
 }
 
 extern void queued_spin_lock_slowpath(struct qspinlock *lock, u32 val);
@@ -84,7 +101,13 @@ static __always_inline void queued_spin_lock(struct qspinlock *lock)
 {
 	u32 val = 0;
 
-	if (likely(atomic_try_cmpxchg_acquire(&lock->val, &val, _Q_LOCKED_VAL)))
+	if (likely(atomic_try_cmpxchg_acquire(&lock->val, &val,
+#ifdef CONFIG_SEC_DEBUG_QSPIN_OWNER
+					      __queued_spin_get_locked_val()
+#else
+					      _Q_LOCKED_VAL
+#endif
+					      )))
 		return;
 
 	queued_spin_lock_slowpath(lock, val);

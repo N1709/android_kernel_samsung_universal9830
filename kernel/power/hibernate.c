@@ -32,6 +32,7 @@
 #include <linux/ctype.h>
 #include <linux/genhd.h>
 #include <linux/ktime.h>
+#include <linux/debug-snapshot.h>
 #include <trace/events/power.h>
 
 #include "power.h"
@@ -301,9 +302,13 @@ static int create_image(int platform_mode)
 	in_suspend = 1;
 	save_processor_state();
 	trace_suspend_resume(TPS("machine_suspend"), PM_EVENT_HIBERNATE, true);
+	dbg_snapshot_suspend("machine_suspend", swsusp_arch_suspend,
+				NULL, PM_EVENT_HIBERNATE, DSS_FLAG_IN);
 	error = swsusp_arch_suspend();
 	/* Restore control flow magically appears here */
 	restore_processor_state();
+	dbg_snapshot_suspend("machine_suspend", swsusp_arch_suspend,
+				NULL, PM_EVENT_HIBERNATE, DSS_FLAG_OUT);
 	trace_suspend_resume(TPS("machine_suspend"), PM_EVENT_HIBERNATE, false);
 	if (error)
 		pr_err("Error %d creating hibernation image\n", error);
@@ -617,7 +622,7 @@ static void power_down(void)
 	int error;
 
 	if (hibernation_mode == HIBERNATION_SUSPEND) {
-		error = suspend_devices_and_enter(PM_SUSPEND_MEM);
+		error = suspend_devices_and_enter(mem_sleep_current);
 		if (error) {
 			hibernation_mode = hibernation_ops ?
 						HIBERNATION_PLATFORM :

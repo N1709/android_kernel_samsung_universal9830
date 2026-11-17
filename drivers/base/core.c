@@ -25,6 +25,10 @@
 #include <linux/netdevice.h>
 #include <linux/sched/signal.h>
 #include <linux/sysfs.h>
+#include <linux/cpufreq.h>
+#include <linux/i2c.h>
+#include <linux/platform_device.h>
+#include <linux/sec_debug.h>
 
 #include "base.h"
 #include "power/power.h"
@@ -2854,17 +2858,53 @@ out:
 }
 EXPORT_SYMBOL_GPL(device_move);
 
+#ifdef CONFIG_SEC_DEBUG_PM_DEVICE_INFO
+static void *get_cls_shutdown_func(struct device *dev)
+{
+	if (!dev || !dev->class)
+		return NULL;
+
+	return dev->class->shutdown_pre;
+}
+
+static void *get_bus_shutdown_func(struct device *dev)
+{
+	if (!dev || !dev->bus || !dev->driver)
+		return NULL;
+
+	if (dev->bus == &i2c_bus_type)
+		return to_i2c_driver(dev->driver)->shutdown;
+	else
+		return dev->bus->shutdown;
+}
+
+static void *get_drv_shutdown_func(struct device *dev)
+{
+	if (!dev || !dev->bus || !dev->driver)
+		return NULL;
+
+	if (dev->bus == &platform_bus_type)
+		return to_platform_driver(dev->driver)->shutdown;
+	else
+		return dev->driver->shutdown;
+}
+#endif /* SEC_DEBUG_PM_DEVICE_INFO */
+
 /**
  * device_shutdown - call ->shutdown() on each device to shutdown.
  */
 void device_shutdown(void)
 {
 	struct device *dev, *parent;
+	u64 before, after;
 
 	wait_for_device_probe();
 	device_block_probing();
 
+	cpufreq_suspend();
+
 	spin_lock(&devices_kset->list_lock);
+	secdbg_base_set_task_in_dev_shutdown((uint64_t)current);
 	/*
 	 * Walk the devices list backward, shutting down each in turn.
 	 * Beware that device unplug events may also start pulling
@@ -2893,6 +2933,8 @@ void device_shutdown(void)
 			device_lock(parent);
 		device_lock(dev);
 
+		secdbg_base_set_shutdown_device(__func__, dev_name(dev));
+
 		/* Don't allow any more runtime suspends */
 		pm_runtime_get_noresume(dev);
 		pm_runtime_barrier(dev);
@@ -2900,16 +2942,28 @@ void device_shutdown(void)
 		if (dev->class && dev->class->shutdown_pre) {
 			if (initcall_debug)
 				dev_info(dev, "shutdown_pre\n");
+
+			before = local_clock();
 			dev->class->shutdown_pre(dev);
+			after = local_clock();
+			secdbg_base_set_device_shutdown_timeinfo(before, after, after - before, (u64)get_cls_shutdown_func(dev));
 		}
 		if (dev->bus && dev->bus->shutdown) {
 			if (initcall_debug)
 				dev_info(dev, "shutdown\n");
+
+			before = local_clock();
 			dev->bus->shutdown(dev);
+			after = local_clock();
+			secdbg_base_set_device_shutdown_timeinfo(before, after, after - before, (u64)get_bus_shutdown_func(dev));
 		} else if (dev->driver && dev->driver->shutdown) {
 			if (initcall_debug)
 				dev_info(dev, "shutdown\n");
+
+			before = local_clock();
 			dev->driver->shutdown(dev);
+			after = local_clock();
+			secdbg_base_set_device_shutdown_timeinfo(before, after, after - before, (u64)get_drv_shutdown_func(dev));
 		}
 
 		device_unlock(dev);
@@ -2921,6 +2975,8 @@ void device_shutdown(void)
 
 		spin_lock(&devices_kset->list_lock);
 	}
+	secdbg_base_set_shutdown_device(NULL, NULL);
+	secdbg_base_set_task_in_dev_shutdown(0);
 	spin_unlock(&devices_kset->list_lock);
 }
 
