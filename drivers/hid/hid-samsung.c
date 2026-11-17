@@ -521,7 +521,7 @@ static int samsung_probe(struct hid_device *hdev,
 	int ret;
 	unsigned int cmask = HID_CONNECT_DEFAULT;
 
-	if (!hid_is_usb(hdev))
+	if (hdev->bus != BUS_USB)
 		return -EINVAL;
 
 	ret = hid_parse(hdev);
